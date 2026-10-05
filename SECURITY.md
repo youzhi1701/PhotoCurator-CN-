@@ -1,66 +1,70 @@
-# Security Policy & Threat Model
+# 安全说明
 
-Photo Curator is a **100% local** desktop tool. It runs a small Flask server bound
-to `127.0.0.1` and opens a browser tab against it. No data leaves your machine:
-no uploads, no telemetry, no external APIs (the only outbound requests are
-optional OpenFreeMap vector map tiles in the GPS view and a Ko-fi donate badge,
-both loaded by your browser, not the app; the map library itself is bundled, not
-loaded from a CDN).
+照片筛选 · PhotoCurator 中文桌面版以本地桌面应用方式运行。
 
-This document describes the threat model and the mitigations in place.
+## 本地架构
 
-## Threat model
+桌面窗口内部使用本机 Flask 服务提供界面和图片预览。
 
-The app reads, copies, moves, and serves image files from a folder you select.
-The realistic threats for a localhost tool are therefore:
+- 服务只绑定 `127.0.0.1`
+- 桌面版优先使用 5014；被占用时自动选择其他本地端口
+- 不监听局域网地址
+- 照片分析、缩略图、RAW / HEIC 解码均在本机完成
+- 核心筛选流程不会上传照片
 
-1. **A malicious web page reaching the local server.** Any site you visit can
-   make your browser send requests to `http://127.0.0.1:5014`. Via a
-   DNS-rebinding attack a remote site can even make those requests appear
-   same-origin. If the server served arbitrary files, such a page could read
-   your photos — or any file — off disk.
-2. **Path traversal / arbitrary file read.** A crafted `?path=` parameter
-   (`../../etc/passwd`, an absolute path, or a symlink) could escape the
-   selected folder.
-3. **Network exposure.** If the server bound to `0.0.0.0` it would be reachable
-   by other devices on your LAN.
-4. **Supply-chain / dependency vulnerabilities.** A compromised or outdated
-   third-party package.
-5. **Accidental data loss.** A bug or mistaken click destroying originals.
+GPS 地图属于可选功能，查看带定位信息照片时会连接 OpenFreeMap 获取地图瓦片。
 
-Out of scope: an attacker who already has local code-execution or filesystem
-access on your machine (they don't need this app), and multi-user/hostile-LAN
-server hardening (the app is single-user and loopback-only).
+## 文件访问边界
 
-## Mitigations
+图片预览 API 只允许访问：
 
-| Threat | Mitigation |
-|--------|------------|
-| Malicious page / DNS rebinding (1) | Every request is rejected unless its `Host` header is a loopback address (`127.0.0.1`/`localhost`), and any cross-site `Origin` is rejected (HTTP 403). A rebound attacker domain fails the `Host` check. |
-| Path traversal / arbitrary read (2) | The image, thumbnail, and EXIF endpoints resolve the requested path with `os.path.realpath()` (collapsing `..` and following symlinks) and serve it only if it is a real image file **inside** the currently selected or a recently used folder. Everything else returns 404. |
-| Network exposure (3) | The server binds explicitly to `127.0.0.1`, never `0.0.0.0`. It is unreachable from the network. |
-| Dependency vulnerabilities (4) | Dependencies are pinned to exact versions in `requirements.txt`. Scan them with `pip-audit -r requirements.txt`. |
-| Accidental data loss (5) | Actions are reversible and explicit: nothing is deleted. Blurry photos move to a `Blurred/` subfolder, exports **copy** originals into `TOP_N/` and `PhoneBG/`. Originals are never modified in place. |
-| Response hardening | Security headers on every response: `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, and a Content-Security-Policy. |
+- 当前明确选择的照片目录
+- 最近使用过的照片目录
 
-## Verifying your download
+请求路径会经过真实路径解析，避免使用 `..`、绝对路径或符号链接逃逸到其他位置。
 
-Each release ships a SHA-256 checksum (see `CHECKSUMS.txt`). Verify before
-running:
+支持格式以程序当前启用的图片扩展名白名单为准。
 
-```bash
-# macOS
-shasum -a 256 -c CHECKSUMS.txt
-# Linux
-sha256sum -c CHECKSUMS.txt
-```
+## Host / Origin 防护
 
-If the checksum does not match, do not run the file — re-download from the
-official source.
+本地 Flask 服务会校验 Host。
 
-## Reporting a vulnerability
+只接受：
 
-This is an MIT-licensed hobby project. Please open an issue (or, for anything
-sensitive, contact the maintainer privately) describing the problem and how to
-reproduce it. Since the app is local-only and stores no credentials, the
-blast radius of most issues is limited to the machine running it.
+- `127.0.0.1`
+- `localhost`
+- 当前桌面实例实际使用的本地端口
+
+带 Origin 的请求还会校验来源主机，降低 DNS rebinding 和跨站请求访问本地服务的风险。
+
+## 文件移动原则
+
+中文版额外收紧了文件操作：
+
+- 更改“清晰 / 轻微软 / 模糊”标签不会移动原文件
+- 只有用户明确点击“移动模糊照片”才执行移动
+- 去重自动移动只有用户主动启用后才执行
+- TOP 导出使用复制，不移动原照片
+- 重复 TOP 导出不会覆盖上一批结果
+
+## UI 文本安全
+
+文件名、文件夹路径和 EXIF 文本在写入界面前会进行 HTML 转义，避免特殊字符导致页面结构破坏或本地内容被当成 HTML 执行。
+
+## 单实例
+
+Windows 桌面版使用命名 Mutex 限制为单实例，避免用户连续双击后打开两个处理进程，同时对同一个图库移动文件。
+
+## 依赖与自检
+
+- 支持 Python 3.9–3.12
+- 推荐 Python 3.11 64 位
+- `环境自检.bat` 可检查 Python、依赖和源码语法
+- GitHub Actions 会在代码提交后执行 Python 语法检查
+- 启动异常会写入 `启动错误.log`
+
+## 上游
+
+本项目基于 `kotyzap/Photo-Curator` v7.0。
+
+原项目安全设计、MIT 许可证和版权信息继续保留。
