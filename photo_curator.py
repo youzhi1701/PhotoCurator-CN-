@@ -214,6 +214,10 @@ DEFAULT_WEIGHTS = {'aesthetic': 30, 'composition': 22, 'technical': 20,
                    'sharpness': 16, 'color': 12}
 CATEGORIES = ['composition', 'technical', 'sharpness', 'color', 'aesthetic']
 
+# Keep the WebView responsive on very large folders. Processing/state remains
+# complete; this cap affects only one HTTP response rendered by the UI.
+UI_RESULT_CAP = 5000
+
 
 # --------------------------------------------------------------------------- #
 #  Security (v5)
@@ -1362,7 +1366,7 @@ function escHtml(v){
 }
 let folder=null, photos=[], lbList=[], lbIndex=0, currentStep='cull';
 let isRunning=false, runningStep=null;
-let lastRankSig='', renderedCount=0, photoIdx=0, lastStep=null, weightTimer=null, removedCount=0, pollFailures=0;
+let lastRankSig='', renderedCount=0, photoIdx=0, lastStep=null, weightTimer=null, removedCount=0, pollFailures=0, largeResultWarned=false;
 const CATS=[['aesthetic','综合观感'],['composition','构图'],['technical','技术质量'],['sharpness','清晰度'],['color','色彩']];
 const catColor=(i,n)=>`hsl(${Math.round(i*360/(n||CATS.length))},80%,62%)`;
 const CATCOLORS=CATS.map((_,i)=>catColor(i,CATS.length));
@@ -1597,7 +1601,7 @@ function setStartBtn(running){
 }
 async function startStep(step){
   runningStep=step;
-  pollFailures=0;
+  pollFailures=0;largeResultWarned=false;
   document.getElementById('progressWrap').style.display='block';
   document.getElementById('gallery').innerHTML='';
   lastRankSig='';renderedCount=0;photoIdx=0;lastStep=step;
@@ -1707,6 +1711,11 @@ function poll(step){
       if(d.running){
         setTimeout(()=>poll(step),350);
         return;
+      }
+
+      if(d.truncated&&!largeResultWarned){
+        largeResultWarned=true;
+        toast('本次已完整分析 '+(d.result_total||0)+' 张照片。为保持界面流畅，当前界面只展示前 5000 条结果；统计和后续处理仍使用完整结果。','info');
       }
 
       document.getElementById('progressFill').style.width='100%';
@@ -2511,15 +2520,24 @@ def api_stop(step):
 def api_progress(step):
     if step == 'cull':
         s = state['cull']
-        photos = s['photos'][:200] if s['running'] else s['photos']
+        all_photos = s['photos']
+        limit = 200 if s['running'] else UI_RESULT_CAP
+        photos = all_photos[:limit]
         return jsonify({'running': s['running'], 'progress': s['progress'], 'status': s['status'],
                         'photos': photos,
-                        'stats': {'images': len(s['photos']), 'sharp': s['sharp'],
+                        'truncated': (not s['running'] and len(all_photos) > len(photos)),
+                        'result_total': len(all_photos),
+                        'stats': {'images': len(all_photos), 'sharp': s['sharp'],
                                   'soft': s['soft'], 'blurry': s['blurry']}})
     if step == 'dedup':
         s = state['dedup']
+        all_photos = s['photos']
+        photos = all_photos[:UI_RESULT_CAP]
         return jsonify({'running': s['running'], 'progress': s['progress'], 'status': s['status'],
-                        'photos': s['photos'], 'stats': {'groups': s['groups']}})
+                        'photos': photos,
+                        'truncated': (not s['running'] and len(all_photos) > len(photos)),
+                        'result_total': len(all_photos),
+                        'stats': {'groups': s['groups']}})
     if step == 'rank':
         s = state['rank']
         now = time.time()
