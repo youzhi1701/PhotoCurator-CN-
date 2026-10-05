@@ -66,6 +66,19 @@ if errorlevel 1 goto :fail
 ".venv\Scripts\python.exe" -m pip install -r requirements.txt
 if errorlevel 1 goto :fail
 
+if exist "requirements-optional.txt" (
+    echo.
+    echo       正在安装 RAW / HEIC 格式支持...
+    ".venv\Scripts\python.exe" -m pip install -r requirements-optional.txt
+    if errorlevel 1 (
+        echo [提示] RAW / HEIC 扩展依赖安装失败。
+        echo        JPG / PNG / WebP 等核心功能仍可正常使用。
+        echo        稍后可重新运行本安装程序再次尝试修复。
+    ) else (
+        echo       RAW / HEIC 扩展依赖安装完成。
+    )
+)
+
 echo [5/5] 依赖检查...
 ".venv\Scripts\python.exe" -c "import flask,cv2,numpy,PIL,webview; import raw_loader; print('      核心依赖正常'); print('      RAW支持:', raw_loader.HAS_RAWPY); print('      HEIC支持:', raw_loader.HAS_HEIF)"
 if errorlevel 1 goto :fail
