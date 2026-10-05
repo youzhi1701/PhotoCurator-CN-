@@ -134,6 +134,51 @@ RECENTS_FILE = Path.home() / '.photo_curator_recents.json'
 THUMB_DIR = Path(tempfile.gettempdir()) / 'photocurator_thumbs'
 THUMB_DIR.mkdir(parents=True, exist_ok=True)
 
+CACHE_MAX_BYTES = int(os.environ.get('PHOTOCURATOR_CACHE_MAX_BYTES',
+                                     str(2 * 1024 * 1024 * 1024)))
+CACHE_MAX_AGE_DAYS = 30
+
+
+def _prune_thumb_cache():
+    """Bound temporary preview cache without touching any source photos."""
+    try:
+        now = time.time()
+        cutoff = now - CACHE_MAX_AGE_DAYS * 86400
+        entries = []
+        total = 0
+        for p in THUMB_DIR.iterdir():
+            if not p.is_file():
+                continue
+            try:
+                st = p.stat()
+            except OSError:
+                continue
+            if st.st_mtime < cutoff:
+                try:
+                    p.unlink()
+                    continue
+                except OSError:
+                    pass
+            entries.append((st.st_mtime, st.st_size, p))
+            total += st.st_size
+
+        if total > CACHE_MAX_BYTES:
+            target = int(CACHE_MAX_BYTES * 0.85)
+            for _, size, p in sorted(entries, key=lambda x: x[0]):
+                if total <= target:
+                    break
+                try:
+                    p.unlink()
+                    total -= size
+                except OSError:
+                    continue
+    except Exception as e:
+        logger.debug(f"cache prune skipped: {e}")
+
+
+threading.Thread(target=_prune_thumb_cache, daemon=True,
+                 name='photocurator-cache-prune').start()
+
 DEFAULT_WEIGHTS = {'aesthetic': 30, 'composition': 22, 'technical': 20,
                    'sharpness': 16, 'color': 12}
 CATEGORIES = ['composition', 'technical', 'sharpness', 'color', 'aesthetic']
