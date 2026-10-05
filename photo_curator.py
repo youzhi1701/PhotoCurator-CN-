@@ -592,15 +592,15 @@ BASE_BLUR, BASE_SHARP = 90.0, 230.0   # region_s baselines when not adaptive
 
 def _badge_for(tier, star):
     if tier == 'sharp':
-        return 'Sharp', 'good'
+        return '清晰', 'good'
     if tier == 'soft':
-        return ('Soft ★' if star else 'Soft'), 'soft'
-    return 'Blurry', 'bad'
+        return ('轻微软 ★' if star else '轻微软'), 'soft'
+    return '模糊', 'bad'
 
 
 def run_cull(folder, strictness, adaptive, rescue_on):
     s = state['cull']
-    s.update({'running': True, 'cancel': False, 'progress': 0, 'status': 'Scanning…',
+    s.update({'running': True, 'cancel': False, 'progress': 0, 'status': '正在扫描照片…',
               'photos': [], 'sharp': 0, 'soft': 0, 'blurry': 0, 'sharp_paths': [],
               # complete=True only when cull runs to the end; a stopped cull must
               # not feed its partial survivor list into Dedup/Rank.
@@ -663,23 +663,23 @@ def run_cull(folder, strictness, adaptive, rescue_on):
 
         def _tiers(done):
             k = (s['sharp'] + s['soft'] + s['blurry']) or 1
-            return (f"Sharp {s['sharp']} ({s['sharp']/k*100:.0f}%) / "
-                    f"Soft {s['soft']} ({s['soft']/k*100:.0f}%) / "
-                    f"Blurry {s['blurry']} ({s['blurry']/k*100:.0f}%)")
+            return (f"清晰 {s['sharp']} ({s['sharp']/k*100:.0f}%) / "
+                    f"轻微软 {s['soft']} ({s['soft']/k*100:.0f}%) / "
+                    f"模糊 {s['blurry']} ({s['blurry']/k*100:.0f}%)")
 
         for idx, p in enumerate(images):
             if s.get('cancel'):
                 classify_all()
-                s['status'] = (f"Stopped at {idx}/{total} · {_tiers(idx)} · "
-                               f"elapsed {_fmt(time.time()-t0)}")
+                s['status'] = (f"已停止：{idx}/{total} · {_tiers(idx)} · "
+                               f"已用时 {_fmt(time.time()-t0)}")
                 return
             done = idx + 1
             s['progress'] = int(done / total * 100)
             elapsed = time.time() - t0
             rate = done / elapsed if elapsed > 0 else 0
             eta = (total - done) / rate if rate > 0 else 0
-            s['status'] = (f"Culling {p.name} ({done}/{total}, {done/total*100:.0f}%) · "
-                           f"{_tiers(done)} · elapsed {_fmt(elapsed)} · ETA {_fmt(eta)}")
+            s['status'] = (f"模糊筛选 {p.name}（{done}/{total}，{done/total*100:.0f}%）· "
+                           f"{_tiers(done)} · 已用时 {_fmt(elapsed)} · 预计剩余 {_fmt(eta)}")
             bgr = imread_bgr(str(p))       # RAW-aware
             if bgr is None:
                 continue
@@ -696,11 +696,11 @@ def run_cull(folder, strictness, adaptive, rescue_on):
         # button (mirrors the TOP-N export flow).
         s['progress'] = 100
         s['complete'] = True   # full pass finished — survivors are safe to chain
-        s['status'] = (f"Done in {_fmt(time.time()-t0)} · {_tiers(total)}"
-                       + (" · review, then Move blurry → Blurred/" if s['blurry'] else ""))
+        s['status'] = (f"完成 · 用时 {_fmt(time.time()-t0)} · {_tiers(total)}"
+                       + (" · 请确认后再移动模糊照片" if s['blurry'] else ""))
     except Exception as e:
         logger.error(f"cull failed: {e}", exc_info=True)
-        s['status'] = f"Error: {e}"
+        s['status'] = f"发生错误：{e}"
     finally:
         s['running'] = False
 
@@ -747,7 +747,7 @@ def _relocate_for_status(path, now_kept):
 # --------------------------------------------------------------------------- #
 def run_dedup(folder, threshold, ftype='all', pair='both'):
     s = state['dedup']
-    s.update({'running': True, 'cancel': False, 'progress': 0, 'status': 'Preparing…',
+    s.update({'running': True, 'cancel': False, 'progress': 0, 'status': '正在准备…',
               'photos': [], 'groups': 0, 'kept_paths': [],
               'complete': False, 'src_folder': str(folder)})
     try:
@@ -771,16 +771,16 @@ def run_dedup(folder, threshold, ftype='all', pair='both'):
             lbl = ftype_label(ftype)
             logger.info(f"Dedup: {lbl}-only filter — "
                         f"{len(paths)} of {before} photos continue")
-            s['status'] = (f"{lbl} only — {len(paths)} of {before} "
-                           f"photos continue to Dedup")
+            s['status'] = (f"仅 {lbl} · {len(paths)}/{before} "
+                           f"张照片进入相似去重")
         # Collapse RAW+JPG pairs of the same frame (setting in Dedup panel).
         paths, npairs = collapse_raw_jpg_pairs(paths, pair)
         if npairs:
             logger.info(f"Dedup: {npairs} RAW+JPG pairs collapsed (kept {pair.upper()})")
-            s['status'] = f"{npairs} RAW+JPG pairs collapsed — kept {pair.upper()}"
+            s['status'] = f"已合并 {npairs} 组 RAW+JPG 同帧照片 · 保留 {pair.upper()}"
         if not paths:
-            s['status'] = ('No images' if ftype == 'all'
-                           else f'No {ftype_label(ftype)} images to dedup')
+            s['status'] = ('没有可处理的照片' if ftype == 'all'
+                           else f'没有可去重的 {ftype_label(ftype)} 照片')
             return
         dd = FastBatchDeduplicator(threshold=threshold)
         # Persist perceptual signatures so a repeat run on this folder is fast.
@@ -829,9 +829,9 @@ def run_dedup(folder, threshold, ftype='all', pair='both'):
             if s.get('cancel'):
                 refresh(final=True)
                 el = time.time() - t0
-                s['status'] = (f"Stopped · {len(dd.clusters)} unique of {idx} "
-                               f"({(len(dd.clusters)/idx*100) if idx else 0:.0f}%) · "
-                               f"elapsed {_fmt(el)}")
+                s['status'] = (f"已停止 · {idx} 张中保留 {len(dd.clusters)} 张 "
+                               f"（{(len(dd.clusters)/idx*100) if idx else 0:.0f}%）· "
+                               f"已用时 {_fmt(el)}")
                 state['dedup']['kept_paths'] = [sc.path for sc in dd.current_survivors()]
                 return
             done = idx + 1
@@ -841,9 +841,9 @@ def run_dedup(folder, threshold, ftype='all', pair='both'):
             elapsed = time.time() - t0
             rate = done / elapsed if elapsed > 0 else 0          # photos/sec
             eta = (total - done) / rate if rate > 0 else 0
-            s['status'] = (f"Deduping {p.name} ({done}/{total}) · "
-                           f"{uniq} unique ({pct_uniq:.0f}%) · "
-                           f"elapsed {_fmt(elapsed)} · ETA {_fmt(eta)}")
+            s['status'] = (f"相似去重 {p.name}（{done}/{total}）· "
+                           f"保留 {uniq} 张（{pct_uniq:.0f}%）· "
+                           f"已用时 {_fmt(elapsed)} · 预计剩余 {_fmt(eta)}")
             gray = imread_gray(str(p))     # RAW-aware
             sharp = sharpness_score(gray) if gray is not None else 0.0
             dd.add_photo(_LiteScore(str(p), p.name, sharp, sharp))
@@ -863,19 +863,19 @@ def run_dedup(folder, threshold, ftype='all', pair='both'):
                 kept_set = set(kept)
                 dups = [str(p) for p in paths if str(p) not in kept_set]
                 r = org.move_duplicate_photos(dups)
-                s['status'] = (f"Done in {took} · {len(kept)} unique of {total} "
-                               f"({pct_uniq:.0f}%) · moved {r.get('moved', 0)} → Duplicates/")
+                s['status'] = (f"完成 · 用时 {took} · {total} 张中保留 {len(kept)} 张 "
+                               f"（{pct_uniq:.0f}%）· 已移动 {r.get('moved', 0)} 张到 Duplicates/")
             except Exception as e:
                 logger.warning(f"dedup auto-move failed: {e}")
-                s['status'] = (f"Done in {took} · {len(kept)} unique of {total} "
-                               f"({pct_uniq:.0f}%) · {removed} dupes")
+                s['status'] = (f"完成 · 用时 {took} · {total} 张中保留 {len(kept)} 张 "
+                               f"（{pct_uniq:.0f}%）· 识别 {removed} 张相似照片")
         else:
-            s['status'] = (f"Done in {took} · {len(kept)} unique of {total} "
-                           f"({pct_uniq:.0f}%) · {removed} dupes")
+            s['status'] = (f"完成 · 用时 {took} · {total} 张中保留 {len(kept)} 张 "
+                           f"（{pct_uniq:.0f}%）· 识别 {removed} 张相似照片")
         s['progress'] = 100
     except Exception as e:
         logger.error(f"dedup failed: {e}", exc_info=True)
-        s['status'] = f"Error: {e}"
+        s['status'] = f"发生错误：{e}"
     finally:
         s['running'] = False
 
@@ -916,7 +916,7 @@ def build_topn(weights=None, topn=None):
 
 def run_rank(folder, ftype='all', pair='both'):
     s = state['rank']
-    s.update({'running': True, 'cancel': False, 'progress': 0, 'status': 'Preparing…',
+    s.update({'running': True, 'cancel': False, 'progress': 0, 'status': '正在准备…',
               'scores': [], 'total': 0, 'analyzed': 0})
     state['excluded'] = set()
     try:
@@ -925,29 +925,29 @@ def run_rank(folder, ftype='all', pair='both'):
         dd, cull = state['dedup'], state['cull']
         if dd.get('complete') and dd.get('kept_paths') and dd.get('src_folder') == str(folder):
             paths = [Path(p) for p in dd['kept_paths']]
-            chain = 'dedup survivors'
+            chain = '去重后保留照片'
         elif cull.get('complete') and cull.get('sharp_paths') and cull.get('src_folder') == str(folder):
             paths = [Path(p) for p in cull['sharp_paths']]
-            chain = 'sharp photos'
+            chain = '模糊筛选后保留照片'
         else:
             paths = list_images(folder)
-            chain = 'all photos'
+            chain = '全部照片'
         # Honor the Cull file-type filter (RAW / JPG / specific format).
         if ftype and ftype != 'all':
             before = len(paths)
             paths = filter_ftype(paths, ftype)
             lbl = ftype_label(ftype)
-            chain += f' · {lbl} only ({len(paths)} of {before})'
+            chain += f' · 仅 {lbl}（{len(paths)}/{before}）'
             logger.info(f"Rank: {lbl}-only filter — "
                         f"{len(paths)} of {before} photos continue")
         # Collapse RAW+JPG pairs too (covers ranking straight from Cull/folder).
         paths, npairs = collapse_raw_jpg_pairs(paths, pair)
         if npairs:
-            chain += f' · {npairs} RAW+JPG pairs → {pair.upper()}'
+            chain += f' · {npairs} 组 RAW+JPG → {pair.upper()}'
             logger.info(f"Rank: {npairs} RAW+JPG pairs collapsed (kept {pair.upper()})")
         if not paths:
-            s['status'] = ('No images to rank' if ftype == 'all'
-                           else f'No {ftype_label(ftype)} images to rank')
+            s['status'] = ('没有可评分的照片' if ftype == 'all'
+                           else f'没有可评分的 {ftype_label(ftype)} 照片')
             return
         total = len(paths)
         s['total'] = total
@@ -961,25 +961,25 @@ def run_rank(folder, ftype='all', pair='both'):
 
         for idx, p in enumerate(paths):
             if s.get('cancel'):
-                s['status'] = (f"Stopped at {idx}/{total} · ranked {len(s['scores'])} so far · "
-                               f"elapsed {_fmt(time.time()-t0)}")
+                s['status'] = (f"已停止：{idx}/{total} · 已评分 {len(s['scores'])} 张 · "
+                               f"已用时 {_fmt(time.time()-t0)}")
                 return
             done = idx + 1
             s['progress'] = int(done / total * 100)
             elapsed = time.time() - t0
             rate = done / elapsed if elapsed > 0 else 0
             eta = (total - done) / rate if rate > 0 else 0
-            s['status'] = (f"Ranking {p.name} ({done}/{total}, {done/total*100:.0f}%) · "
-                           f"elapsed {_fmt(elapsed)} · ETA {_fmt(eta)}")
+            s['status'] = (f"智能优选 {p.name}（{done}/{total}，{done/total*100:.0f}%）· "
+                           f"已用时 {_fmt(elapsed)} · 预计剩余 {_fmt(eta)}")
             sc = analyzer.analyze_image(str(p))
             if sc:
                 s['scores'].append(sc)
             s['analyzed'] = len(s['scores'])
         s['progress'] = 100
-        s['status'] = f"Done · ranked {len(s['scores'])} {chain} · elapsed {_fmt(time.time()-t0)}"
+        s['status'] = f"完成 · 已评分 {len(s['scores'])} 张 · 来源：{chain} · 用时 {_fmt(time.time()-t0)}"
     except Exception as e:
         logger.error(f"rank failed: {e}", exc_info=True)
-        s['status'] = f"Error: {e}"
+        s['status'] = f"发生错误：{e}"
     finally:
         s['running'] = False
 
@@ -1751,7 +1751,7 @@ function togglePhoneBg(path){
     const pp=photos.find(x=>x.path===path);if(pp)pp.phonebg=d.phonebg;
     lastRankSig='';renderRank(photos);
     if(document.getElementById('lightbox').classList.contains('open')){lbList=(rankFilter==='pbg')?photos.filter(p=>p.phonebg):photos.slice();if(lbIndex>=lbList.length)lbIndex=Math.max(0,lbList.length-1);if(lbList.length)showLb();else closeLb();}
-    toast(d.phonebg?'📱 Added to Phone BG ('+d.count+')':'Removed from Phone BG ('+d.count+')','good');});
+    toast(d.phonebg?'📱 已加入手机壁纸（'+d.count+'）':'已取消手机壁纸（'+d.count+'）','good');});
 }
 
 /* ---- cull (3-tier, reconciling, filterable) ---- */
@@ -2343,8 +2343,7 @@ def api_restore():
 
 @app.route('/api/toggle-status', methods=['POST'])
 def api_toggle_status():
-    """Manually set a photo's tier (client cycles Sharp→Soft→Blurry). Moves the
-    file to/from Blurred/ to match (Soft stays in the folder)."""
+    """Manually change review tier only; never move the underlying file."""
     data = request.get_json() or {}
     path = data.get('path', '')
     tier = data.get('tier', 'sharp')
