@@ -1474,7 +1474,7 @@ function setupFilterBar(){
     const hasHeic=photos.some(p=>p.heic);
     const types=[['all','全部格式'],['raw','仅 RAW'],['jpg','仅 JPG'],
       ...(hasHeic?[['heic','仅 HEIC']]:[]),
-      ...(rawFmts.length>1?rawFmts.map(f=>['ext:'+f.toLowerCase(),f+' only']):[])];
+      ...(rawFmts.length>1?rawFmts.map(f=>['ext:'+f.toLowerCase(),'仅 '+f]):[])];
     if(!types.some(([k])=>k===cullType))cullType='all';
     bar.style.display='flex';
     bar.innerHTML=opts.map(([k,l])=>`<button class="chip${k===cullFilter?' active':''}" data-f="${k}">${l}</button>`).join('')
@@ -2019,14 +2019,14 @@ function showLb(){
   rm.style.display=currentStep==='rank'?'inline-block':'none';
   rs.style.display=(currentStep==='rank'&&removedCount>0)?'inline-block':'none';
   tg.style.display=currentStep==='cull'?'inline-block':'none';
-  if(currentStep==='cull')tg.textContent='⇄ '+(TIER_NAME[p.tier]||'Sharp')+' → '+(TIER_NAME[NEXT_TIER[p.tier||'sharp']]);
+  if(currentStep==='cull')tg.textContent='⇄ '+(TIER_NAME[p.tier]||'清晰')+' → '+(TIER_NAME[NEXT_TIER[p.tier||'sharp']]);
   const pbg=document.getElementById('lbPhoneBg');
   pbg.style.display=currentStep==='rank'?'inline-block':'none';
-  if(currentStep==='rank'){pbg.classList.toggle('on',!!p.phonebg);pbg.textContent=p.phonebg?'📱 Phone BG ✓':'📱 手机壁纸';}
+  if(currentStep==='rank'){pbg.classList.toggle('on',!!p.phonebg);pbg.textContent=p.phonebg?'📱 手机壁纸 ✓':'📱 手机壁纸';}
   const side=document.getElementById('lbSide');
   if(currentStep==='rank'&&p.scores){
     const metrics=CATS.map(([k,lab])=>({label:lab,value:(p.scores&&p.scores[k])||0}));
-    let html=`<div style="text-align:center">${radarSVG(metrics,150)}</div><h3>Category scores</h3>`;
+    let html=`<div style="text-align:center">${radarSVG(metrics,150)}</div><h3>分类评分</h3>`;
     CATS.forEach(([k,lab],ci)=>html+=barRow(lab,(p.scores&&p.scores[k])||0,CATINFO[k],true,CATCOLORS[ci]));
     const d=p.detail||{};GROUPS.forEach(([k,lab,keys])=>{const cv=(p.scores&&p.scores[k]);html+=`<h3>${lab}<span>${cv!=null?cv:''}</span></h3>`;keys.forEach(key=>{if(key in d)html+=barRow(key,d[key],SUBINFO[key]);});});
     html+=`<div style="font-size:10px;opacity:.5;margin-top:14px">Hover any row for what it measures.</div>`;
