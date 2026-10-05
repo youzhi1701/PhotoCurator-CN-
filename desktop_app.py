@@ -12,12 +12,36 @@ import traceback
 import urllib.request
 from pathlib import Path
 
-from werkzeug.serving import make_server
-
 APP_TITLE = "照片筛选 · PhotoCurator 中文版"
 APP_VERSION = "1.1.0-cn.1"
 HOST = "127.0.0.1"
 DEFAULT_PORT = 5014
+
+
+def _write_early_error_log():
+    try:
+        log = Path(__file__).with_name("启动错误.log")
+        log.write_text(
+            "\n".join([
+                f"照片筛选 {APP_VERSION}",
+                f"Python: {sys.version}",
+                f"Executable: {sys.executable}",
+                f"Platform: {sys.platform}",
+                "",
+                traceback.format_exc(),
+            ]),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+
+
+try:
+    from werkzeug.serving import make_server
+    import webview
+except Exception:
+    _write_early_error_log()
+    raise
 
 # Keep one desktop instance only. On Windows use a named mutex so we do not
 # reserve an unrelated TCP port or mistake another local service for our app.
@@ -32,7 +56,22 @@ if os.name == 'nt':
     if not _mutex_handle:
         raise OSError("无法创建应用单实例锁")
     if ctypes.get_last_error() == 183:  # ERROR_ALREADY_EXISTS
-        raise SystemExit("照片筛选已经在运行，请先切换到现有窗口。")
+        try:
+            user32 = ctypes.WinDLL('user32', use_last_error=True)
+            hwnd = user32.FindWindowW(None, APP_TITLE)
+            if hwnd:
+                user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+                user32.SetForegroundWindow(hwnd)
+            else:
+                user32.MessageBoxW(
+                    None,
+                    "照片筛选已经在运行，请切换到现有窗口。",
+                    APP_TITLE,
+                    0x40,
+                )
+        except Exception:
+            pass
+        raise SystemExit(0)
 else:
     _instance_guard = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
@@ -63,14 +102,13 @@ def choose_port():
 PORT = choose_port()
 os.environ["PHOTOCURATOR_PORT"] = str(PORT)
 
-try:
-    import webview
-except ImportError:
-    raise RuntimeError("缺少 pywebview，请先运行“一键安装并启动.bat”。")
-
 # Import only after PHOTOCURATOR_PORT is set; photo_curator builds its local
 # security allow-list from this value at import time.
-from photo_curator import app, state
+try:
+    from photo_curator import app, state
+except Exception:
+    _write_early_error_log()
+    raise
 
 URL = f"http://{HOST}:{PORT}"
 
