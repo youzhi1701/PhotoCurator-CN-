@@ -1276,7 +1276,7 @@ function toast(msg,type){
   setTimeout(()=>{el.classList.remove('show');setTimeout(()=>el.remove(),300);},3600);
 }
 let folder=null, photos=[], lbList=[], lbIndex=0, currentStep='cull';
-let lastRankSig='', renderedCount=0, photoIdx=0, lastStep=null, weightTimer=null, removedCount=0;
+let lastRankSig='', renderedCount=0, photoIdx=0, lastStep=null, weightTimer=null, removedCount=0, pollFailures=0;
 const CATS=[['aesthetic','综合观感'],['composition','构图'],['technical','技术质量'],['sharpness','清晰度'],['color','色彩']];
 const catColor=(i,n)=>`hsl(${Math.round(i*360/(n||CATS.length))},80%,62%)`;
 const CATCOLORS=CATS.map((_,i)=>catColor(i,CATS.length));
@@ -1439,31 +1439,59 @@ function setStartBtn(running){
   startBtn.textContent=running?'■ 停止':'🚀 开始处理';
   startBtn.classList.toggle('stopping',running);
 }
-function startStep(step){
+async function startStep(step){
   runningStep=step;
+  pollFailures=0;
   document.getElementById('progressWrap').style.display='block';
   document.getElementById('gallery').innerHTML='';
   lastRankSig='';renderedCount=0;photoIdx=0;lastStep=step;
   gPage=0;lastGallerySig='';document.getElementById('pager').style.display='none';
   document.getElementById('exportBtn').style.display='none';
   document.getElementById('exportPbgBtn').style.display='none';
-  {const mb=document.getElementById('moveBlurryBtn');mb.style.display='none';mb.classList.add('btn-ghost');mb.classList.remove('btn','cta');startBtn.classList.remove('secondary');}setRemoved(0);
+  {const mb=document.getElementById('moveBlurryBtn');mb.style.display='none';mb.classList.add('btn-ghost');mb.classList.remove('btn','cta');startBtn.classList.remove('secondary');}
+  setRemoved(0);
   setStartBtn(true);
-  // Settings come from the active step's panel (activateStep switched it first).
+
   const opt=document.getElementById('opt');
   const ad=document.getElementById('cAdaptive'),rs=document.getElementById('cRescue');
-  // Carry the Cull file-type filter (RAW only / JPG only) into Dedup & Rank.
   if(step!=='cull'&&cullType!=='all'){
     const tl=cullType.startsWith('ext:')?cullType.slice(4).toUpperCase():cullType.toUpperCase();
-    toast('继续处理：仅 '+tl+' 格式。若要包含全部照片，请将“模糊筛选”的格式切换为“全部格式”。','');
+    toast('继续处理：仅 '+tl+' 格式。若要包含全部照片，请将“模糊筛选”的格式切换为“全部格式”。','info');
   }
-  fetch('/api/run/'+step,{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({folder,opt:opt?parseFloat(opt.value):0,
-      adaptive:ad?ad.checked:true, rescue:rs?rs.checked:true,
-      ftype:step==='cull'?'all':cullType,
-      pair:step==='cull'?'both':pairMode,
-      topn:parseInt((document.getElementById('topn')||{}).value)||50})});
-  setTimeout(()=>poll(step),200);
+
+  try{
+    const response=await fetch('/api/run/'+step,{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        folder,
+        opt:opt?parseFloat(opt.value):0,
+        adaptive:ad?ad.checked:true,
+        rescue:rs?rs.checked:true,
+        ftype:step==='cull'?'all':cullType,
+        pair:step==='cull'?'both':pairMode,
+        topn:parseInt((document.getElementById('topn')||{}).value)||50
+      })
+    });
+    let data={};
+    try{data=await response.json();}catch(_){}
+    if(!response.ok){
+      throw new Error(data.error||('启动任务失败（HTTP '+response.status+'）'));
+    }
+    setTimeout(()=>poll(step),180);
+    return true;
+  }catch(err){
+    const msg=err&&err.message?err.message:'无法启动照片处理任务';
+    document.getElementById('progressText').textContent='启动失败：'+msg;
+    setStartBtn(false);
+    runningStep=null;
+    toast('启动失败：'+msg,'bad');
+    if(godMode){
+      godAbort=true;
+      if(godResolve){const r=godResolve;godResolve=null;r();}
+    }
+    return false;
+  }
 }
 function doStart(){
   if(!folder){toast('请先选择照片文件夹','bad');return;}
@@ -1504,36 +1532,53 @@ godBtn.onclick=()=>{
   else godRun();
 };
 function poll(step){
-  fetch('/api/progress/'+step).then(r=>r.json()).then(d=>{
-    document.getElementById('progressFill').style.width=d.progress+'%';
-    document.getElementById('progressText').textContent=d.status;
-    const st=d.stats||{};
-    if('images'in st)document.getElementById('sImages').textContent=st.images;
-    if('sharp'in st)document.getElementById('sSharp').textContent=st.sharp;
-    if('blurry'in st)document.getElementById('sBlurry').textContent=st.blurry;
-    if('soft'in st)document.getElementById('sSoft').textContent=st.soft;
-    if('groups'in st)document.getElementById('sGroups').textContent=st.groups;
-    if(step==='rank')renderRank(d.photos||[]);
-    else if(step==='cull')renderCullStep(d.photos||[]);
-    else renderGallery(d.photos||[]);
-    if(d.running)setTimeout(()=>poll(step),300);
-    else{
-      // Finished: keep the summary line visible (full bar + "Done in … · Sharp
-      // N (x%) / Soft … / Blurry …") instead of hiding it.
+  fetch('/api/progress/'+step)
+    .then(r=>{if(!r.ok)throw new Error('HTTP '+r.status);return r.json();})
+    .then(d=>{
+      pollFailures=0;
+      document.getElementById('progressFill').style.width=d.progress+'%';
+      document.getElementById('progressText').textContent=d.status;
+      const st=d.stats||{};
+      if('images'in st)document.getElementById('sImages').textContent=st.images;
+      if('sharp'in st)document.getElementById('sSharp').textContent=st.sharp;
+      if('blurry'in st)document.getElementById('sBlurry').textContent=st.blurry;
+      if('soft'in st)document.getElementById('sSoft').textContent=st.soft;
+      if('groups'in st)document.getElementById('sGroups').textContent=st.groups;
+      if(step==='rank')renderRank(d.photos||[]);
+      else if(step==='cull')renderCullStep(d.photos||[]);
+      else renderGallery(d.photos||[]);
+
+      if(d.running){
+        setTimeout(()=>poll(step),350);
+        return;
+      }
+
       document.getElementById('progressFill').style.width='100%';
       setStartBtn(false);runningStep=null;
       if(step==='rank'&&photos.length)document.getElementById('exportBtn').style.display='block';
-      // After Cull, the obvious next action is moving the blurry shots: make
-      // that the primary (blue, emphasised) button and mute Start. Suppressed
-      // during God mode (the pipeline moves straight on to Dedup).
       if(!godMode&&step==='cull'&&(st.blurry||0)>0){
         const mb=document.getElementById('moveBlurryBtn');
         mb.style.display='block';mb.classList.remove('btn-ghost');mb.classList.add('btn','cta');
         startBtn.classList.add('secondary');
       }
-      // God mode: let the orchestrator advance to the next step.
-      if(godResolve){const r=godResolve;godResolve=null;r();}}
-  });
+      if(godResolve){const r=godResolve;godResolve=null;r();}
+    })
+    .catch(err=>{
+      pollFailures++;
+      if(pollFailures<=5 && runningStep===step){
+        document.getElementById('progressText').textContent='连接本地处理服务中…（'+pollFailures+'/5）';
+        setTimeout(()=>poll(step),800);
+        return;
+      }
+      const msg='无法读取处理进度：'+(err&&err.message?err.message:'本地服务连接失败');
+      toast(msg,'bad');
+      document.getElementById('progressText').textContent=msg;
+      setStartBtn(false);runningStep=null;
+      if(godMode){
+        godAbort=true;
+        if(godResolve){const r=godResolve;godResolve=null;r();}
+      }
+    });
 }
 
 /* ---- radar ---- */
