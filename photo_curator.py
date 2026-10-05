@@ -1193,7 +1193,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   }
 </style></head><body>
 <div class="top">
-  <div class="brand">🖼️ 照片筛选 <small>PhotoCurator 中文版 · v1.0</small></div>
+  <div class="brand">🖼️ 照片筛选 <small>PhotoCurator 中文版 · v1.1</small></div>
   <div class="steps">
     <div class="step active" data-step="cull">1 · 模糊筛选</div>
     <div class="step" data-step="dedup">2 · 相似去重</div>
@@ -1413,23 +1413,39 @@ function loadShortcuts(){fetch('/api/shortcuts').then(r=>r.json()).then(d=>{
   let h='';(d.sd||[]).forEach(o=>{const p=(typeof o==='string')?o:o.path;
     const br=(o&&o.brand)?(' · '+o.brand):'';
     h+=`<button class="shortcut" data-p="${p}"><span class="tag sd">SD${br}</span>${sdLabel(p)}</button>`;});
-  (d.recent||[]).slice(0,4).forEach(p=>h+=`<button class="shortcut" data-p="${p}"><span class="tag recent">RECENT</span>${sdLabel(p)}</button>`);
+  (d.recent||[]).slice(0,4).forEach(p=>h+=`<button class="shortcut" data-p="${p}"><span class="tag recent">最近</span>${sdLabel(p)}</button>`);
   if(d.rawpy===false)h=`<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:8px;`
-    +`padding:8px 10px;font-size:11px;line-height:1.5;margin-bottom:6px">⚠️ <b>RAW support off</b> — `
-    +`rawpy is not installed, so CR2/NEF/ARW/DNG files are skipped.<br>`
-    +`Run <code>pip install rawpy</code> and restart.</div>`+h;
+    +`padding:8px 10px;font-size:11px;line-height:1.5;margin-bottom:6px">⚠️ <b>RAW 支持未启用</b> — `
+    +`未安装 rawpy，CR2/NEF/ARW/DNG 等 RAW 文件会被跳过。<br>`
+    +`请重新运行“一键安装并启动.bat”修复依赖。</div>`+h;
   if(d.heif===false)h=`<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:8px;`
-    +`padding:8px 10px;font-size:11px;line-height:1.5;margin-bottom:6px">⚠️ <b>HEIC support off</b> — `
-    +`pillow-heif is not installed, so iPhone .heic files are skipped.<br>`
-    +`Run <code>pip install pillow-heif</code> and restart.</div>`+h;
-  if(!(d.sd||[]).length)h+=`<div style="font-size:11px;color:var(--muted);margin-top:6px">No memory card detected \u2014 insert one (it appears here automatically) or use Browse.</div>`;
+    +`padding:8px 10px;font-size:11px;line-height:1.5;margin-bottom:6px">⚠️ <b>HEIC 支持未启用</b> — `
+    +`未安装 pillow-heif，iPhone 的 HEIC/HEIF 文件会被跳过。<br>`
+    +`请重新运行“一键安装并启动.bat”修复依赖。</div>`+h;
+  if(!(d.sd||[]).length)h+=`<div style="font-size:11px;color:var(--muted);margin-top:6px">未检测到相机存储卡；插入后会自动出现在这里，也可以直接选择文件夹。</div>`;
   document.getElementById('shortcuts').innerHTML=h;
   document.querySelectorAll('.shortcut').forEach(b=>b.onclick=()=>{folder=b.dataset.p;document.getElementById('folderInput').value=folder;});});}
 loadShortcuts();
 setInterval(()=>{if(!document.hidden)loadShortcuts();},8000);  // pick up a card inserted later
 document.getElementById('folderInput').oninput=e=>folder=e.target.value.trim();
-document.getElementById('browseBtn').onclick=()=>fetch('/api/browse',{method:'POST'}).then(r=>r.json()).then(d=>{
-  if(d.folder){folder=d.folder;document.getElementById('folderInput').value=folder;loadShortcuts();}});
+document.getElementById('browseBtn').onclick=async()=>{
+  const btn=document.getElementById('browseBtn');
+  const old=btn.textContent;btn.disabled=true;btn.textContent='正在选择…';
+  try{
+    const r=await fetch('/api/browse',{method:'POST'});
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    const d=await r.json();
+    if(d.folder){
+      folder=d.folder;
+      document.getElementById('folderInput').value=folder;
+      loadShortcuts();
+    }
+  }catch(err){
+    toast('无法打开文件夹选择器：'+(err.message||'未知错误'),'bad');
+  }finally{
+    btn.disabled=false;btn.textContent=old;
+  }
+};
 
 /* start / stop (the same button toggles) */
 let isRunning=false, runningStep=null;
@@ -2303,7 +2319,9 @@ def api_toggle_status():
     if not photo:
         return jsonify({'error': '未找到照片'}), 404
     now_kept = tier != 'blurry'
-    new_path = _relocate_for_status(path, now_kept)
+    # Manual review is classification-only. Never move a file merely because
+    # its badge was changed; disk changes happen only via an explicit Move action.
+    new_path = path
     badge, bt = _badge_for(tier, False)
     photo.update({'path': new_path, 'thumb': thumb_url(new_path), 'tier': tier,
                   'kept': now_kept, 'rejected': not now_kept,
@@ -2324,24 +2342,56 @@ def api_toggle_status():
 
 @app.route('/api/move-blurry', methods=['POST'])
 def api_move_blurry():
-    """Move the current Blurry-tier photos into a Blurred/ subfolder. Done on
-    demand (after review) rather than automatically during Cull."""
+    """Move reviewed Blurry-tier photos only after explicit user action."""
     folder = state.get('folder')
     if not folder or not Path(folder).is_dir():
         return jsonify({'error': '未选择有效的照片文件夹'}), 400
-    blurry = [pp['path'] for pp in state['cull'].get('photos', [])
-              if pp.get('tier') == 'blurry']
-    if not blurry:
-        return jsonify({'ok': True, 'moved': 0, 'dest': str(Path(folder) / 'Blurred')})
-    try:
-        org = PhotoOrganizer(folder)
-        res = org.move_blurry_photos(blurry)
-    except Exception as e:
-        logger.error(f"move-blurry failed: {e}")
-        return jsonify({'error': str(e)}), 500
-    return jsonify({'ok': True, 'moved': res.get('moved', 0),
-                    'dest': str(Path(folder) / 'Blurred')})
 
+    blurry_photos = [pp for pp in state['cull'].get('photos', [])
+                     if pp.get('tier') == 'blurry']
+    if not blurry_photos:
+        return jsonify({'ok': True, 'moved': 0,
+                        'dest': str(Path(folder) / 'Blurred')})
+
+    dest_dir = Path(folder) / 'Blurred'
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    moved = failed = 0
+
+    for photo in blurry_photos:
+        src = Path(photo.get('path', ''))
+        if not src.is_file():
+            failed += 1
+            continue
+        if src.parent.resolve() == dest_dir.resolve():
+            continue
+
+        dst = dest_dir / src.name
+        if dst.exists():
+            stamp = time.strftime('%Y%m%d_%H%M%S')
+            n = 1
+            candidate = dest_dir / f"{src.stem}_{stamp}{src.suffix}"
+            while candidate.exists():
+                n += 1
+                candidate = dest_dir / f"{src.stem}_{stamp}_{n}{src.suffix}"
+            dst = candidate
+
+        try:
+            shutil.move(str(src), str(dst))
+            old = str(src)
+            new = str(dst)
+            photo['path'] = new
+            photo['thumb'] = thumb_url(new)
+            moved += 1
+            # Keep downstream survivor references coherent if the user changed
+            # tiers after a completed cull.
+            sp = state['cull'].get('sharp_paths', [])
+            state['cull']['sharp_paths'] = [new if p == old else p for p in sp]
+        except Exception as e:
+            failed += 1
+            logger.warning(f"move-blurry failed {src}: {e}")
+
+    return jsonify({'ok': failed == 0, 'moved': moved, 'failed': failed,
+                    'dest': str(dest_dir)})
 
 @app.route('/api/export', methods=['POST'])
 def api_export():
