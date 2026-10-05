@@ -54,8 +54,39 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 
 # macOS reserves port 5000 for the AirPlay Receiver (returns HTTP 403).
-# Default to 5014 ('50mm f/1.4'). Override with PHOTOCURATOR_PORT if needed.
-PORT = int(os.environ.get('PHOTOCURATOR_PORT', '5014'))
+# Prefer 5014 ('50mm f/1.4'). Desktop mode supplies PHOTOCURATOR_PORT before
+# importing this module. Browser compatibility mode automatically falls back
+# to a free loopback port when 5014 is already occupied.
+def _resolve_local_port():
+    explicit = os.environ.get('PHOTOCURATOR_PORT')
+    if explicit:
+        return int(explicit)
+
+    preferred = 5014
+    if os.environ.get('PHOTOCURATOR_OPEN_BROWSER') != '1':
+        return preferred
+
+    import socket
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        probe.bind(('127.0.0.1', preferred))
+        return preferred
+    except OSError:
+        try:
+            probe.close()
+        except Exception:
+            pass
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        probe.bind(('127.0.0.1', 0))
+        return int(probe.getsockname()[1])
+    finally:
+        try:
+            probe.close()
+        except Exception:
+            pass
+
+
+PORT = _resolve_local_port()
 
 # Host headers we accept. A DNS-rebinding attacker's page reaches us with the
 # attacker's domain in the Host header, not one of these, so it's rejected.
