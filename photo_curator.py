@@ -812,7 +812,7 @@ def run_dedup(folder, threshold, ftype='all', pair='both'):
                 photos.append({'name': sc.filename, 'path': sc.path,
                                'thumb': thumb_url(sc.path), 'score': f"{sc.overall_score:.0f}",
                                'group': len(c.members),
-                               'badge': 'KEPT', 'badgeType': 'good', 'kept': True})
+                               'badge': '保留', 'badgeType': 'good', 'kept': True})
             s['photos'] = photos
             s['groups'] = len(dd.clusters)
             last_refresh[0] = time.time()
@@ -995,14 +995,14 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
         --accent:#3b82f6;--border:#27313f;--shadow:rgba(0,0,0,.5);color-scheme:dark}
   *{box-sizing:border-box}
   body{margin:0;font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text)}
-  .top{display:flex;align-items:center;justify-content:space-between;padding:12px 20px;background:linear-gradient(90deg,#1e40af,#2563eb);color:#fff}
+  .top{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:58px;padding:12px 20px;background:linear-gradient(90deg,#1e40af,#2563eb);color:#fff}
   .brand{font-size:17px;font-weight:700}.brand small{font-weight:400;opacity:.8;font-size:12px}
-  .steps{display:flex;gap:8px}
+  .steps{display:flex;gap:8px;min-width:0;overflow-x:auto;scrollbar-width:none}.steps::-webkit-scrollbar{display:none}
   .step{padding:7px 16px;background:rgba(255,255,255,.18);border:2px solid transparent;border-radius:9px;cursor:pointer;font-weight:600;font-size:13px;color:#fff}
   .step:hover{background:rgba(255,255,255,.3)} .step.active{background:#fff;color:var(--accent)}
   .theme{background:rgba(255,255,255,.18);border:none;color:#fff;width:38px;height:32px;border-radius:8px;cursor:pointer}
-  .viewport{display:flex;height:calc(100vh - 58px)}
-  .sidebar{width:300px;flex:0 0 300px;background:var(--panel);border-right:1px solid var(--border);padding:16px;overflow:hidden;display:flex;flex-direction:column}
+  .viewport{display:flex;height:calc(100vh - 58px);height:calc(100dvh - 58px);min-height:0}
+  .sidebar{width:clamp(260px,22vw,320px);flex:0 0 clamp(260px,22vw,320px);background:var(--panel);border-right:1px solid var(--border);padding:16px;overflow:hidden;display:flex;flex-direction:column}
   /* Scrollable region holds folder + settings + stats; the action footer below
      is pinned so Start / Export / Move blurry stay above the fold. */
   .sidebar-scroll{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:12px;padding-right:4px}
@@ -1011,7 +1011,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   .folder-row{display:flex;gap:8px;align-items:stretch}
   .folder-row input{flex:1;min-width:0}
   .folder-row .btn{width:auto;flex:0 0 auto;white-space:nowrap;padding:11px 16px}
-  .main{flex:1;overflow-y:auto;padding:14px 18px}
+  .main{flex:1;min-width:0;min-height:0;overflow-y:auto;padding:14px 18px;overscroll-behavior:contain}
   .sidebar-title{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
   input[type=text],input[type=number]{width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--panel2);color:var(--text);-webkit-text-fill-color:var(--text)}
   input[type=text]::placeholder,input[type=number]::placeholder{color:var(--muted);-webkit-text-fill-color:var(--muted)}
@@ -1041,7 +1041,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   .progress-bar{height:6px;background:var(--panel2);border-radius:3px;overflow:hidden}
   .progress-fill{height:100%;width:0;background:var(--accent);transition:width .25s}
   .progress-text{font-size:12px;color:var(--muted);margin-top:5px}
-  .gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(165px,1fr));gap:12px}
+  .gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(clamp(138px,12vw,175px),1fr));gap:12px;align-items:start}
   .empty{grid-column:1/-1;text-align:center;color:var(--muted);padding:60px 0}.empty .icon{font-size:44px}
   .empty .title{font-size:19px;font-weight:700;color:var(--text);margin:12px 0 4px}
   .empty p{margin:0 0 16px;font-size:14px}
@@ -1086,8 +1086,8 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   /* lightbox */
   .lightbox{position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:200;display:none;flex-direction:column;align-items:center;justify-content:center}
   .lightbox.open{display:flex}
-  .lb-img{max-width:62vw;max-height:80vh;object-fit:contain;border-radius:6px}
-  .lb-bar{position:absolute;top:0;left:0;right:320px;display:flex;justify-content:space-between;align-items:center;padding:14px 22px;color:#fff;z-index:20;background:linear-gradient(180deg,rgba(0,0,0,.6),transparent)}
+  .lb-img{max-width:calc(100vw - 360px);max-height:calc(100dvh - 110px);object-fit:contain;border-radius:6px}
+  .lb-bar{position:absolute;top:0;left:0;right:clamp(300px,25vw,360px);display:flex;justify-content:space-between;align-items:center;padding:14px 22px;color:#fff;z-index:20;background:linear-gradient(180deg,rgba(0,0,0,.6),transparent)}
   .lb-close{background:rgba(255,255,255,.2);border:none;color:#fff;font-size:22px;width:42px;height:42px;border-radius:50%;cursor:pointer;z-index:30}
   .lb-close:hover{background:rgba(255,255,255,.4)}
   .lb-actions{display:flex;gap:10px;align-items:center;z-index:30}
@@ -1096,8 +1096,8 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   .lb-btn.restore{background:rgba(255,255,255,.22)} .lb-btn.restore:hover{background:rgba(255,255,255,.4)}
   .lb-btn.toggle{background:rgba(37,99,235,.85)} .lb-btn.toggle:hover{background:#2563eb}
   .lb-nav{position:absolute;top:50%;transform:translateY(-50%);background:rgba(255,255,255,.15);border:none;color:#fff;font-size:30px;width:54px;height:54px;border-radius:50%;cursor:pointer;z-index:20}
-  .lb-prev{left:18px}.lb-next{right:338px}
-  .lb-side{position:absolute;right:0;top:0;bottom:0;width:300px;background:rgba(15,20,28,.95);color:#fff;padding:22px 20px 28px;overflow-y:auto;z-index:10}
+  .lb-prev{left:18px}.lb-next{right:clamp(298px,26vw,378px)}
+  .lb-side{position:absolute;right:0;top:0;bottom:0;width:clamp(280px,24vw,340px);background:rgba(15,20,28,.95);color:#fff;padding:22px 20px 28px;overflow-y:auto;z-index:10}
   .lb-side h3{margin:16px 0 6px;font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;opacity:.65;display:flex;justify-content:space-between;align-items:baseline}
   .lb-side h3 span{font-size:12px;opacity:.9;color:#93c5fd}
   .bar{display:flex;align-items:center;gap:8px;margin:6px 0;font-size:11px;cursor:help}
@@ -1115,7 +1115,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   .exmap .cred{display:block;font-size:9px;opacity:.45;margin-top:3px}
   .exmap .cred a{color:inherit}
   .maplibregl-ctrl-attrib,.maplibregl-ctrl-logo{display:none!important}
-  .top-right{display:flex;align-items:center;gap:10px}
+  .top-right{display:flex;align-items:center;gap:10px;flex:0 0 auto}
   .kofi-btn{display:block;line-height:0;transition:transform .12s}
   .kofi-btn:hover{transform:translateY(-2px)} .kofi-btn img{display:block;border-radius:8px;box-shadow:0 3px 12px var(--shadow)}
   /* toasts */
@@ -1125,6 +1125,71 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
          opacity:0;transform:translateY(12px);transition:opacity .25s,transform .25s;white-space:pre-line;text-align:center}
   .toast.show{opacity:1;transform:translateY(0)}
   .toast.good{border-left-color:var(--good)} .toast.bad{border-left-color:var(--bad)} .toast.info{border-left-color:var(--accent)}
+
+  /* Responsive desktop layout: important on Windows 125%/150%/200% DPI. */
+  @media (max-width: 1100px){
+    .top{padding:10px 12px}
+    .brand{font-size:15px}.brand small{display:none}
+    .step{padding:7px 10px;font-size:12px;white-space:nowrap}
+    .sidebar{width:260px;flex-basis:260px;padding:12px}
+    .main{padding:12px}
+    .gallery{grid-template-columns:repeat(auto-fill,minmax(145px,1fr));gap:10px}
+    .kofi-btn{display:none}
+    .lb-side{width:280px}
+    .lb-bar{right:292px}
+    .lb-next{right:298px}
+    .lb-img{max-width:calc(100vw - 315px)}
+  }
+  @media (max-width: 820px){
+    body{font-size:13px}
+    .top{flex-wrap:wrap;align-content:center}
+    .brand{flex:1 1 auto}
+    .steps{order:3;flex:1 0 100%;justify-content:flex-start;padding-bottom:1px}
+    .top-right{margin-left:auto}
+    .viewport{height:calc(100vh - 96px);height:calc(100dvh - 96px)}
+    .sidebar{width:235px;flex-basis:235px;padding:10px}
+    .folder-row{flex-direction:column}
+    .folder-row .btn{width:100%;padding:9px 10px}
+    .sidebar-scroll{gap:9px}
+    .sidebar-actions{gap:6px}
+    .btn,.btn-ghost{padding-top:9px;padding-bottom:9px}
+    .main{padding:10px}
+    .gallery{grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:8px}
+    .photo-info{padding:5px 6px}
+    .lb-side{left:0;right:0;top:auto;bottom:0;width:100%;height:38dvh;padding:14px 16px 20px}
+    .lb-img{max-width:94vw;max-height:52dvh;margin-bottom:34dvh}
+    .lb-bar{right:0;padding:10px 12px}
+    .lb-actions{gap:6px;flex-wrap:wrap;justify-content:flex-end}
+    .lb-btn{height:34px;padding:0 10px;font-size:12px}
+    .lb-close{width:36px;height:36px;font-size:18px}
+    .lb-prev{left:10px}.lb-next{right:10px}
+    .exmap .mapslot{width:min(256px,100%)}
+  }
+  @media (max-width: 620px){
+    .top{position:relative;z-index:20}
+    .viewport{height:calc(100vh - 96px);height:calc(100dvh - 96px);flex-direction:column}
+    .sidebar{width:100%;flex:0 0 auto;max-height:44dvh;border-right:0;border-bottom:1px solid var(--border);padding:10px}
+    .sidebar-scroll{max-height:26dvh}
+    .sidebar-actions{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+    .sidebar-actions>*{min-width:0}
+    .main{flex:1;min-height:0;padding:8px}
+    .gallery{grid-template-columns:repeat(auto-fill,minmax(118px,1fr));gap:7px}
+    .filter-bar{gap:5px}.chip{padding:5px 9px}
+    .pager{gap:8px;flex-wrap:wrap}
+    .pager button{padding:6px 10px}
+    .toast{max-width:calc(100vw - 24px)}
+    #cn-build-badge{display:none}
+  }
+  @media (max-height: 700px){
+    .sidebar-scroll{gap:8px}
+    .sidebar-actions{gap:5px;padding-top:7px}
+    .btn,.btn-ghost{padding-top:8px;padding-bottom:8px}
+    .empty{padding:28px 0}
+    .empty .icon{font-size:34px}
+  }
+  @media (prefers-reduced-motion: reduce){
+    *,*::before,*::after{scroll-behavior:auto!important;transition:none!important;animation:none!important}
+  }
 </style></head><body>
 <div class="top">
   <div class="brand">🖼️ 照片筛选 <small>PhotoCurator 中文版 · v1.0</small></div>
@@ -1405,7 +1470,7 @@ function doStart(){
 }
 function doStop(){
   if(!runningStep)return;
-  startBtn.textContent='Stopping…';startBtn.disabled=true;
+  startBtn.textContent='正在停止…';startBtn.disabled=true;
   fetch('/api/stop/'+runningStep,{method:'POST'}).finally(()=>{startBtn.disabled=false;});
 }
 startBtn.onclick=()=>{ isRunning?doStop():doStart(); };
@@ -1490,21 +1555,21 @@ function radarSVG(metrics,size=210){
 }
 
 /* ---- renderers ---- */
-const EMPTY='<div class="empty"><div class="icon">🎞️</div><div>No results</div></div>';
+const EMPTY='<div class="empty"><div class="icon">🎞️</div><div>暂无结果</div></div>';
 function emptyHTML(step){
   const C={
     cull:['✂️','步骤 1 · 模糊筛选','先识别并筛出失焦、明显模糊的照片。',
-      ['🔍 Measures real sharpness — haze &amp; night skies aren’t mistaken for blur',
-       '🟢 Sharp &nbsp;·&nbsp; 🟠 Soft (recoverable) &nbsp;·&nbsp; 🔴 Blurry',
-       '📁 Pick a folder, then press <b>Start</b>']],
+      ['🔍 评估真实清晰度，雾气和夜空不会被简单误判为模糊',
+       '🟢 清晰 &nbsp;·&nbsp; 🟠 轻微软（可保留） &nbsp;·&nbsp; 🔴 模糊',
+       '📁 选择照片文件夹，然后点击 <b>开始处理</b>']],
     dedup:['🪢','步骤 2 · 相似去重','将连拍或高度相似照片归组，保留其中最佳的一张。',
       ['📸 自动识别并归组近似照片',
        '⭐ 每组优先保留最清晰的一张',
-       '🚀 Press <b>Start</b> — uses your Cull keepers, or the whole folder']],
+       '🚀 点击 <b>开始处理</b>，优先使用上一阶段保留照片，也可直接处理整个文件夹']],
     rank:['🏆','步骤 3 · 智能优选','综合画质、构图与色彩，找出更值得保留的照片。',
-      ['🎯 Scores composition, lighting, focus, color &amp; contrast',
+      ['🎯 综合评估构图、光线、清晰度、色彩与对比度',
        '🥇 展示前 N 张优选照片，并提供单张评分雷达图',
-       '⬇️ Press <b>Start</b>, then export the keepers']]
+       '⬇️ 点击 <b>开始处理</b>，完成后可导出优选照片']]
   };
   const c=C[step]||C.cull;
   return `<div class="empty"><div class="icon">${c[0]}</div>
@@ -1519,7 +1584,7 @@ function cullCard(p){
   // (used only to pick the winner) is no longer shown — it wasn't meaningful.
   const g=p.group||1;
   const badge=isDedup
-    ? `<div class="badge good">${g>1?('★ 同组最佳 · 共 '+g+' 张'):'KEPT'}</div>`
+    ? `<div class="badge good">${g>1?('★ 同组最佳 · 共 '+g+' 张'):'保留'}</div>`
     : (p.badge?`<div class="badge ${p.badgeType}">${p.badge}</div>`:'');
   const toggle=currentStep==='cull'?`<button class="status-toggle" data-path="${path}">${p.kept?'→ 模糊':'✓ 保留'}</button>`:'';
   const cls=p.kept?'kept':(p.rejected?'rejected':'');
@@ -1557,7 +1622,7 @@ function renderGallery(items){   /* dedup: paginated + reconciling (order-stable
       const g=p.group||1;
       const b=node.querySelector('.badge');
       const sc=node.querySelector('.photo-score');
-      if(b)b.textContent=(g>1?('★ 同组最佳 · 共 '+g+' 张'):'KEPT');
+      if(b)b.textContent=(g>1?('★ 同组最佳 · 共 '+g+' 张'):'保留');
       if(sc)sc.textContent=(g>1?((g-1)+' 张相似照片已归组'):'原始照片');
       node.dataset.i=i;delete existing[key];}
     else{const w=document.createElement('div');w.innerHTML=cullCard(p);node=w.firstElementChild;node.dataset.i=i;}
@@ -1572,9 +1637,9 @@ function updatePager(){
   if(currentStep!=='dedup'||total<=PAGE_SIZE){pager.style.display='none';return;}
   const start=gPage*PAGE_SIZE+1,end=Math.min(total,(gPage+1)*PAGE_SIZE);
   pager.style.display='flex';
-  pager.innerHTML=`<button id="pgPrev" ${gPage===0?'disabled':''}>← Prev</button>`
-    +`<span>Page ${gPage+1} / ${pages} · ${start}–${end} of ${total}</span>`
-    +`<button id="pgNext" ${gPage>=pages-1?'disabled':''}>Next →</button>`;
+  pager.innerHTML=`<button id="pgPrev" ${gPage===0?'disabled':''}>← 上一页</button>`
+    +`<span>第 ${gPage+1} / ${pages} 页 · ${start}–${end} / 共 ${total}</span>`
+    +`<button id="pgNext" ${gPage>=pages-1?'disabled':''}>下一页 →</button>`;
   document.getElementById('pgPrev').onclick=()=>{if(gPage>0){gPage--;lastGallerySig='';renderGallery(gItems);window.scrollTo(0,0);}};
   document.getElementById('pgNext').onclick=()=>{if(gPage<pages-1){gPage++;lastGallerySig='';renderGallery(gItems);window.scrollTo(0,0);}};
 }
@@ -1584,7 +1649,7 @@ function rankCard(p,idx){const path=String(p.path).replace(/"/g,'&quot;');
     <button class="pbg-toggle${on}" data-path="${path}" title="${p.phonebg?'已设为手机壁纸，点击取消':'设为手机壁纸'}">📱</button>
     <img class="photo-img" src="${p.thumb}" loading="lazy" decoding="async">
     <div class="photo-info"><div class="pi-row"><span class="photo-name">${p.name}</span>
-      <button class="remove-btn" data-path="${path}" title="从优选结果中移除（不会删除原文件）">✕ Remove</button></div>
+      <button class="remove-btn" data-path="${path}" title="从优选结果中移除（不会删除原文件）">✕ 移除</button></div>
       <div class="photo-score">${p.score}</div></div></div>`;}
 function renderRank(items){
   photos=items;const g=document.getElementById('gallery');
