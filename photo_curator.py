@@ -787,40 +787,18 @@ def run_cull(folder, strictness, adaptive, rescue_on):
 
 
 def _relocate_for_status(path, now_kept):
-    """Keep disk in sync: kept (Sharp/Soft) live in the folder, Blurry go to
-    Blurred/. Soft is treated as kept — never auto-moved."""
-    folder = state.get('folder')
-    if not folder or not Path(folder).is_dir():
-        return path
-    folder = Path(folder)
-    blurred = folder / "Blurred"
-    name = Path(path).name
-    cur = None
-    for cand in (Path(path), folder / name, blurred / name):
-        if cand.exists():
-            cur = cand
-            break
-    if cur is None:
-        return path
-    if now_kept:
-        target = folder
-    else:
-        if not (state['auto']['cull'] or blurred.is_dir()):
-            return str(cur)
-        target = blurred
-    if cur.parent == target:
-        return str(cur)
+    """Manual tier changes are metadata-only.
+
+    The UI lets the user reclassify a photo between Sharp / Soft / Blurry.
+    That action must never move or rename the source file. Physical file
+    movement happens only through explicit organizer actions such as
+    /api/move-blurry or the opt-in duplicate organizer.
+    """
     try:
-        target.mkdir(parents=True, exist_ok=True)
-        dst = target / name
-        if dst.exists():
-            dst = target / f"{cur.stem}_{int(time.time())}{cur.suffix}"
-        shutil.move(str(cur), str(dst))
-        logger.info(f"Moved {name} → {target.name}/ (status change)")
-        return str(dst)
-    except Exception as e:
-        logger.warning(f"relocate fail {name}: {e}")
-        return str(cur)
+        p = Path(path)
+        return str(p) if p.exists() else path
+    except Exception:
+        return path
 
 
 # --------------------------------------------------------------------------- #
