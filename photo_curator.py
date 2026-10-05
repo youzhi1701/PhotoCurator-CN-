@@ -1331,6 +1331,7 @@ function escHtml(v){
   })[ch]);
 }
 let folder=null, photos=[], lbList=[], lbIndex=0, currentStep='cull';
+let isRunning=false, runningStep=null;
 let lastRankSig='', renderedCount=0, photoIdx=0, lastStep=null, weightTimer=null, removedCount=0, pollFailures=0;
 const CATS=[['aesthetic','综合观感'],['composition','构图'],['technical','技术质量'],['sharpness','清晰度'],['color','色彩']];
 const catColor=(i,n)=>`hsl(${Math.round(i*360/(n||CATS.length))},80%,62%)`;
@@ -1517,7 +1518,6 @@ document.getElementById('browseBtn').onclick=async()=>{
 };
 
 /* start / stop (the same button toggles) */
-let isRunning=false, runningStep=null;
 const startBtn=document.getElementById('startBtn');
 function setStartBtn(running){
   isRunning=running;
