@@ -923,7 +923,7 @@ def run_dedup(folder, threshold, ftype='all', pair='both'):
                 dups = [str(p) for p in paths if str(p) not in kept_set]
                 r = org.move_duplicate_photos(dups)
                 s['status'] = (f"完成 · 用时 {took} · {total} 张中保留 {len(kept)} 张 "
-                               f"（{pct_uniq:.0f}%）· 已移动 {r.get('moved', 0)} 张到 Duplicates/")
+                               f"（{pct_uniq:.0f}%）· 已移动 {r.get('moved', 0)} 张到重复照片（Duplicates）文件夹")
             except Exception as e:
                 logger.warning(f"dedup auto-move failed: {e}")
                 s['status'] = (f"完成 · 用时 {took} · {total} 张中保留 {len(kept)} 张 "
@@ -1190,7 +1190,8 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   .zoomctl button:hover{background:rgba(255,255,255,.18)}
   .zoomctl .zoomval{min-width:48px;text-align:center;font-size:11px;font-weight:700;user-select:none}
   @media (max-width: 820px){.zoomctl .zoomval{min-width:42px}.zoomctl button{min-width:26px}}
-  @media (max-width: 620px){.zoomctl{order:2}.zoomctl .zoomval{display:none}}
+  @media (max-width: 620px){
+    .lb-shortcuts{display:none}.zoomctl{order:2}.zoomctl .zoomval{display:none}}
 
   /* Responsive desktop layout: important on Windows 125%/150%/200% DPI. */
   @media (max-width: 1100px){
@@ -1257,7 +1258,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   }
 </style></head><body>
 <div class="top">
-  <div class="brand">🖼️ 照片筛选 <small>PhotoCurator 中文版 · v1.1</small></div>
+  <div class="brand">🖼️ 照片筛选 <small>PhotoCurator 中文版 · v1.2</small></div>
   <div class="steps">
     <div class="step active" data-step="cull">1 · 模糊筛选</div>
     <div class="step" data-step="dedup">2 · 相似去重</div>
@@ -1301,7 +1302,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
     <div class="sidebar-actions">
       <button class="btn-ghost" id="exportBtn" style="display:none">⬇ 导出优选照片…</button>
       <button class="btn-ghost" id="exportPbgBtn" style="display:none">📱 导出手机壁纸…</button>
-      <button class="btn-ghost" id="moveBlurryBtn" style="display:none">🗂️ 移动模糊照片 → Blurred/</button>
+      <button class="btn-ghost" id="moveBlurryBtn" style="display:none">🗂️ 移动模糊照片 → 模糊照片（Blurred）</button>
       <button class="btn" id="startBtn">🚀 开始处理</button>
       <button class="btn god" id="godBtn" title="自动执行：模糊筛选 → 相似去重 → 智能优选">⚡ 一键全流程</button>
     </div>
@@ -1332,10 +1333,11 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   <img class="lb-img" id="lbImg" src="">
   <button class="lb-nav lb-next" id="lbNext" title="下一张" aria-label="下一张">›</button>
   <div class="lb-side" id="lbSide"></div>
+  <div class="lb-shortcuts" style="position:absolute;left:16px;bottom:10px;color:rgba(255,255,255,.55);font-size:10px;z-index:21;pointer-events:none">大图快捷键：← → 切换 · Esc 关闭 · B 壁纸 · X 移除</div>
 </div>
 
 <div class="toast-wrap" id="toastWrap"></div>
-<div id="cn-build-badge" style="position:fixed;right:10px;bottom:8px;z-index:50;font-size:10px;color:var(--muted);opacity:.55;pointer-events:none">照片筛选 · 中文桌面版 v1.1</div>
+<div id="cn-build-badge" style="position:fixed;right:10px;bottom:8px;z-index:50;font-size:10px;color:var(--muted);opacity:.55;pointer-events:none">照片筛选 · 中文桌面版 v1.2</div>
 
 <script>
 function toast(msg,type){
@@ -1399,14 +1401,14 @@ function settingsHTML(step){
   if(step==='dedup') return `<div class="wgroup"><label>相似度阈值</label>
       <input type="range" id="opt" min="0.5" max="0.95" step="0.05" value="0.8">
       <div class="slider-value">相似度达到或高于 <b id="optVal">0.80</b> 时归为一组 · 数值越低合并越激进</div></div>
-      <div class="wgroup" style="margin-top:10px"><label>RAW + JPG 同帧照片</label>
+      <div class="wgroup" style="margin-top:10px"><label>RAW + JPG 同帧照片（原片与预览图）</label>
       <select id="pairMode">
         <option value="both">两者都保留</option>
-        <option value="raw">仅保留 RAW</option>
-        <option value="jpg">仅保留 JPG</option>
+        <option value="raw">仅保留 RAW 原片</option>
+        <option value="jpg">仅保留 JPG 图片</option>
       </select>
       <div class="slider-value">同名 RAW/JPG（如 IMG_0001.CR2 + .JPG）会在去重前合并为一张</div></div>
-      <label class="check"><input type="checkbox" id="autoOrg"> 自动将重复照片移动到 Duplicates/</label>`;
+      <label class="check"><input type="checkbox" id="autoOrg"> 自动将重复照片移动到重复照片（Duplicates）文件夹</label>`;
   // rank
   return `<div class="sidebar-title" style="margin-bottom:4px">⚖️ 评分权重</div>
     <div class="panel-box" id="weightPanel"></div>
@@ -2069,7 +2071,7 @@ function loadExif(path,side){
       rows+=exifRow('位置',`<a href="https://www.google.com/maps?q=${e.lat},${e.lon}" target="_blank" rel="noopener" style="white-space:nowrap">${c}</a>`,true);
       rows+=`<div class="exmap"><div class="mapslot" id="exMapSlot"><span class="mappin"></span></div>`
         +`<span class="cred"><a href="https://openfreemap.org/" target="_blank" rel="noopener">OpenFreeMap</a> © `
-        +`<a href="https://www.openmaptiles.org/" target="_blank" rel="noopener">OpenMapTiles</a> · data © `
+        +`<a href="https://www.openmaptiles.org/" target="_blank" rel="noopener">OpenMapTiles</a> · 地图数据 © `
         +`<a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a></span></div>`;
       wantMap={lat:e.lat,lon:e.lon};
     }
@@ -2204,8 +2206,8 @@ document.getElementById('exportPbgBtn').onclick=async function(){
 };
 
 document.getElementById('moveBlurryBtn').onclick=async function(){
-  if(!confirm('是否将已审核为“模糊”的照片移动到 Blurred/ 子文件夹？\n\n只会移动，不会删除原文件；移动后可手动移回。'))return;
-  const old='🗂️ 移动模糊照片 → Blurred/';
+  if(!confirm('是否将已审核为“模糊”的照片移动到“模糊照片（Blurred）”子文件夹？\n\n只会移动，不会删除原文件；移动后可手动移回。'))return;
+  const old='🗂️ 移动模糊照片 → 模糊照片（Blurred）';
   this.disabled=true;this.textContent='正在移动…';
   try{
     const r=await fetch('/api/move-blurry',{method:'POST'});
