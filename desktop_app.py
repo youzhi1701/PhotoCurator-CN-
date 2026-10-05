@@ -19,14 +19,27 @@ APP_VERSION = "1.1.0-cn.1"
 HOST = "127.0.0.1"
 DEFAULT_PORT = 5014
 
-# Keep one desktop instance only. This avoids two windows moving/ranking the
-# same library at the same time. The socket stays open for the process lifetime.
-_instance_guard = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-try:
-    _instance_guard.bind((HOST, 5013))
-    _instance_guard.listen(1)
-except OSError:
-    raise SystemExit("照片筛选已经在运行，请先切换到现有窗口。")
+# Keep one desktop instance only. On Windows use a named mutex so we do not
+# reserve an unrelated TCP port or mistake another local service for our app.
+_instance_guard = None
+_mutex_handle = None
+if os.name == 'nt':
+    import ctypes
+    kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+    _mutex_handle = kernel32.CreateMutexW(
+        None, False, "Local\\PhotoCurator_CN_youzh1701"
+    )
+    if not _mutex_handle:
+        raise OSError("无法创建应用单实例锁")
+    if ctypes.get_last_error() == 183:  # ERROR_ALREADY_EXISTS
+        raise SystemExit("照片筛选已经在运行，请先切换到现有窗口。")
+else:
+    _instance_guard = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        _instance_guard.bind((HOST, 5013))
+        _instance_guard.listen(1)
+    except OSError:
+        raise SystemExit("照片筛选已经在运行，请先切换到现有窗口。")
 
 
 def choose_port():
