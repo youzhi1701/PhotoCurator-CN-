@@ -1354,7 +1354,7 @@ function startStep(step){
   // Carry the Cull file-type filter (RAW only / JPG only) into Dedup & Rank.
   if(step!=='cull'&&cullType!=='all'){
     const tl=cullType.startsWith('ext:')?cullType.slice(4).toUpperCase():cullType.toUpperCase();
-    toast('继续处理 '+tl+' files only — switch the Cull filter to "All types" to include everything','');
+    toast('继续处理：仅 '+tl+' 格式。若要包含全部照片，请将“模糊筛选”的格式切换为“全部格式”。','');
   }
   fetch('/api/run/'+step,{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({folder,opt:opt?parseFloat(opt.value):0,
@@ -1658,9 +1658,9 @@ document.getElementById('gallery').addEventListener('click',e=>{
 /* ---- lightbox ---- */
 function openLb(i){lbIndex=i;showLb();document.getElementById('lightbox').classList.add('open');}
 function closeLb(){document.getElementById('lightbox').classList.remove('open');}
-const CATINFO={aesthetic:'Overall "magazine appeal" — a transparent blend of composition, color, sharpness, dynamic range and exposure.',
+const CATINFO={aesthetic:'综合视觉表现：结合构图、色彩、清晰度、动态范围与曝光的整体评分。',
   composition:'主体位置、水平线与整体视觉平衡。',technical:'曝光、动态范围、影调、白平衡与噪点控制。',
-  sharpness:'Contrast-normalized focus. High = crisp; haze does NOT count as blur.',color:'色彩鲜明程度与不同色相之间的协调关系。'};
+  sharpness:'经对比度归一化后的清晰度评分。数值越高越清晰；雾霾或低对比度不会直接被判定为模糊。',color:'色彩鲜明程度与不同色相之间的协调关系。'};
 const SUBINFO={'三分法构图':'主体与三分点或黄金分割位置的接近程度。','水平线':'画面主要水平线的平直程度。',
   '画面平衡':'画面左右视觉重量是否均衡。','曝光':'高光和暗部是否存在明显截断。','动态范围':'最暗阴影与最亮高光之间的层次跨度。',
   '影调范围':'影调在直方图中的分布丰富程度。','白平衡':'画面色偏的中性程度；刻意冷暖调会降低此项。','噪点控制':'平坦区域的纯净程度，数值越高越干净。',
@@ -1677,7 +1677,7 @@ function showLb(){
   document.getElementById('lbImg').src='/api/image?path='+encodeURIComponent(p.path);
   document.getElementById('lbName').textContent=(p.rank!=null?'#'+p.rank+'  ':'')+p.name;
   const extra=(currentStep==='dedup')
-    ? ((p.group>1)?('   ·   Best of '+p.group+' ('+(p.group-1)+' set aside)'):'   ·   Original')
+    ? ((p.group>1)?('   ·   同组最佳 · 共 '+p.group+' 张（'+(p.group-1)+' 张相似照片已归组）'):'   ·   原始照片')
     : (p.score!=null?'   ·   '+p.score:'');
   document.getElementById('lbCount').textContent=(lbIndex+1)+' / '+lbList.length+extra;
   const rm=document.getElementById('lbRemove'),rs=document.getElementById('lbRestore'),tg=document.getElementById('lbToggle');
