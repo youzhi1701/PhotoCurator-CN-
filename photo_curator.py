@@ -1724,7 +1724,7 @@ function rankCard(p,idx){const path=escHtml(p.path);
   return `<div class="photo-card kept${p.phonebg?' pbg':''}" data-i="${idx}" data-path="${path}"><div class="rank-num">${p.rank!=null?p.rank:idx+1}</div>
     <button class="pbg-toggle${on}" data-path="${path}" title="${p.phonebg?'已设为手机壁纸，点击取消':'设为手机壁纸'}">📱</button>
     <img class="photo-img" src="${p.thumb}" loading="lazy" decoding="async">
-    <div class="photo-info"><div class="pi-row"><span class="photo-name">${p.name}</span>
+    <div class="photo-info"><div class="pi-row"><span class="photo-name">${escHtml(p.name)}</span>
       <button class="remove-btn" data-path="${path}" title="从优选结果中移除（不会删除原文件）">✕ 移除</button></div>
       <div class="photo-score">${p.score}</div></div></div>`;}
 function renderRank(items){
@@ -1768,7 +1768,7 @@ function cullCardHtml(p,idx){const path=escHtml(p.path);
   return `<div class="photo-card ${cls}" data-i="${idx}" data-path="${path}" data-tier="${p.tier}">
     <button class="badge ${p.badgeType} badge-tier" data-path="${path}" data-tier="${p.tier}" title="点击切换：清晰 → 轻微软 → 模糊">⇄ ${p.badge}</button>
     <img class="photo-img" src="${p.thumb}" loading="lazy" decoding="async">
-    <div class="photo-info"><div class="pi-row"><span class="photo-name">${p.name}</span><span class="ftype${p.raw?'':(p.heic?' heic':' jpg')}">${p.fmt||(p.raw?'RAW':p.heic?'HEIC':'JPG')}</span></div><div class="photo-score">${p.score}</div></div></div>`;}
+    <div class="photo-info"><div class="pi-row"><span class="photo-name">${escHtml(p.name)}</span><span class="ftype${p.raw?'':(p.heic?' heic':' jpg')}">${p.fmt||(p.raw?'RAW':p.heic?'HEIC':'JPG')}</span></div><div class="photo-score">${p.score}</div></div></div>`;}
 function renderCullStep(items){
   photos=items;
   const fSig=[...new Set(items.filter(p=>p.raw).map(p=>p.fmt||'RAW'))].sort().join(',');
@@ -1898,7 +1898,7 @@ function showLb(){
     const d=p.detail||{};GROUPS.forEach(([k,lab,keys])=>{const cv=(p.scores&&p.scores[k]);html+=`<h3>${lab}<span>${cv!=null?cv:''}</span></h3>`;keys.forEach(key=>{if(key in d)html+=barRow(key,d[key],SUBINFO[key]);});});
     html+=`<div style="font-size:10px;opacity:.5;margin-top:14px">Hover any row for what it measures.</div>`;
     side.style.display='block';side.innerHTML=html;
-  }else{side.style.display='block';side.innerHTML=`<h3>${currentStep==='cull'?'Sharpness':'Photo'}</h3><div style="font-size:13px;opacity:.85">${p.name}</div><div style="font-size:26px;font-weight:700;margin-top:8px">${p.score!=null?p.score:''}</div>`;}
+  }else{side.style.display='block';side.innerHTML=`<h3>${currentStep==='cull'?'清晰度':'照片'}</h3><div style="font-size:13px;opacity:.85">${escHtml(p.name)}</div><div style="font-size:26px;font-weight:700;margin-top:8px">${p.score!=null?p.score:''}</div>`;}
   loadExif(p.path,side);
 }
 function exifRow(label,val,allowHtml=false){
