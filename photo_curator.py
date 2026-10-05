@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-照片 Curator v3 — full pipeline (Cull · Dedup · Rank)
+Photo Curator v3 — full pipeline (Cull · Dedup · Rank)
 =============================================================================
 v3 combines v2's proven Cull and Dedup steps with the advanced, magazine-style
 Ranking Studio:
 
   1 · CULL   contrast-normalized sharpness (haze/night/low-contrast shots are
-             kept; only true blur is flagged). Per-photo 清晰/模糊 override
+             kept; only true blur is flagged). Per-photo Sharp/Blurry override
              that physically moves files in/out of Blurred/.
   2 · DEDUP  global perceptual-hash clustering (FastBatchDeduplicator) — burst
              sequences collapse to their sharpest frame; optional auto-move of
@@ -42,9 +42,9 @@ from PIL import Image, ImageOps
 from raw_loader import (RAW_EXTS, HAS_RAWPY, is_raw,
                         HEIF_EXTS, HAS_HEIF, is_heif, needs_jpeg_preview,
                         open_image_pil, imread_bgr, imread_gray)
-from photo_ranking_v3 import Advanced照片Analyzer
+from photo_ranking_v3 import AdvancedPhotoAnalyzer
 from photo_dedup_batch import FastBatchDeduplicator
-from photo_file_organizer import 照片Organizer
+from photo_file_organizer import PhotoOrganizer
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -106,7 +106,7 @@ else:
     logger.warning("rawpy is NOT installed — RAW files (CR2/CR3/NEF/ARW/DNG...)")
     logger.warning("will be IGNORED. Enable RAW support with:")
     logger.warning("    pip install rawpy")
-    logger.warning("then restart 照片 Curator.")
+    logger.warning("then restart Photo Curator.")
     logger.warning("=" * 64)
 # HEIC/HEIF (iPhone photos) — decoded via pillow-heif if installed.
 if HAS_HEIF:
@@ -116,7 +116,7 @@ else:
     logger.warning("pillow-heif is NOT installed — HEIC/HEIF files (iPhone")
     logger.warning("photos) will be IGNORED. Enable HEIC support with:")
     logger.warning("    pip install pillow-heif")
-    logger.warning("then restart 照片 Curator.")
+    logger.warning("then restart Photo Curator.")
     logger.warning("=" * 64)
 # The GPS map. OpenStreetMap's own tile servers refuse app traffic (their tile
 # usage policy forbids it, and they answer with an "Access blocked" tile), so
@@ -470,7 +470,7 @@ def native_folder_dialog(prompt="Select a folder"):
 
 
 # --------------------------------------------------------------------------- #
-#  清晰ness (shared by Cull, and as the dedup quality key)
+#  Sharpness (shared by Cull, and as the dedup quality key)
 # --------------------------------------------------------------------------- #
 def sharpness_score(gray):
     """Whole-frame contrast-normalized focus measure (used by Dedup's quality
@@ -533,7 +533,7 @@ def classify_sharpness(region_s, q, blur_lo, sharp_hi, q_rescue, rescue_on):
         return 'sharp', False
     if region_s >= blur_lo:
         return 'soft', bool(rescue_on and q >= q_rescue)   # ★ if well-composed
-    # below blur floor — normally 模糊, but rescue a near-miss that's gorgeous
+    # below blur floor — normally Blurry, but rescue a near-miss that's gorgeous
     if rescue_on and q >= q_rescue and region_s >= blur_lo * 0.6:
         return 'soft', True
     return 'blurry', False
@@ -556,10 +556,10 @@ BASE_BLUR, BASE_SHARP = 90.0, 230.0   # region_s baselines when not adaptive
 
 def _badge_for(tier, star):
     if tier == 'sharp':
-        return '清晰', 'good'
+        return 'Sharp', 'good'
     if tier == 'soft':
-        return ('轻微软 ★' if star else '轻微软'), 'soft'
-    return '模糊', 'bad'
+        return ('Soft ★' if star else 'Soft'), 'soft'
+    return 'Blurry', 'bad'
 
 
 def run_cull(folder, strictness, adaptive, rescue_on):
@@ -577,8 +577,8 @@ def run_cull(folder, strictness, adaptive, rescue_on):
         def thresholds():
             if adaptive and items:
                 M = float(np.median([it['region_s'] for it in items]))
-                # 清晰ness is ~log-distributed; keep the blur floor LOW and the
-                # 轻微软 band WIDE so slightly-soft (Topaz-recoverable) frames are
+                # Sharpness is ~log-distributed; keep the blur floor LOW and the
+                # Soft band WIDE so slightly-soft (Topaz-recoverable) frames are
                 # kept rather than culled. Only clearly-soft frames fall below.
                 blur_lo = max(30.0, M * 0.25)
                 sharp_hi = max(blur_lo * 1.5, M * 0.70)
@@ -627,9 +627,9 @@ def run_cull(folder, strictness, adaptive, rescue_on):
 
         def _tiers(done):
             k = (s['sharp'] + s['soft'] + s['blurry']) or 1
-            return (f"清晰 {s['sharp']} ({s['sharp']/k*100:.0f}%) / "
-                    f"轻微软 {s['soft']} ({s['soft']/k*100:.0f}%) / "
-                    f"模糊 {s['blurry']} ({s['blurry']/k*100:.0f}%)")
+            return (f"Sharp {s['sharp']} ({s['sharp']/k*100:.0f}%) / "
+                    f"Soft {s['soft']} ({s['soft']/k*100:.0f}%) / "
+                    f"Blurry {s['blurry']} ({s['blurry']/k*100:.0f}%)")
 
         for idx, p in enumerate(images):
             if s.get('cancel'):
@@ -647,7 +647,7 @@ def run_cull(folder, strictness, adaptive, rescue_on):
             bgr = imread_bgr(str(p))       # RAW-aware
             if bgr is None:
                 continue
-            gray = cv2.cvt色彩(bgr, cv2.COLOR_BGR2GRAY)
+            gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
             items.append({'name': p.name, 'path': str(p),
                           'region_s': region_sharpness(gray),
                           'q': quick_quality(bgr, gray)})
@@ -655,7 +655,7 @@ def run_cull(folder, strictness, adaptive, rescue_on):
                 classify_all()
         classify_all()
 
-        # 模糊 photos are NOT moved automatically — they stay in place so you
+        # Blurry photos are NOT moved automatically — they stay in place so you
         # can review them first, then move them with the "Move blurry → Blurred/"
         # button (mirrors the TOP-N export flow).
         s['progress'] = 100
@@ -670,8 +670,8 @@ def run_cull(folder, strictness, adaptive, rescue_on):
 
 
 def _relocate_for_status(path, now_kept):
-    """Keep disk in sync: kept (清晰/轻微软) live in the folder, 模糊 go to
-    Blurred/. 轻微软 is treated as kept — never auto-moved."""
+    """Keep disk in sync: kept (Sharp/Soft) live in the folder, Blurry go to
+    Blurred/. Soft is treated as kept — never auto-moved."""
     folder = state.get('folder')
     if not folder or not Path(folder).is_dir():
         return path
@@ -699,7 +699,7 @@ def _relocate_for_status(path, now_kept):
         if dst.exists():
             dst = target / f"{cur.stem}_{int(time.time())}{cur.suffix}"
         shutil.move(str(cur), str(dst))
-        logger.info(f"已移动 {name} → {target.name}/ (status change)")
+        logger.info(f"Moved {name} → {target.name}/ (status change)")
         return str(dst)
     except Exception as e:
         logger.warning(f"relocate fail {name}: {e}")
@@ -768,7 +768,7 @@ def run_dedup(folder, threshold, ftype='all', pair='both'):
             # stays responsive. When finished, show ALL survivors so every kept
             # photo can be reviewed (rendered once, with lazy-loading images).
             # Iterate clusters (not just reps) so each card knows how many frames
-            # collapsed into it → "同组最佳 · 共 N" / "N similar hidden".
+            # collapsed into it → "Best of N" / "N similar hidden".
             clusters = dd.clusters
             shown = clusters if final else clusters[-GRID_CAP:]
             photos = []
@@ -822,7 +822,7 @@ def run_dedup(folder, threshold, ftype='all', pair='both'):
         pct_uniq = (len(kept) / total * 100) if total else 0
         if state['auto']['dedup'] and removed:
             try:
-                org = 照片Organizer(folder)
+                org = PhotoOrganizer(folder)
                 kept_set = set(kept)
                 dups = [str(p) for p in paths if str(p) not in kept_set]
                 r = org.move_duplicate_photos(dups)
@@ -868,11 +868,11 @@ def build_topn(weights=None, topn=None):
             'scores': {'composition': round(s.composition), 'technical': round(s.technical),
                        'sharpness': round(s.sharpness), 'color': round(s.color),
                        'aesthetic': round(s.aesthetic)},
-            'detail': {'三分法构图': round(s.rule_of_thirds), '水平线': round(s.horizon_level),
-                       '画面平衡': round(s.balance), '曝光': round(s.exposure),
-                       '动态范围': round(s.dynamic_range), '影调范围': round(s.tonal),
-                       '白平衡': round(s.white_balance), '噪点控制': round(s.noise),
-                       '色彩fulness': round(s.colorfulness), '色彩 harmony': round(s.harmony)},
+            'detail': {'Rule of thirds': round(s.rule_of_thirds), 'Horizon level': round(s.horizon_level),
+                       'Balance': round(s.balance), 'Exposure': round(s.exposure),
+                       'Dynamic range': round(s.dynamic_range), 'Tonal range': round(s.tonal),
+                       'White balance': round(s.white_balance), 'Noise (clean)': round(s.noise),
+                       'Colorfulness': round(s.colorfulness), 'Color harmony': round(s.harmony)},
         })
     return out
 
@@ -914,7 +914,7 @@ def run_rank(folder, ftype='all', pair='both'):
             return
         total = len(paths)
         s['total'] = total
-        analyzer = Advanced照片Analyzer()
+        analyzer = AdvancedPhotoAnalyzer()
 
         t0 = time.time()
 
@@ -952,7 +952,7 @@ def run_rank(folder, ftype='all', pair='both'):
 # --------------------------------------------------------------------------- #
 HTML = r'''<!doctype html><html lang="zh-CN"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>照片筛选 · 照片Curator 中文版</title>
+<title>照片筛选 · PhotoCurator 中文版</title>
 <style>
   :root{--bg:#f4f6fb;--panel:#fff;--panel2:#eef1f7;--text:#1c2330;--muted:#6b7280;
         --accent:#2563eb;--good:#16a34a;--warn:#d97706;--bad:#dc2626;--border:#dde3ec;--shadow:rgba(20,40,80,.10);color-scheme:light}
@@ -1092,7 +1092,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   .toast.good{border-left-color:var(--good)} .toast.bad{border-left-color:var(--bad)} .toast.info{border-left-color:var(--accent)}
 </style></head><body>
 <div class="top">
-  <div class="brand">🖼️ 照片筛选 <small>照片Curator 中文版 · v1.0</small></div>
+  <div class="brand">🖼️ 照片筛选 <small>PhotoCurator 中文版 · v1.0</small></div>
   <div class="steps">
     <div class="step active" data-step="cull">1 · 模糊筛选</div>
     <div class="step" data-step="dedup">2 · 相似去重</div>
@@ -1117,12 +1117,12 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
       <div id="settingsPanel"></div>
 
       <div class="panel-box">
-        <div class="stat-row" data-steps="cull dedup rank"><span>照片数量</span><span class="v" id="s照片数量">0</span></div>
-        <div class="stat-row" data-steps="cull"><span>清晰</span><span class="v" id="s清晰">0</span></div>
-        <div class="stat-row" data-steps="cull"><span>轻微软（可保留）</span><span class="v" id="s轻微软" style="color:var(--warn)">0</span></div>
-        <div class="stat-row" data-steps="cull"><span>模糊</span><span class="v" id="s模糊">0</span></div>
+        <div class="stat-row" data-steps="cull dedup rank"><span>照片数量</span><span class="v" id="sImages">0</span></div>
+        <div class="stat-row" data-steps="cull"><span>清晰</span><span class="v" id="sSharp">0</span></div>
+        <div class="stat-row" data-steps="cull"><span>轻微软（可保留）</span><span class="v" id="sSoft" style="color:var(--warn)">0</span></div>
+        <div class="stat-row" data-steps="cull"><span>模糊</span><span class="v" id="sBlurry">0</span></div>
         <div class="stat-row" data-steps="dedup"><span>去重后保留</span><span class="v" id="sGroups">0</span></div>
-        <div class="stat-row" data-steps="cull dedup rank"><span>当前显示</span><span class="v" id="s当前显示">0</span></div>
+        <div class="stat-row" data-steps="cull dedup rank"><span>当前显示</span><span class="v" id="sShowing">0</span></div>
         <div id="removedBox" style="display:none">已移除 <b id="removedN">0</b> 张 · <a id="restoreAll">全部恢复</a></div>
       </div>
     </div>
@@ -1131,7 +1131,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
     <div class="sidebar-actions">
       <button class="btn-ghost" id="exportBtn" style="display:none">⬇ 导出优选照片…</button>
       <button class="btn-ghost" id="exportPbgBtn" style="display:none">📱 导出手机壁纸…</button>
-      <button class="btn-ghost" id="move模糊Btn" style="display:none">🗂️ 移动模糊照片 → Blurred/</button>
+      <button class="btn-ghost" id="moveBlurryBtn" style="display:none">🗂️ 移动模糊照片 → Blurred/</button>
       <button class="btn" id="startBtn">🚀 开始处理</button>
       <button class="btn god" id="godBtn" title="自动执行：模糊筛选 → 相似去重 → 智能优选">⚡ 一键全流程</button>
     </div>
@@ -1152,7 +1152,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
     <div><div id="lbName">—</div><div style="font-size:12px;opacity:.7" id="lbCount"></div></div>
     <div class="lb-actions">
       <button class="lb-btn pbg" id="lbPhoneBg" style="display:none">📱 手机壁纸</button>
-      <button class="lb-btn toggle" id="lbToggle" style="display:none">→ 模糊</button>
+      <button class="lb-btn toggle" id="lbToggle" style="display:none">→ 标记为模糊</button>
       <button class="lb-btn restore" id="lbRestore" style="display:none">↺ 全部恢复</button>
       <button class="lb-btn remove" id="lbRemove" style="display:none">✕ 移除</button>
       <button class="lb-close" id="lbClose">✕</button>
@@ -1172,13 +1172,13 @@ function toast(msg,type){
   const w=document.getElementById('toastWrap');
   const el=document.createElement('div');el.className='toast '+(type||'good');el.textContent=msg;
   w.appendChild(el);requestAnimationFrame(()=>el.classList.add('show'));
-  set时间out(()=>{el.classList.remove('show');set时间out(()=>el.remove(),300);},3600);
+  setTimeout(()=>{el.classList.remove('show');setTimeout(()=>el.remove(),300);},3600);
 }
 let folder=null, photos=[], lbList=[], lbIndex=0, currentStep='cull';
-let lastRankSig='', renderedCount=0, photoIdx=0, lastStep=null, weight时间r=null, removedCount=0;
-const CATS=[['aesthetic','综合观感'],['composition','构图'],['technical','技术质量'],['sharpness','清晰ness'],['color','色彩']];
-const cat色彩=(i,n)=>`hsl(${Math.round(i*360/(n||CATS.length))},80%,62%)`;
-const CATCOLORS=CATS.map((_,i)=>cat色彩(i,CATS.length));
+let lastRankSig='', renderedCount=0, photoIdx=0, lastStep=null, weightTimer=null, removedCount=0;
+const CATS=[['aesthetic','综合观感'],['composition','构图'],['technical','技术质量'],['sharpness','清晰度'],['color','色彩']];
+const catColor=(i,n)=>`hsl(${Math.round(i*360/(n||CATS.length))},80%,62%)`;
+const CATCOLORS=CATS.map((_,i)=>catColor(i,CATS.length));
 const DEFAULTS={aesthetic:30,composition:22,technical:20,sharpness:16,color:12};
 let weights={...DEFAULTS};
 
@@ -1197,14 +1197,14 @@ function settingsHTML(step){
       <label class="check" style="margin-top:6px"><input type="checkbox" id="cRescue" checked> 质量保护：保留轻微软但构图优秀的照片</label>`;
   if(step==='dedup') return `<div class="wgroup"><label>相似度阈值</label>
       <input type="range" id="opt" min="0.5" max="0.95" step="0.05" value="0.8">
-      <div class="slider-value">相似度达到或高于 <b id="optVal">0.80</b> · 数值越低，合并越激进</div></div>
+      <div class="slider-value">相似度达到或高于 <b id="optVal">0.80</b> 时归为一组 · 数值越低合并越激进</div></div>
       <div class="wgroup" style="margin-top:10px"><label>RAW + JPG 同帧照片</label>
       <select id="pairMode">
         <option value="both">两者都保留</option>
         <option value="raw">仅保留 RAW</option>
         <option value="jpg">仅保留 JPG</option>
       </select>
-      <div class="slider-value">同名 RAW/JPG（如 IMG_0001.CR2 + .JPG）在去重前合并为一张</div></div>
+      <div class="slider-value">同名 RAW/JPG（如 IMG_0001.CR2 + .JPG）会在去重前合并为一张</div></div>
       <label class="check"><input type="checkbox" id="autoOrg"> 自动将重复照片移动到 Duplicates/</label>`;
   // rank
   return `<div class="sidebar-title" style="margin-bottom:4px">⚖️ 评分权重</div>
@@ -1219,18 +1219,18 @@ function renderWeights(){
   CATS.forEach(([k])=>{const el=document.getElementById('w_'+k);
     el.oninput=()=>{weights[k]=parseInt(el.value);document.getElementById('wv_'+k).textContent=el.value;scheduleReweight();};});
 }
-function scheduleReweight(){clear时间out(weight时间r);weight时间r=set时间out(()=>{
+function scheduleReweight(){clearTimeout(weightTimer);weightTimer=setTimeout(()=>{
   fetch('/api/weights',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({weights,topn:parseInt((document.getElementById('topn')||{}).value)||50})})
     .then(r=>r.json()).then(d=>renderRank(d.photos||[]));},140);}
 function applyStepStats(){
   // Show only the stat rows relevant to the current step so irrelevant zeros
-  // (e.g. 清晰/模糊/Unique while Ranking) don't look like errors.
+  // (e.g. Sharp/Blurry/Unique while Ranking) don't look like errors.
   document.querySelectorAll('.stat-row[data-steps]').forEach(row=>{
     row.style.display=row.dataset.steps.split(' ').includes(currentStep)?'':'none';
   });
 }
-function render拍摄参数(){
+function renderSettings(){
   applyStepStats();
   document.getElementById('settingsPanel').innerHTML=settingsHTML(currentStep);
   const opt=document.getElementById('opt'),val=document.getElementById('optVal');
@@ -1247,10 +1247,10 @@ function render拍摄参数(){
 function activateStep(step){
   currentStep=step;
   document.querySelectorAll('.step').forEach(x=>x.classList.toggle('active',x.dataset.step===step));
-  render拍摄参数();
+  renderSettings();
   document.getElementById('exportBtn').style.display='none';
   document.getElementById('exportPbgBtn').style.display='none';
-  {const mb=document.getElementById('move模糊Btn');mb.style.display='none';mb.classList.add('btn-ghost');mb.classList.remove('btn','cta');startBtn.classList.remove('secondary');}
+  {const mb=document.getElementById('moveBlurryBtn');mb.style.display='none';mb.classList.add('btn-ghost');mb.classList.remove('btn','cta');startBtn.classList.remove('secondary');}
   document.getElementById('progressWrap').style.display='none';  // clear stale summary
   document.getElementById('gallery').innerHTML=emptyHTML(currentStep);
   lastRankSig='';renderedCount=0;photoIdx=0;lastStep=null;
@@ -1262,14 +1262,14 @@ document.querySelectorAll('.step').forEach(t=>t.onclick=()=>{
   if(isRunning){toast('请先停止当前正在执行的任务。','bad');return;}
   activateStep(t.dataset.step);
 });
-render拍摄参数();
+renderSettings();
 
 /* cull filter chips */
 let cullFilter='all', cullType='all', rankFilter='all', pairMode='both', lastFmtSig='';
 function setupFilterBar(){
   const bar=document.getElementById('filterBar');
   if(currentStep==='cull'){
-    const opts=[['all','All'],['sharp','清晰'],['soft','轻微软 ★'],['blurry','模糊']];
+    const opts=[['all','全部'],['sharp','清晰'],['soft','轻微软 ★'],['blurry','模糊']];
     // Per-format chips (NEF, CR2, ARW, ...) built from what's actually loaded.
     const rawFmts=[...new Set(photos.filter(p=>p.raw).map(p=>p.fmt||'RAW'))].sort();
     const hasHeic=photos.some(p=>p.heic);
@@ -1335,7 +1335,7 @@ let isRunning=false, runningStep=null;
 const startBtn=document.getElementById('startBtn');
 function setStartBtn(running){
   isRunning=running;
-  startBtn.textContent=running?'■ Stop':'🚀 开始处理';
+  startBtn.textContent=running?'■ Stop':'🚀 Start';
   startBtn.classList.toggle('stopping',running);
 }
 function startStep(step){
@@ -1346,15 +1346,15 @@ function startStep(step){
   gPage=0;lastGallerySig='';document.getElementById('pager').style.display='none';
   document.getElementById('exportBtn').style.display='none';
   document.getElementById('exportPbgBtn').style.display='none';
-  {const mb=document.getElementById('move模糊Btn');mb.style.display='none';mb.classList.add('btn-ghost');mb.classList.remove('btn','cta');startBtn.classList.remove('secondary');}setRemoved(0);
+  {const mb=document.getElementById('moveBlurryBtn');mb.style.display='none';mb.classList.add('btn-ghost');mb.classList.remove('btn','cta');startBtn.classList.remove('secondary');}setRemoved(0);
   setStartBtn(true);
-  // 拍摄参数 come from the active step's panel (activateStep switched it first).
+  // Settings come from the active step's panel (activateStep switched it first).
   const opt=document.getElementById('opt');
   const ad=document.getElementById('cAdaptive'),rs=document.getElementById('cRescue');
-  // Carry the Cull file-type filter (仅 RAW / 仅 JPG) into Dedup & Rank.
+  // Carry the Cull file-type filter (RAW only / JPG only) into Dedup & Rank.
   if(step!=='cull'&&cullType!=='all'){
     const tl=cullType.startsWith('ext:')?cullType.slice(4).toUpperCase():cullType.toUpperCase();
-    toast('Continuing with '+tl+' files only — switch the Cull filter to "全部格式" to include everything','');
+    toast('Continuing with '+tl+' files only — switch the Cull filter to "All types" to include everything','');
   }
   fetch('/api/run/'+step,{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({folder,opt:opt?parseFloat(opt.value):0,
@@ -1362,7 +1362,7 @@ function startStep(step){
       ftype:step==='cull'?'all':cullType,
       pair:step==='cull'?'both':pairMode,
       topn:parseInt((document.getElementById('topn')||{}).value)||50})});
-  set时间out(()=>poll(step),200);
+  setTimeout(()=>poll(step),200);
 }
 function doStart(){
   if(!folder){toast('Pick a folder first','bad');return;}
@@ -1378,7 +1378,7 @@ startBtn.onclick=()=>{ isRunning?doStop():doStart(); };
 /* ---- God mode: run Cull → Dedup → Rank back-to-back ---- */
 let godMode=false, godAbort=false, godResolve=null;
 const godBtn=document.getElementById('godBtn');
-function setGodBtn(on){ godBtn.textContent=on?'■ Stop God Mode':'⚡ 一键全流程'; godBtn.classList.toggle('stopping',on); }
+function setGodBtn(on){ godBtn.textContent=on?'■ Stop God Mode':'⚡ God Mode · Run All'; godBtn.classList.toggle('stopping',on); }
 async function godRun(){
   if(!folder){toast('Pick a folder first','bad');return;}
   if(isRunning){toast('请先停止当前正在执行的任务。','bad');return;}
@@ -1407,18 +1407,18 @@ function poll(step){
     document.getElementById('progressFill').style.width=d.progress+'%';
     document.getElementById('progressText').textContent=d.status;
     const st=d.stats||{};
-    if('images'in st)document.getElementById('s照片数量').textContent=st.images;
-    if('sharp'in st)document.getElementById('s清晰').textContent=st.sharp;
-    if('blurry'in st)document.getElementById('s模糊').textContent=st.blurry;
-    if('soft'in st)document.getElementById('s轻微软').textContent=st.soft;
+    if('images'in st)document.getElementById('sImages').textContent=st.images;
+    if('sharp'in st)document.getElementById('sSharp').textContent=st.sharp;
+    if('blurry'in st)document.getElementById('sBlurry').textContent=st.blurry;
+    if('soft'in st)document.getElementById('sSoft').textContent=st.soft;
     if('groups'in st)document.getElementById('sGroups').textContent=st.groups;
     if(step==='rank')renderRank(d.photos||[]);
     else if(step==='cull')renderCullStep(d.photos||[]);
     else renderGallery(d.photos||[]);
-    if(d.running)set时间out(()=>poll(step),300);
+    if(d.running)setTimeout(()=>poll(step),300);
     else{
-      // Finished: keep the summary line visible (full bar + "Done in … · 清晰
-      // N (x%) / 轻微软 … / 模糊 …") instead of hiding it.
+      // Finished: keep the summary line visible (full bar + "Done in … · Sharp
+      // N (x%) / Soft … / Blurry …") instead of hiding it.
       document.getElementById('progressFill').style.width='100%';
       setStartBtn(false);runningStep=null;
       if(step==='rank'&&photos.length)document.getElementById('exportBtn').style.display='block';
@@ -1426,7 +1426,7 @@ function poll(step){
       // that the primary (blue, emphasised) button and mute Start. Suppressed
       // during God mode (the pipeline moves straight on to Dedup).
       if(!godMode&&step==='cull'&&(st.blurry||0)>0){
-        const mb=document.getElementById('move模糊Btn');
+        const mb=document.getElementById('moveBlurryBtn');
         mb.style.display='block';mb.classList.remove('btn-ghost');mb.classList.add('btn','cta');
         startBtn.classList.add('secondary');
       }
@@ -1440,7 +1440,7 @@ function radarSVG(metrics,size=210){
   const cx=size/2,cy=size/2,R=size/2-30,n=metrics.length;
   const ang=i=>-Math.PI/2+i*2*Math.PI/n,pt=(i,r)=>[cx+Math.cos(ang(i))*r,cy+Math.sin(ang(i))*r];
   let grid='';[0.25,0.5,0.75,1].forEach(f=>{const p=metrics.map((m,i)=>pt(i,R*f).map(v=>v.toFixed(1)).join(',')).join(' ');grid+=`<polygon points="${p}" fill="none" stroke="rgba(255,255,255,.18)"/>`;});
-  const col=i=>cat色彩(i,n);
+  const col=i=>catColor(i,n);
   let sp='',lb='';metrics.forEach((m,i)=>{const[x,y]=pt(i,R);sp+=`<line x1="${cx}" y1="${cy}" x2="${x.toFixed(1)}" y2="${y.toFixed(1)}" stroke="rgba(255,255,255,.18)"/>`;
     const[lx,ly]=pt(i,R+15);lb+=`<text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" font-size="9.5" font-weight="600" fill="${col(i)}" text-anchor="middle" dominant-baseline="middle">${m.label}</text>`;});
   // data vertices + a full multi-colour fill: each wedge blends its two corner colours
@@ -1458,15 +1458,15 @@ function radarSVG(metrics,size=210){
 const EMPTY='<div class="empty"><div class="icon">🎞️</div><div>No results</div></div>';
 function emptyHTML(step){
   const C={
-    cull:['✂️','Step 1 · 模糊筛选','Drop the out-of-focus shots before anything else.',
+    cull:['✂️','Step 1 · Cull','Drop the out-of-focus shots before anything else.',
       ['🔍 Measures real sharpness — haze &amp; night skies aren’t mistaken for blur',
-       '🟢 清晰 &nbsp;·&nbsp; 🟠 轻微软（可保留） &nbsp;·&nbsp; 🔴 模糊',
+       '🟢 Sharp &nbsp;·&nbsp; 🟠 Soft (recoverable) &nbsp;·&nbsp; 🔴 Blurry',
        '📁 Pick a folder, then press <b>Start</b>']],
-    dedup:['🪢','Step 2 · 相似去重','Collapse burst sequences down to a single best frame.',
+    dedup:['🪢','Step 2 · Dedup','Collapse burst sequences down to a single best frame.',
       ['📸 Near-identical shots are grouped automatically',
-       '⭐ The sharpest frame wins — labelled “同组最佳 · 共 N”',
+       '⭐ The sharpest frame wins — labelled “Best of N”',
        '🚀 Press <b>Start</b> — uses your Cull keepers, or the whole folder']],
-    rank:['🏆','Step 3 · 智能优选','Surface your very best photos.',
+    rank:['🏆','Step 3 · Rank','Surface your very best photos.',
       ['🎯 Scores composition, lighting, focus, color &amp; contrast',
        '🥇 Shows your TOP N with a per-photo radar chart',
        '⬇️ Press <b>Start</b>, then export the keepers']]
@@ -1479,17 +1479,17 @@ function emptyHTML(step){
 function cullCard(p){
   const i=photoIdx++;const path=String(p.path).replace(/"/g,'&quot;');
   const isDedup=currentStep==='dedup';
-  // Dedup: the badge tells you this frame won a burst ("同组最佳 · 共 N"); the info
+  // Dedup: the badge tells you this frame won a burst ("Best of N"); the info
   // line says how many near-duplicates were set aside. The raw sharpness number
   // (used only to pick the winner) is no longer shown — it wasn't meaningful.
   const g=p.group||1;
   const badge=isDedup
-    ? `<div class="badge good">${g>1?('★ 同组最佳 · 共 '+g):'KEPT'}</div>`
+    ? `<div class="badge good">${g>1?('★ Best of '+g):'KEPT'}</div>`
     : (p.badge?`<div class="badge ${p.badgeType}">${p.badge}</div>`:'');
-  const toggle=currentStep==='cull'?`<button class="status-toggle" data-path="${path}">${p.kept?'→ 模糊':'✓ Keep'}</button>`:'';
+  const toggle=currentStep==='cull'?`<button class="status-toggle" data-path="${path}">${p.kept?'→ Blurry':'✓ Keep'}</button>`:'';
   const cls=p.kept?'kept':(p.rejected?'rejected':'');
   const info=isDedup
-    ? `<div class="photo-score" style="font-weight:500;opacity:.75">${g>1?((g-1)+' 张相似照片已归为一组'):'原始照片'}</div>`
+    ? `<div class="photo-score" style="font-weight:500;opacity:.75">${g>1?((g-1)+' similar set aside'):'Original'}</div>`
     : `<div class="photo-score">${p.score}</div>`;
   return `<div class="photo-card ${cls}" data-i="${i}" data-path="${path}">${badge}${toggle}
     <img class="photo-img" src="${p.thumb}" loading="lazy" decoding="async">
@@ -1500,15 +1500,15 @@ const PAGE_SIZE=400;
 function renderGallery(items){   /* dedup: paginated + reconciling (order-stable) */
   gItems=items;photos=items;const g=document.getElementById('gallery');
   if(lastStep!==currentStep){g.innerHTML='';lastGallerySig='';lastStep=currentStep;gPage=0;}
-  if(!items.length){g.innerHTML=EMPTY;lastGallerySig='';renderedCount=0;updatePager();document.getElementById('s当前显示').textContent=0;return;}
+  if(!items.length){g.innerHTML=EMPTY;lastGallerySig='';renderedCount=0;updatePager();document.getElementById('sShowing').textContent=0;return;}
   const pages=Math.max(1,Math.ceil(items.length/PAGE_SIZE));
   if(gPage>=pages)gPage=pages-1;if(gPage<0)gPage=0;
   const start=gPage*PAGE_SIZE,end=Math.min(items.length,start+PAGE_SIZE);
   const slice=items.slice(start,end);
   // Signature includes the page + group size so paging and growing clusters
-  // ("同组最佳 · 共 N") always re-render; reconcile within.
+  // ("Best of N") always re-render; reconcile within.
   const sig=gPage+'#'+slice.map(p=>p.path+':'+(p.group||1)).join('|');
-  if(sig===lastGallerySig){updatePager();document.getElementById('s当前显示').textContent=items.length;return;}
+  if(sig===lastGallerySig){updatePager();document.getElementById('sShowing').textContent=items.length;return;}
   lastGallerySig=sig;
   const emp=g.querySelector('.empty');if(emp)emp.remove();
   // Reuse existing card nodes by path so reordering/paging never duplicates
@@ -1517,19 +1517,19 @@ function renderGallery(items){   /* dedup: paginated + reconciling (order-stable
   const frag=document.createDocumentFragment();
   slice.forEach((p,k)=>{const i=start+k;const key=String(p.path);let node=existing[key];
     if(node){
-      // Keep reused cards in sync. For Dedup show "同组最佳 · 共 N"/"no duplicates"
+      // Keep reused cards in sync. For Dedup show "Best of N"/"no duplicates"
       // (never the raw sharpness number); the badge updates as clusters grow.
       const g=p.group||1;
       const b=node.querySelector('.badge');
       const sc=node.querySelector('.photo-score');
-      if(b)b.textContent=(g>1?('★ 同组最佳 · 共 '+g):'KEPT');
-      if(sc)sc.textContent=(g>1?((g-1)+' 张相似照片已归为一组'):'原始照片');
+      if(b)b.textContent=(g>1?('★ Best of '+g):'KEPT');
+      if(sc)sc.textContent=(g>1?((g-1)+' similar set aside'):'Original');
       node.dataset.i=i;delete existing[key];}
     else{const w=document.createElement('div');w.innerHTML=cullCard(p);node=w.firstElementChild;node.dataset.i=i;}
     frag.appendChild(node);});
   Object.values(existing).forEach(n=>n.remove());g.appendChild(frag);
   renderedCount=slice.length;updatePager();
-  document.getElementById('s当前显示').textContent=items.length;
+  document.getElementById('sShowing').textContent=items.length;
 }
 function updatePager(){
   const pager=document.getElementById('pager');if(!pager)return;
@@ -1549,7 +1549,7 @@ function rankCard(p,idx){const path=String(p.path).replace(/"/g,'&quot;');
     <button class="pbg-toggle${on}" data-path="${path}" title="${p.phonebg?'已设为手机壁纸，点击取消':'设为手机壁纸'}">📱</button>
     <img class="photo-img" src="${p.thumb}" loading="lazy" decoding="async">
     <div class="photo-info"><div class="pi-row"><span class="photo-name">${p.name}</span>
-      <button class="remove-btn" data-path="${path}" title="从优选结果中移除（不会删除原文件）">✕ 移除</button></div>
+      <button class="remove-btn" data-path="${path}" title="从优选结果中移除（不会删除原文件）">✕ Remove</button></div>
       <div class="photo-score">${p.score}</div></div></div>`;}
 function renderRank(items){
   photos=items;const g=document.getElementById('gallery');
@@ -1572,7 +1572,7 @@ function renderRank(items){
     else{if(node)node.remove();const w=document.createElement('div');w.innerHTML=rankCard(p,idx);node=w.firstElementChild;}
     frag.appendChild(node);});
   Object.values(existing).forEach(n=>n.remove());g.appendChild(frag);
-  document.getElementById('s当前显示').textContent=view.length;
+  document.getElementById('sShowing').textContent=view.length;
 }
 function togglePhoneBg(path){
   fetch('/api/toggle-phonebg',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path})}).then(r=>r.json()).then(d=>{
@@ -1580,7 +1580,7 @@ function togglePhoneBg(path){
     const pp=photos.find(x=>x.path===path);if(pp)pp.phonebg=d.phonebg;
     lastRankSig='';renderRank(photos);
     if(document.getElementById('lightbox').classList.contains('open')){lbList=(rankFilter==='pbg')?photos.filter(p=>p.phonebg):photos.slice();if(lbIndex>=lbList.length)lbIndex=Math.max(0,lbList.length-1);if(lbList.length)showLb();else closeLb();}
-    toast(d.phonebg?'📱 Added to 手机壁纸 ('+d.count+')':'Removed from 手机壁纸 ('+d.count+')','good');});
+    toast(d.phonebg?'📱 Added to Phone BG ('+d.count+')':'Removed from Phone BG ('+d.count+')','good');});
 }
 
 /* ---- cull (3-tier, reconciling, filterable) ---- */
@@ -1590,7 +1590,7 @@ const NEXT_TIER={sharp:'soft',soft:'blurry',blurry:'sharp'};
 function cullCardHtml(p,idx){const path=String(p.path).replace(/"/g,'&quot;');
   const cls=p.tier==='sharp'?'kept':p.tier==='soft'?'soft':'rejected';
   return `<div class="photo-card ${cls}" data-i="${idx}" data-path="${path}" data-tier="${p.tier}">
-    <button class="badge ${p.badgeType} badge-tier" data-path="${path}" data-tier="${p.tier}" title="Click to change: 清晰 → 轻微软 → 模糊">⇄ ${p.badge}</button>
+    <button class="badge ${p.badgeType} badge-tier" data-path="${path}" data-tier="${p.tier}" title="点击切换：清晰 → 轻微软 → 模糊">⇄ ${p.badge}</button>
     <img class="photo-img" src="${p.thumb}" loading="lazy" decoding="async">
     <div class="photo-info"><div class="pi-row"><span class="photo-name">${p.name}</span><span class="ftype${p.raw?'':(p.heic?' heic':' jpg')}">${p.fmt||(p.raw?'RAW':p.heic?'HEIC':'JPG')}</span></div><div class="photo-score">${p.score}</div></div></div>`;}
 function renderCullStep(items){
@@ -1604,7 +1604,7 @@ function renderCullStep(items){
       :cullType==='jpg'?(!p.raw&&!p.heic)
       :('ext:'+String(p.fmt||'').toLowerCase())===cullType)));
   const g=document.getElementById('gallery');
-  if(!cullView.length){g.innerHTML=EMPTY;lastCullSig='';lastStep=currentStep;document.getElementById('s当前显示').textContent=0;return;}
+  if(!cullView.length){g.innerHTML=EMPTY;lastCullSig='';lastStep=currentStep;document.getElementById('sShowing').textContent=0;return;}
   const sig=cullView.map(p=>p.path+':'+p.tier).join('|');
   if(sig===lastCullSig&&lastStep===currentStep)return;
   lastCullSig=sig;lastStep=currentStep;
@@ -1616,12 +1616,12 @@ function renderCullStep(items){
     else{if(node)node.remove();const w=document.createElement('div');w.innerHTML=cullCardHtml(p,idx);node=w.firstElementChild;}
     frag.appendChild(node);});
   Object.values(existing).forEach(n=>n.remove());g.appendChild(frag);
-  document.getElementById('s当前显示').textContent=cullView.length;
+  document.getElementById('sShowing').textContent=cullView.length;
 }
 function cullSetTier(path,tier){
   fetch('/api/toggle-status',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path,tier})}).then(r=>r.json()).then(d=>{
     if(d.error){toast(d.error,'bad');return;}
-    document.getElementById('s清晰').textContent=d.sharp;document.getElementById('s轻微软').textContent=d.soft;document.getElementById('s模糊').textContent=d.blurry;
+    document.getElementById('sSharp').textContent=d.sharp;document.getElementById('sSoft').textContent=d.soft;document.getElementById('sBlurry').textContent=d.blurry;
     const pp=photos.find(x=>x.path===path||x.path===d.path);
     if(pp){pp.tier=d.tier;pp.badge=d.badge;pp.badgeType=d.badgeType;pp.kept=d.kept;pp.rejected=!d.kept;if(d.path)pp.path=d.path;if(d.thumb)pp.thumb=d.thumb;}
     lastCullSig='';renderCullStep(photos);});
@@ -1631,7 +1631,7 @@ function cullSetTier(path,tier){
 function setRemoved(n){removedCount=n;document.getElementById('removedN').textContent=n;
   document.getElementById('removedBox').style.display=n>0?'block':'none';
   document.getElementById('lbRestore').style.display=(n>0&&currentStep==='rank')?'inline-block':'none';}
-function remove照片(path){fetch('/api/exclude',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path})}).then(r=>r.json()).then(d=>{renderRank(d.photos||[]);setRemoved(d.removed);});}
+function removePhoto(path){fetch('/api/exclude',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path})}).then(r=>r.json()).then(d=>{renderRank(d.photos||[]);setRemoved(d.removed);});}
 function restoreAll(syncLb){fetch('/api/restore',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({all:true})}).then(r=>r.json()).then(d=>{renderRank(d.photos||[]);setRemoved(d.removed);
   if(syncLb&&document.getElementById('lightbox').classList.contains('open')){lbList=photos.slice();if(lbIndex>=lbList.length)lbIndex=lbList.length-1;if(lbList.length)showLb();else closeLb();}});}
 document.getElementById('restoreAll').onclick=()=>restoreAll(false);
@@ -1640,13 +1640,13 @@ document.getElementById('restoreAll').onclick=()=>restoreAll(false);
 function toggleStatus(path,btn,cb){
   fetch('/api/toggle-status',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path})}).then(r=>r.json()).then(d=>{
     if(d.error){toast(d.error,'bad');return;}
-    document.getElementById('s清晰').textContent=d.sharp;document.getElementById('s模糊').textContent=d.blurry;
+    document.getElementById('sSharp').textContent=d.sharp;document.getElementById('sBlurry').textContent=d.blurry;
     if(cb)cb(d);});
 }
 
 /* ---- gallery clicks ---- */
 document.getElementById('gallery').addEventListener('click',e=>{
-  const rm=e.target.closest('.remove-btn');if(rm){e.stopPropagation();remove照片(rm.dataset.path);return;}
+  const rm=e.target.closest('.remove-btn');if(rm){e.stopPropagation();removePhoto(rm.dataset.path);return;}
   const pb=e.target.closest('.pbg-toggle');
   if(pb){e.stopPropagation();togglePhoneBg(pb.dataset.path);return;}
   const tg=e.target.closest('.status-toggle,.badge-tier');
@@ -1659,17 +1659,17 @@ document.getElementById('gallery').addEventListener('click',e=>{
 function openLb(i){lbIndex=i;showLb();document.getElementById('lightbox').classList.add('open');}
 function closeLb(){document.getElementById('lightbox').classList.remove('open');}
 const CATINFO={aesthetic:'Overall "magazine appeal" — a transparent blend of composition, color, sharpness, dynamic range and exposure.',
-  composition:'Subject placement, horizon leveling and visual balance.',technical:'曝光, dynamic range, tonal spread, white balance and noise.',
+  composition:'Subject placement, horizon leveling and visual balance.',technical:'Exposure, dynamic range, tonal spread, white balance and noise.',
   sharpness:'Contrast-normalized focus. High = crisp; haze does NOT count as blur.',color:'Vividness plus how well the hues relate.'};
-const SUBINFO={'三分法构图':'Closeness of the main subject to a rule-of-thirds / golden-ratio point.','水平线':'How level the dominant straight line is (100=straight, ~60=no clear horizon).',
-  '画面平衡':'Even spread of visual weight left vs right.','曝光':'Freedom from clipped blacks/whites.','动态范围':'Spread between deepest shadow and brightest highlight.',
-  '影调范围':'How richly tones fill the histogram (entropy).','白平衡':'Neutrality of color cast (artistic warm/cool lowers it).','噪点控制':'Cleanliness in flat areas (high=clean).',
-  '色彩fulness':'Saturation & color variety.','色彩 harmony':'How well dominant hues relate (analogous/complementary).'};
+const SUBINFO={'Rule of thirds':'Closeness of the main subject to a rule-of-thirds / golden-ratio point.','Horizon level':'How level the dominant straight line is (100=straight, ~60=no clear horizon).',
+  'Balance':'Even spread of visual weight left vs right.','Exposure':'Freedom from clipped blacks/whites.','Dynamic range':'Spread between deepest shadow and brightest highlight.',
+  'Tonal range':'How richly tones fill the histogram (entropy).','White balance':'Neutrality of color cast (artistic warm/cool lowers it).','Noise (clean)':'Cleanliness in flat areas (high=clean).',
+  'Colorfulness':'Saturation & color variety.','Color harmony':'How well dominant hues relate (analogous/complementary).'};
 const GROUPS=[['composition','构图',['三分法构图','水平线','画面平衡']],
-  ['technical','技术质量',['曝光','动态范围','影调范围','白平衡','噪点控制']],['color','色彩',['色彩fulness','色彩 harmony']]];
-function bar色彩(v){return v>=70?'#22c55e':v>=45?'#f59e0b':'#ef4444';}
+  ['technical','技术质量',['曝光','动态范围','影调范围','白平衡','噪点控制']],['color','色彩',['色彩丰富度','色彩协调']]];
+function barColor(v){return v>=70?'#22c55e':v>=45?'#f59e0b':'#ef4444';}
 function barRow(label,v,info,cat,color){const t=(info||'').replace(/"/g,'&quot;');
-  const fillBg=color?color:bar色彩(v);
+  const fillBg=color?color:barColor(v);
   const labStyle=color?` style="color:${color};font-weight:600;border-left:3px solid ${color};padding-left:6px"`:'';
   return `<div class="bar${cat?' cat':''}" title="${label}: ${t}"><span class="lab"${labStyle}>${label}</span><span class="track"><span class="fill" style="width:${v}%;background:${fillBg}"></span></span><span class="num">${v}</span></div>`;}
 function showLb(){
@@ -1677,26 +1677,26 @@ function showLb(){
   document.getElementById('lbImg').src='/api/image?path='+encodeURIComponent(p.path);
   document.getElementById('lbName').textContent=(p.rank!=null?'#'+p.rank+'  ':'')+p.name;
   const extra=(currentStep==='dedup')
-    ? ((p.group>1)?('   ·   同组最佳 · 共 '+p.group+' ('+(p.group-1)+' set aside)'):'   ·   原始照片')
+    ? ((p.group>1)?('   ·   Best of '+p.group+' ('+(p.group-1)+' set aside)'):'   ·   Original')
     : (p.score!=null?'   ·   '+p.score:'');
   document.getElementById('lbCount').textContent=(lbIndex+1)+' / '+lbList.length+extra;
   const rm=document.getElementById('lbRemove'),rs=document.getElementById('lbRestore'),tg=document.getElementById('lbToggle');
   rm.style.display=currentStep==='rank'?'inline-block':'none';
   rs.style.display=(currentStep==='rank'&&removedCount>0)?'inline-block':'none';
   tg.style.display=currentStep==='cull'?'inline-block':'none';
-  if(currentStep==='cull')tg.textContent='⇄ '+(TIER_NAME[p.tier]||'清晰')+' → '+(TIER_NAME[NEXT_TIER[p.tier||'sharp']]);
+  if(currentStep==='cull')tg.textContent='⇄ '+(TIER_NAME[p.tier]||'Sharp')+' → '+(TIER_NAME[NEXT_TIER[p.tier||'sharp']]);
   const pbg=document.getElementById('lbPhoneBg');
   pbg.style.display=currentStep==='rank'?'inline-block':'none';
-  if(currentStep==='rank'){pbg.classList.toggle('on',!!p.phonebg);pbg.textContent=p.phonebg?'📱 手机壁纸 ✓':'📱 手机壁纸';}
+  if(currentStep==='rank'){pbg.classList.toggle('on',!!p.phonebg);pbg.textContent=p.phonebg?'📱 Phone BG ✓':'📱 Phone BG';}
   const side=document.getElementById('lbSide');
   if(currentStep==='rank'&&p.scores){
     const metrics=CATS.map(([k,lab])=>({label:lab,value:(p.scores&&p.scores[k])||0}));
-    let html=`<div style="text-align:center">${radarSVG(metrics,150)}</div><h3>分类评分</h3>`;
+    let html=`<div style="text-align:center">${radarSVG(metrics,150)}</div><h3>Category scores</h3>`;
     CATS.forEach(([k,lab],ci)=>html+=barRow(lab,(p.scores&&p.scores[k])||0,CATINFO[k],true,CATCOLORS[ci]));
     const d=p.detail||{};GROUPS.forEach(([k,lab,keys])=>{const cv=(p.scores&&p.scores[k]);html+=`<h3>${lab}<span>${cv!=null?cv:''}</span></h3>`;keys.forEach(key=>{if(key in d)html+=barRow(key,d[key],SUBINFO[key]);});});
-    html+=`<div style="font-size:10px;opacity:.5;margin-top:14px">将鼠标停留在评分项上可查看指标说明。</div>`;
+    html+=`<div style="font-size:10px;opacity:.5;margin-top:14px">Hover any row for what it measures.</div>`;
     side.style.display='block';side.innerHTML=html;
-  }else{side.style.display='block';side.innerHTML=`<h3>${currentStep==='cull'?'清晰ness':'照片'}</h3><div style="font-size:13px;opacity:.85">${p.name}</div><div style="font-size:26px;font-weight:700;margin-top:8px">${p.score!=null?p.score:''}</div>`;}
+  }else{side.style.display='block';side.innerHTML=`<h3>${currentStep==='cull'?'Sharpness':'Photo'}</h3><div style="font-size:13px;opacity:.85">${p.name}</div><div style="font-size:26px;font-weight:700;margin-top:8px">${p.score!=null?p.score:''}</div>`;}
   loadExif(p.path,side);
 }
 function exifRow(label,val){return `<div class="exrow"><span class="lab">${label}</span><span class="val">${val}</span></div>`;}
@@ -1795,7 +1795,7 @@ document.getElementById('lbToggle').onclick=()=>{const p=lbList[lbIndex];if(!p)r
   const next=NEXT_TIER[p.tier||'sharp'];
   fetch('/api/toggle-status',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:p.path,tier:next})}).then(r=>r.json()).then(d=>{
     if(d.error){toast(d.error,'bad');return;}
-    document.getElementById('s清晰').textContent=d.sharp;document.getElementById('s轻微软').textContent=d.soft;document.getElementById('s模糊').textContent=d.blurry;
+    document.getElementById('sSharp').textContent=d.sharp;document.getElementById('sSoft').textContent=d.soft;document.getElementById('sBlurry').textContent=d.blurry;
     const pp=photos.find(x=>x.path===p.path||x.path===d.path);
     if(pp){pp.tier=d.tier;pp.badge=d.badge;pp.badgeType=d.badgeType;pp.kept=d.kept;pp.rejected=!d.kept;if(d.path)pp.path=d.path;if(d.thumb)pp.thumb=d.thumb;}
     p.tier=d.tier;if(d.path)p.path=d.path;
@@ -1814,24 +1814,24 @@ document.getElementById('exportBtn').onclick=function(){
   this.disabled=true;this.textContent='正在导出…';
   fetch('/api/export',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({topn:parseInt((document.getElementById('topn')||{}).value)||50})})
     .then(r=>r.json()).then(d=>{this.disabled=false;this.textContent='⬇ 导出优选照片…';
-      toast(d.error?('导出失败：'+d.error):('✓ 已复制 '+d.copied+' 张照片到\n'+d.dest), d.error?'bad':'good');});
+      toast(d.error?('Export failed: '+d.error):('✓ Copied '+d.copied+' photos to\n'+d.dest), d.error?'bad':'good');});
 };
 document.getElementById('exportPbgBtn').onclick=function(){
   this.disabled=true;this.textContent='正在导出…';
   fetch('/api/export-phonebg',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})})
     .then(r=>r.json()).then(d=>{this.disabled=false;this.textContent='📱 导出手机壁纸…';
       if(d.error){toast('导出失败：'+d.error,'bad');return;}
-      if(!d.copied&&!d.cropped){toast(d.note||'Nothing flagged as 手机壁纸.','bad');return;}
-      toast('✓ '+d.copied+' 张原图 + '+d.cropped+' 张壁纸（1290×2796）到\n'+d.dest,'good');});
+      if(!d.copied&&!d.cropped){toast(d.note||'Nothing flagged as Phone BG.','bad');return;}
+      toast('✓ '+d.copied+' originals + '+d.cropped+' wallpapers (1290×2796) to\n'+d.dest,'good');});
 };
-document.getElementById('move模糊Btn').onclick=function(){
+document.getElementById('moveBlurryBtn').onclick=function(){
   const b=document.querySelectorAll('.photo-card[data-tier="blurry"]').length;
   if(!confirm('是否将模糊照片移动到 Blurred/ 子文件夹？\n\n只会移动，不会删除；之后可以随时手动移回。'))return;
   this.disabled=true;this.textContent='正在移动…';
   fetch('/api/move-blurry',{method:'POST'})
     .then(r=>r.json()).then(d=>{this.disabled=false;this.textContent='🗂️ 移动模糊照片 → Blurred/';
       if(d.error){toast('移动失败：'+d.error,'bad');return;}
-      toast('✓ 已移动 '+d.moved+' blurry 张照片到\n'+d.dest,'good');
+      toast('✓ Moved '+d.moved+' blurry photos to\n'+d.dest,'good');
       this.style.display='none';this.classList.remove('cta');startBtn.classList.remove('secondary');});
 };
 </script></body></html>'''
@@ -1960,18 +1960,18 @@ def extract_exif(path):
             if not exif:
                 return out
             tags = {TAGS.get(k, k): v for k, v in exif.items()}
-            # 日期 / time
-            dt = tags.get('日期时间原始照片') or tags.get('日期时间')
+            # Date / time
+            dt = tags.get('DateTimeOriginal') or tags.get('DateTime')
             if isinstance(dt, str) and ' ' in dt:
                 d, t = dt.split(' ', 1)
                 out['date'] = d.replace(':', '-')
                 out['time'] = t
-            # 相机 / lens
+            # Camera / lens
             make = (tags.get('Make') or '').strip()
             model = (tags.get('Model') or '').strip()
             if make or model:
                 out['camera'] = (make + ' ' + model).strip() if model and not model.startswith(make) else (model or make)
-            lens = tags.get('镜头Model')
+            lens = tags.get('LensModel')
             if lens:
                 out['lens'] = str(lens).strip()
             # Shooting settings (live in the Exif sub-IFD)
@@ -1980,28 +1980,28 @@ def extract_exif(path):
                 subtags = {TAGS.get(k, k): v for k, v in sub.items()}
             except Exception:
                 subtags = {}
-            dto = subtags.get('日期时间原始照片')
+            dto = subtags.get('DateTimeOriginal')
             if isinstance(dto, str) and ' ' in dto and 'date' not in out:
                 d, t = dto.split(' ', 1)
                 out['date'] = d.replace(':', '-'); out['time'] = t
             fnum = _ratio(subtags.get('FNumber'))
             if fnum:
                 out['aperture'] = 'f/' + (str(int(fnum)) if fnum == int(fnum) else str(round(fnum, 1)))
-            exp = subtags.get('曝光时间')
+            exp = subtags.get('ExposureTime')
             if exp is not None:
                 er = _ratio(exp)
                 if er and er < 1:
                     out['shutter'] = '1/' + str(int(round(1 / er))) + 's'
                 elif er:
                     out['shutter'] = str(round(er, 1)) + 's'
-            iso = subtags.get('ISOSpeedRatings') or subtags.get('照片graphicSensitivity')
+            iso = subtags.get('ISOSpeedRatings') or subtags.get('PhotographicSensitivity')
             if iso:
                 out['iso'] = 'ISO ' + str(iso if not isinstance(iso, (list, tuple)) else iso[0])
             fl = _ratio(subtags.get('FocalLength'))
             if fl:
                 out['focal'] = str(int(round(fl))) + 'mm'
-            if not subtags.get('镜头Model') and subtags.get('镜头Model') is None and 'lens' not in out:
-                lm = subtags.get('镜头Model')
+            if not subtags.get('LensModel') and subtags.get('LensModel') is None and 'lens' not in out:
+                lm = subtags.get('LensModel')
                 if lm:
                     out['lens'] = str(lm).strip()
             # GPS
@@ -2122,8 +2122,8 @@ def api_restore():
 
 @app.route('/api/toggle-status', methods=['POST'])
 def api_toggle_status():
-    """Manually set a photo's tier (client cycles 清晰→轻微软→模糊). Moves the
-    file to/from Blurred/ to match (轻微软 stays in the folder)."""
+    """Manually set a photo's tier (client cycles Sharp→Soft→Blurry). Moves the
+    file to/from Blurred/ to match (Soft stays in the folder)."""
     data = request.get_json() or {}
     path = data.get('path', '')
     tier = data.get('tier', 'sharp')
@@ -2155,7 +2155,7 @@ def api_toggle_status():
 
 @app.route('/api/move-blurry', methods=['POST'])
 def api_move_blurry():
-    """Move the current 模糊-tier photos into a Blurred/ subfolder. Done on
+    """Move the current Blurry-tier photos into a Blurred/ subfolder. Done on
     demand (after review) rather than automatically during Cull."""
     folder = state.get('folder')
     if not folder or not Path(folder).is_dir():
@@ -2165,7 +2165,7 @@ def api_move_blurry():
     if not blurry:
         return jsonify({'ok': True, 'moved': 0, 'dest': str(Path(folder) / 'Blurred')})
     try:
-        org = 照片Organizer(folder)
+        org = PhotoOrganizer(folder)
         res = org.move_blurry_photos(blurry)
     except Exception as e:
         logger.error(f"move-blurry failed: {e}")
@@ -2246,7 +2246,7 @@ def crop_to_phone(img, target_w=WALLPAPER_W, target_h=WALLPAPER_H):
 
 @app.route('/api/export-phonebg', methods=['POST'])
 def api_export_phonebg():
-    """Export flagged wallpapers: an 原始照片/ full-res copy and a Wallpaper/
+    """Export flagged wallpapers: an Original/ full-res copy and a Wallpaper/
     1290x2796 (universal 19.5:9) center-cropped version, into a PhoneBG/ folder."""
     folder = state.get('folder')
     if not folder or not Path(folder).is_dir():
@@ -2257,9 +2257,9 @@ def api_export_phonebg():
     if not flagged:
         return jsonify({'ok': True, 'copied': 0, 'cropped': 0,
                         'dest': str(Path(folder) / 'PhoneBG'),
-                        'note': 'No photos flagged as 手机壁纸 yet.'})
+                        'note': 'No photos flagged as Phone BG yet.'})
     dest = Path(folder) / 'PhoneBG'
-    orig_dir = dest / '原始照片'
+    orig_dir = dest / 'Original'
     crop_dir = dest / 'Wallpaper_19.5x9'
     orig_dir.mkdir(parents=True, exist_ok=True)
     crop_dir.mkdir(parents=True, exist_ok=True)
