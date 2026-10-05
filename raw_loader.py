@@ -149,12 +149,12 @@ def imread_bgr(path, reduced=True):
     if is_heif(path):
         # cv2 has no HEIF decoder; go through Pillow and hand back BGR.
         try:
-            img = Image.open(path)
-            if reduced:
-                img.thumbnail((img.width // 2, img.height // 2),
-                              Image.Resampling.BILINEAR)
-            return cv2.cvtColor(np.asarray(img.convert('RGB')),
-                                cv2.COLOR_RGB2BGR)
+            with Image.open(path) as img:
+                if reduced:
+                    img.thumbnail((max(1, img.width // 2), max(1, img.height // 2)),
+                                  Image.Resampling.BILINEAR)
+                rgb = np.asarray(img.convert('RGB'))
+            return cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
         except Exception as e:
             logger.warning(f"heif decode failed {path}: {e}")
             return None
