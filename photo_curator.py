@@ -2082,29 +2082,67 @@ document.addEventListener('keydown',e=>{
   if(currentStep==='rank'&&(e.key==='x'||e.key==='X'||e.key==='Delete'||e.key==='Backspace')){e.preventDefault();lbRemoveCurrent();}});
 
 /* export */
-document.getElementById('exportBtn').onclick=function(){
+document.getElementById('exportBtn').onclick=async function(){
+  const old='⬇ 导出优选照片…';
   this.disabled=true;this.textContent='正在导出…';
-  fetch('/api/export',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({topn:parseInt((document.getElementById('topn')||{}).value)||50})})
-    .then(r=>r.json()).then(d=>{this.disabled=false;this.textContent='⬇ 导出优选照片…';
-      toast(d.error?('导出失败：'+d.error):('✓ 已复制 '+d.copied+' 张照片到\n'+d.dest), d.error?'bad':'good');});
+  try{
+    const r=await fetch('/api/export',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({topn:parseInt((document.getElementById('topn')||{}).value)||50})
+    });
+    const d=await r.json();
+    if(!r.ok||d.error)throw new Error(d.error||('HTTP '+r.status));
+    const extra=d.failed?('；'+d.failed+' 张失败'):'';
+    toast('✓ 已复制 '+d.copied+' 张照片'+extra+'\n'+d.dest,d.failed?'bad':'good');
+  }catch(err){
+    toast('导出失败：'+(err.message||'未知错误'),'bad');
+  }finally{
+    this.disabled=false;this.textContent=old;
+  }
 };
-document.getElementById('exportPbgBtn').onclick=function(){
+
+document.getElementById('exportPbgBtn').onclick=async function(){
+  const old='📱 导出手机壁纸…';
   this.disabled=true;this.textContent='正在导出…';
-  fetch('/api/export-phonebg',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})})
-    .then(r=>r.json()).then(d=>{this.disabled=false;this.textContent='📱 导出手机壁纸…';
-      if(d.error){toast('导出失败：'+d.error,'bad');return;}
-      if(!d.copied&&!d.cropped){toast(d.note||'还没有标记为手机壁纸的照片。','bad');return;}
-      toast('✓ '+d.copied+' originals + '+d.cropped+' wallpapers (1290×2796) to\n'+d.dest,'good');});
+  try{
+    const r=await fetch('/api/export-phonebg',{
+      method:'POST',headers:{'Content-Type':'application/json'},body:'{}'
+    });
+    const d=await r.json();
+    if(!r.ok||d.error)throw new Error(d.error||('HTTP '+r.status));
+    if(!d.copied&&!d.cropped){
+      toast(d.note||'还没有标记为手机壁纸的照片。','bad');return;
+    }
+    const extra=d.failed?('；'+d.failed+' 项失败'):'';
+    toast('✓ 原图 '+d.copied+' 张 · 壁纸 '+d.cropped+' 张'+extra+'\n'+d.dest,
+          d.failed?'bad':'good');
+  }catch(err){
+    toast('导出失败：'+(err.message||'未知错误'),'bad');
+  }finally{
+    this.disabled=false;this.textContent=old;
+  }
 };
-document.getElementById('moveBlurryBtn').onclick=function(){
-  const b=document.querySelectorAll('.photo-card[data-tier="blurry"]').length;
-  if(!confirm('是否将模糊照片移动到 Blurred/ 子文件夹？\n\n只会移动，不会删除；之后可以随时手动移回。'))return;
+
+document.getElementById('moveBlurryBtn').onclick=async function(){
+  if(!confirm('是否将已审核为“模糊”的照片移动到 Blurred/ 子文件夹？\n\n只会移动，不会删除原文件；移动后可手动移回。'))return;
+  const old='🗂️ 移动模糊照片 → Blurred/';
   this.disabled=true;this.textContent='正在移动…';
-  fetch('/api/move-blurry',{method:'POST'})
-    .then(r=>r.json()).then(d=>{this.disabled=false;this.textContent='🗂️ 移动模糊照片 → Blurred/';
-      if(d.error){toast('移动失败：'+d.error,'bad');return;}
-      toast('✓ 已移动 '+d.moved+' 张模糊照片到\n'+d.dest,'good');
-      this.style.display='none';this.classList.remove('cta');startBtn.classList.remove('secondary');});
+  try{
+    const r=await fetch('/api/move-blurry',{method:'POST'});
+    const d=await r.json();
+    if(!r.ok||d.error)throw new Error(d.error||('HTTP '+r.status));
+    const extra=d.failed?('；'+d.failed+' 张失败'):'';
+    toast('✓ 已移动 '+d.moved+' 张'+extra+'\n'+d.dest,d.failed?'bad':'good');
+    if(!d.failed){
+      this.style.display='none';
+      this.classList.remove('cta');
+      startBtn.classList.remove('secondary');
+    }
+  }catch(err){
+    toast('移动失败：'+(err.message||'未知错误'),'bad');
+  }finally{
+    this.disabled=false;this.textContent=old;
+  }
 };
 </script></body></html>'''
 
@@ -2612,43 +2650,60 @@ def crop_to_phone(img, target_w=WALLPAPER_W, target_h=WALLPAPER_H):
 
 @app.route('/api/export-phonebg', methods=['POST'])
 def api_export_phonebg():
-    """Export flagged wallpapers: an Original/ full-res copy and a Wallpaper/
-    1290x2796 (universal 19.5:9) center-cropped version, into a PhoneBG/ folder."""
+    """Export flagged wallpaper originals and 1290x2796 crops."""
     folder = state.get('folder')
     if not folder or not Path(folder).is_dir():
         return jsonify({'error': '未选择有效的照片文件夹'}), 400
-    # Only export flagged photos that are still in the current TOP N.
+
     top = build_topn()
     flagged = [item for item in top if item['path'] in state['phone_bg']]
     if not flagged:
-        return jsonify({'ok': True, 'copied': 0, 'cropped': 0,
+        return jsonify({'ok': True, 'copied': 0, 'cropped': 0, 'failed': 0,
                         'dest': str(Path(folder) / 'PhoneBG'),
-                        'note': 'No photos flagged as Phone BG yet.'})
-    dest = Path(folder) / 'PhoneBG'
+                        'note': '还没有标记为手机壁纸的照片。'})
+
+    base = Path(folder) / 'PhoneBG'
+    dest = base
+    if dest.exists() and any(dest.iterdir()):
+        stamp = time.strftime('%Y%m%d_%H%M%S')
+        dest = Path(folder) / f'PhoneBG_{stamp}'
+        n = 1
+        while dest.exists():
+            n += 1
+            dest = Path(folder) / f'PhoneBG_{stamp}_{n}'
+
     orig_dir = dest / '原始照片'
-    crop_dir = dest / 'Wallpaper_19.5x9'
+    crop_dir = dest / '壁纸_19.5x9'
     orig_dir.mkdir(parents=True, exist_ok=True)
     crop_dir.mkdir(parents=True, exist_ok=True)
-    copied = cropped = 0
+
+    copied = cropped = failed = 0
     for item in flagged:
         src = Path(item['path'])
         if not src.is_file():
+            failed += 1
             continue
+
         stem = f"{item['rank']:03d}_{src.stem}"
         try:
             shutil.copy2(str(src), str(orig_dir / f"{stem}{src.suffix}"))
             copied += 1
         except Exception as e:
+            failed += 1
             logger.warning(f"phonebg original fail {src}: {e}")
+
         try:
-            with open_image_pil(src) as im:   # RAW-aware
-                crop_to_phone(im).save(str(crop_dir / f"{stem}.jpg"),
-                                       format='JPEG', quality=92)
+            with open_image_pil(src) as im:
+                crop_to_phone(im).save(
+                    str(crop_dir / f"{stem}.jpg"), format='JPEG', quality=92
+                )
             cropped += 1
         except Exception as e:
+            failed += 1
             logger.warning(f"phonebg crop fail {src}: {e}")
-    return jsonify({'ok': True, 'copied': copied, 'cropped': cropped,
-                    'dest': str(dest)})
+
+    return jsonify({'ok': failed == 0, 'copied': copied, 'cropped': cropped,
+                    'failed': failed, 'dest': str(dest)})
 
 
 if __name__ == '__main__':
