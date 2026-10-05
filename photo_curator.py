@@ -394,14 +394,13 @@ def make_thumb_file(image_path, size=300):
     if out.exists():
         return out
     try:
-        img = open_image_pil(image_path)   # RAW-aware (uses embedded preview)
-        img.draft('RGB', (size * 2, size * 2))
-        # Honor the EXIF orientation flag so portrait photos aren't shown
-        # sideways in thumbnails (the full-size view already auto-rotates).
-        img = ImageOps.exif_transpose(img)
-        img = img.convert('RGB')
-        img.thumbnail((size, size), Image.Resampling.BILINEAR)
-        img.save(out, format='JPEG', quality=80)
+        with open_image_pil(image_path) as src:   # RAW-aware
+            src.draft('RGB', (size * 2, size * 2))
+            # Honor EXIF orientation and fully detach from the source file
+            # before saving, so Windows never keeps the original photo locked.
+            img = ImageOps.exif_transpose(src).convert('RGB')
+            img.thumbnail((size, size), Image.Resampling.BILINEAR)
+            img.save(out, format='JPEG', quality=80)
         return out
     except Exception as e:
         logger.warning(f"thumb fail {image_path}: {e}")
@@ -2413,7 +2412,7 @@ def extract_exif(path):
                 return out
             tags = {TAGS.get(k, k): v for k, v in exif.items()}
             # Date / time
-            dt = tags.get('DateTime原始照片') or tags.get('DateTime')
+            dt = tags.get('DateTimeOriginal') or tags.get('DateTime')
             if isinstance(dt, str) and ' ' in dt:
                 d, t = dt.split(' ', 1)
                 out['date'] = d.replace(':', '-')
@@ -2432,7 +2431,7 @@ def extract_exif(path):
                 subtags = {TAGS.get(k, k): v for k, v in sub.items()}
             except Exception:
                 subtags = {}
-            dto = subtags.get('DateTime原始照片')
+            dto = subtags.get('DateTimeOriginal')
             if isinstance(dto, str) and ' ' in dto and 'date' not in out:
                 d, t = dto.split(' ', 1)
                 out['date'] = d.replace(':', '-'); out['time'] = t
@@ -2452,7 +2451,7 @@ def extract_exif(path):
             fl = _ratio(subtags.get('FocalLength'))
             if fl:
                 out['focal'] = str(int(round(fl))) + 'mm'
-            if not subtags.get('LensModel') and subtags.get('LensModel') is None and 'lens' not in out:
+            if 'lens' not in out:
                 lm = subtags.get('LensModel')
                 if lm:
                     out['lens'] = str(lm).strip()
