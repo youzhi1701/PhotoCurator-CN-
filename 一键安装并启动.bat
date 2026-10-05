@@ -91,11 +91,13 @@ timeout /t 3 /nobreak >nul
 
 if exist "启动错误.log" (
     echo.
-    echo [启动失败] 已生成“启动错误.log”：
+    echo [桌面窗口启动失败] 已生成“启动错误.log”：
     type "启动错误.log"
     echo.
-    pause
-    exit /b 1
+    echo 正在自动切换到浏览器兼容模式，核心照片处理功能仍可使用。
+    echo.
+    call "浏览器兼容模式.bat"
+    exit /b
 )
 
 echo.
