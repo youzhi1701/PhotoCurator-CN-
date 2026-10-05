@@ -14,8 +14,8 @@ if not exist ".venv\Scripts\python.exe" (
 
 echo.
 echo 正在启动浏览器兼容模式...
-echo 本地地址：http://127.0.0.1:5014
-echo 浏览器会在服务启动后自动打开。
+echo 程序会自动选择可用的本地端口。
+echo 浏览器会在服务启动后自动打开正确地址。
 echo 关闭本窗口即可停止兼容模式服务。
 echo.
 ".venv\Scripts\python.exe" "photo_curator.py"
