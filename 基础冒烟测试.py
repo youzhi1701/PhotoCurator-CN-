@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 """照片筛选基础冒烟测试：中文路径、特殊字符、图像读取和安全路径。"""
 
+import sys
 import tempfile
 from pathlib import Path
 
@@ -17,6 +18,11 @@ def assert_true(value, message):
 
 
 def main():
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
     with tempfile.TemporaryDirectory(prefix="照片筛选_自检_") as td:
         root = Path(td) / "中文照片 文件夹（测试）"
         root.mkdir(parents=True, exist_ok=True)
