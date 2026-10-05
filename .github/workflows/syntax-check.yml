@@ -165,3 +165,24 @@ jobs:
       - name: Unicode path and image IO smoke test
         run: |
           python "基础冒烟测试.py"
+
+
+      - name: Technical identifier localization guard
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          source = Path("photo_curator.py").read_text(encoding="utf-8")
+          banned = [
+              "DateTime原始照片",
+              "Lens原始照片",
+              "Exposure时间",
+              "Focal长度",
+          ]
+          bad = [x for x in banned if x in source]
+          if bad:
+              raise SystemExit("Technical identifiers were localized accidentally: " + repr(bad))
+          for required in ("DateTimeOriginal", "LensModel", "ExposureTime", "FocalLength"):
+              if required not in source:
+                  raise SystemExit("Missing required EXIF identifier: " + required)
+          print("Technical identifier localization guard OK")
+          PY
