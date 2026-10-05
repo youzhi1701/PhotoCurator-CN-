@@ -1,199 +1,129 @@
-# 📸 Photo Curator
+# 照片筛选 · PhotoCurator 中文桌面版
 
-<img width="1503" height="744" alt="Photo-Curator-header" src="https://github.com/user-attachments/assets/7c3a22ff-b035-4feb-8d13-07f26dbf1879" />
-<img width="2752" height="1536" alt="Automated_Photo_Culling_Workflow" src="https://github.com/user-attachments/assets/d6092dc5-b13e-469f-bdcb-9f03c7c7d223" />
+基于开源项目 **Photo Curator v7.0** 二次开发的 Windows 中文桌面照片筛选工具。
 
-**v7.0** · A local, browser-based tool for culling and ranking large photo libraries. Point it at a folder of **JPEG, PNG, HEIC or RAW** files (Canon CR2/CR3, Nikon NEF, Sony ARW, DNG and more) — and it walks you through three steps — **drop the blurry ones, collapse burst duplicates, and surface your best shots** — all running entirely on your own machine. Nothing is ever uploaded anywhere.
+当前中文桌面版：**v1.1.0-cn.1**
 
-Built for photographers who come home from a trip with a few thousand frames and want the keepers fast.
+## 主要能力
 
-<p align="center">
-  <img src="https://img.shields.io/badge/pipeline-Cull%20→%20Dedup%20→%20Rank-blue" alt="pipeline: Cull → Dedup → Rank">
-  <img src="https://img.shields.io/badge/RAW-CR2%20·%20CR3%20·%20NEF%20·%20ARW%20·%20DNG%20%2B%20more-8a2be2" alt="RAW support">
-  <img src="https://img.shields.io/badge/HEIC-iPhone%20·%20HEIF%20·%20HIF-0d9488" alt="HEIC support">
-  <img src="https://img.shields.io/badge/python-3.9+-blue" alt="Python 3.9+">
-  <img src="https://img.shields.io/badge/runs-100%25%20local-16a34a" alt="100% local">
-  <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License">
-  <a href="https://ko-fi.com/B3S720JCU6"><img src="https://img.shields.io/badge/☕%20Support-Ko--Fi-FF5E5B" alt="Support on Ko-Fi"></a>
-</p>
+核心流程保持原项目算法逻辑：
 
-> 💛 **Photo Curator is free and open source.** If it saved you an evening of culling, please [**buy me a Ko-Fi**](https://ko-fi.com/B3S720JCU6) — it directly funds new features.
+**模糊筛选 → 相似去重 → 智能优选**
 
----
+支持 JPEG、PNG、WebP、TIFF、BMP、HEIC/HEIF/HIF，以及常见 RAW：CR2、CR3、NEF、ARW、DNG、RAF、ORF、RW2、PEF 等。
 
-## Contents
+主要改进：
 
-- [Why Photo Curator](#why-photo-curator)
-- [What's new in v7.0 — HEIC / iPhone photos](#-whats-new-in-v70--heic--iphone-photos)
-- [RAW support (since v6.0)](#raw-support-since-v60)
-- [Features](#photo-curator-features)
-- [Install](#install)
-- [Run](#run)
-- [Workflow](#workflow)
-- [How it works](#how-it-works)
-- [Platform notes](#platform-notes)
-- [Support the project](#-support-the-project)
-- [License](#license)
+- 独立桌面窗口，不需要手动打开 localhost 网页
+- Windows 原生文件夹选择
+- 中文界面、中文状态提示和中文错误提示
+- Windows 125% / 150% / 200% DPI 响应式适配
+- 默认最大化启动
+- 支持窗口缩放与页面缩放
+- 中小窗口自动调整侧栏、照片网格和大图详情布局
+- 大图库 Cull 分页，单页最多 400 张，避免一次生成过多 DOM
+- 运行期间限制实时照片数据量，降低长时间筛选后的页面卡顿
+- 去重缓存保存到系统临时目录，不污染照片文件夹
+- 手动修改“清晰 / 轻微软 / 模糊”只改变分类，不会擅自移动原文件
+- 只有明确点击移动按钮后才会移动照片
+- 重复导出不会覆盖上一次 TOP 结果
+- 动态本地端口，5014 被占用时桌面版自动寻找可用端口
+- 单实例保护，避免两个窗口同时修改同一图库
+- 启动错误完整日志
+- GitHub 自动 Python 语法检查
 
-## Why Photo Curator
+## Windows 第一次使用
 
-A long shoot leaves you with thousands of near-identical frames, blurred misfires, and a handful of genuine keepers buried in the middle. Going through them by hand is slow and easy to get wrong. Photo Curator does the first ruthless pass for you — in seconds per hundred photos — and **leaves every decision reversible**. Nothing is deleted or moved until you say so, and your files never leave your computer.
+双击：
 
-## 🆕 What's new in v7.0 — HEIC / iPhone photos
+`一键安装并启动.bat`
 
-Photo Curator now reads **HEIC/HEIF** straight from an iPhone import — no conversion step, no detour through Photos:
+安装器会：
 
-- **Formats** — `.heic`, `.heif` and `.hif` (iPhone and Android stills, plus Canon/Sony HEIF), decoded by [`pillow-heif`](https://pypi.org/project/pillow-heif/) (libheif). EXIF — date, lens, GPS, orientation — comes through exactly as it does for JPEG, so the map view and burst timing work unchanged.
-- **A HEIC filter chip** in Cull sits next to *All types · RAW only · JPG only*, and every HEIC card carries a teal **HEIC** tag.
-- **Browser-safe display** — only Safari renders HEIC natively, so the full-size view is served as a transcoded JPEG (cached, same as RAW previews). Your `.heic` files are never modified, and exports always copy the untouched original.
-- **Mixed folders just work** — a card or folder holding JPEG + HEIC + RAW is culled, deduped and ranked in one pass, and every card is tagged with its real format (HEIC, CR2, PNG, TIFF…).
+1. 自动寻找兼容 Python，优先 Python 3.11
+2. 支持 Python 3.9–3.12
+3. 创建项目独立的 `.venv`
+4. 安装和修复依赖
+5. 验证 Flask / OpenCV / NumPy / Pillow / pywebview / RAW / HEIC 支持
+6. 启动独立桌面窗口
 
-**Full format list:** JPEG · PNG · HEIC / HEIF / HIF · TIFF · BMP · WebP · every RAW format LibRaw reads. PNG, TIFF and BMP carry no EXIF, so those frames get no capture time or map pin — dedup falls back to hash-only clustering for them, everything else works the same.
-- Bundled in the offline packages. Running from source? It's in `requirements.txt`; without it the app keeps working and says so in the sidebar.
+如果电脑只有 Python 3.13/3.14，安装器会直接提示安装 Python 3.11，而不是安装到中途再失败。
 
-## RAW support (since v6.0)
+## 日常使用
 
-Photo Curator also curates your **RAW files** alongside JPEGs:
+双击：
 
-- **Formats** — Canon **CR2/CR3**, Nikon NEF, Sony ARW, Adobe DNG, Fuji RAF, Olympus ORF, Panasonic RW2, Pentax PEF and more (anything LibRaw reads).
-- **Fast by design** — instead of demosaicing every file, the full-size JPEG preview your camera embeds in each RAW is used for thumbnails, analysis and on-screen display. EXIF (date, lens, GPS, orientation) comes along with it. Files without a usable preview fall back to a half-size RAW develop.
-- **Shoot RAW+JPG?** Two tools keep pairs under control:
-  - **Cull filter chips** — view **All types · RAW only · JPG only**; every card carries a **RAW** (purple) or **JPG** (gray) tag. The filter carries into Dedup and Rank, and the app tells you when only one format continues.
-  - **RAW+JPG pair setting** (Dedup panel) — collapse same-frame pairs (`IMG_0001.CR2` + `IMG_0001.JPG`) to one file before deduping: keep both, keep RAW, or keep JPG. Applies in Rank too, so no more duplicate keepers.
-- **Originals stay originals** — exports always copy the untouched RAW file, never a converted preview.
-- Powered by [`rawpy`](https://pypi.org/project/rawpy/) (LibRaw). It's in `requirements.txt`; without it the app keeps working JPEG-only and says so in the sidebar.
+`启动照片筛选.bat`
 
-## Photo Curator Features
+正常情况下不会出现需要长期保留的命令行窗口。
 
-## 1. Cull
-- **1 · Cull** — flags out-of-focus shots using a *contrast-normalized* sharpness measure, so genuinely soft frames are caught while low-contrast-but-sharp shots (haze, night, big skies) are kept. Sorts into **Sharp / Soft (recoverable) / Blurry**, with a one-click tier toggle on the badge of every photo. Filter by **RAW / JPG** when you shoot both. Blurry shots move to `Blurred/` only when you press **Move blurry** — review first, move second.
+## 其他入口
 
-<div align="center"><img width="800" height="450" alt="PhotoCuratorv3 4-ezgif com-video-to-gif-converter" src="https://github.com/user-attachments/assets/aa7b4452-f6ba-497c-8ed6-b31748a7e068" /></div>
+- `环境自检.bat`：检查 Python、代码语法、依赖和临时目录
+- `调试运行.bat`：出现问题时显示完整错误
+- `浏览器兼容模式.bat`：桌面 WebView 异常时的备用启动方式
 
-## 2. Dedup
-- **2 · Dedup** — global perceptual-hash clustering collapses burst sequences to a single frame. EXIF capture-time tightens burst detection, ORB feature-matching prevents distinct scenes from being wrongly merged, and the **sharpest** frame of each group is kept and labelled **"Best of N"** (so you can see how many near-duplicates it stood in for). Frames with no near-duplicate are labelled **"Original"**. The **RAW+JPG pairs** setting collapses same-frame format pairs before clustering. Matching is vectorized and signatures are cached, so big cards stay fast.
+桌面版会自动选择本地端口。浏览器兼容模式默认使用：
 
-<img width="2157" height="963" alt="Dedup-Japan" src="https://github.com/user-attachments/assets/a7a7eb2d-f68e-4ec0-9b0b-efc50769c0b2" />
+`http://127.0.0.1:5014`
 
-## 3. Rank and find TOP Photos
-- **3 · Rank** — scores each photo on composition, lighting, focus, color, and contrast, then shows your **TOP N** with a per-photo hexagonal radar chart and a TOP-N average "metric profile". Ranking shows live per-photo progress with **percentage, elapsed time, and ETA**. If you skip Dedup, ranking folds the clustering in automatically so a one-click run still gives a burst-free result.
-<div align="center">
-<img width="800" height="450" alt="PhotoCuratorv3 4-ezgif com-video-to-gif-converter (2)" src="https://github.com/user-attachments/assets/1a5a205a-9358-4422-9da4-c1d1e64e3416" />
-</div>
+## 窗口与缩放
 
-<img width="2855" height="1866" alt="Rank view" src="https://github.com/user-attachments/assets/bc403303-2edf-4a48-9f25-27502627416f" />
+桌面版默认最大化打开，并允许原生页面缩放。
 
-<img width="3550" height="1497" alt="SCR-20260531-sxoh" src="https://github.com/user-attachments/assets/f63464b1-02d2-4bb6-8db1-72b4c861f5b5" />
+界面根据可用宽高自动调整：
 
+- 大屏：完整侧栏 + 多列照片网格 + 右侧详情面板
+- 中等窗口：缩小侧栏和卡片宽度
+- 窄窗口 / 高 DPI：顶部自动换行
+- 更窄窗口：侧栏切换到上方，主照片区放到下方
+- 大图查看器在窄窗口下将详情面板移动到底部
+- 低高度窗口会压缩按钮和留白，避免关键操作被挤出窗口
 
-<img width="2139" height="954" alt="Rank radar" src="https://github.com/user-attachments/assets/2499032b-35da-4823-8d01-0efee29c7b58" />
+## 文件安全
 
-## 📱 Phone Background selector - (new since v3.5)
-- *(new since v3.5)* — being in the TOP N already vouches for a photo's quality, so a single tap marks any top shot as a phone wallpaper. Each ranked card and the lightbox get a **📱 toggle** (press **B** in the lightbox), a **Phone BG** filter chip shows just the ones you picked, and **Export Phone BG** writes a `PhoneBG/` folder with two subfolders: `Original/` (full-res copies) and `Wallpaper_19.5x9/` (each photo center-cropped and resized to **1290×2796, 19.5:9**). That ratio is pixel-perfect on iPhones and, because phones zoom wallpapers to fill, covers nearly all Android (20:9) too — one universal crop, no device picker.
+默认原则：**先分析、再审核、最后由用户明确决定是否移动。**
 
-<div align="center"><img width="75%" alt="Phones-PhotoCurator-BG" src="https://github.com/user-attachments/assets/f6652bbd-575c-4500-9234-c78b7601e085" /></div>
+- 模糊筛选不会自动删除照片
+- 手动切换分类不会移动照片
+- “移动模糊照片”需要用户明确点击
+- 去重自动移动只有在用户主动启用对应选项后执行
+- TOP 导出使用复制，不移动原照片
+- 重复 TOP 导出会创建新目录，不覆盖上一批结果
 
-## 📍 Photo EXIF & Location Data - (new since v3.7)
+## 大图库说明
 
-(new since v3.7) — full photo context in one glance. The lightbox Details panel now shows EXIF info (camera, lens, aperture, shutter, ISO), date & time, and an interactive map view with exact coordinates showing where each shot was taken — for RAW files too, read from the camera's embedded preview. Browse by place with the 📍 Location filter chip. Perfect for travel curation — instantly map your top-ranked images and remember where you captured each golden moment.
+当前一个任务默认处理“所选文件夹根目录中”的支持格式照片，不会自动递归整个硬盘的所有子目录。
 
-<div align="center">
-<img width="1626" height="950" alt="Screenshot 2026-06-01 at 12 44 07" src="https://github.com/user-attachments/assets/a1b0dc08-fd82-4c4f-844a-9e65e6f8bc3f" />
-</div>
+这样设计是为了防止误选 4TB 硬盘根目录后直接扫描几十万文件导致长时间占用。对于大型照片库，建议按年份、相册或拍摄目录分批选择。
 
-## ⚡️God Mode
+Cull 和 Dedup 的结果已经加入分页/实时数据限流，单页不会一次渲染全部照片。
 
-- **⚡ God Mode** — one button runs the whole pipeline automatically: **Cull → Dedup → Rank**, advancing through each stage and landing on your ranked TOP N. It produces the ranking *without moving any files*, so you still review and move rejects yourself.
+## 数据与网络
 
-- **Built for big libraries** — live preview (newest first) with pagination for huge sets, per-stage progress with elapsed time and **ETA**, EXIF-orientation-correct thumbnails, light/dark theme, a lightbox with arrow-key review, and optional auto-move of rejects into `Blurred/`, `Duplicates/`, and `TOP_N/` subfolders.
+照片分析、缩略图、RAW/HEIC 解码均在本机执行，不上传照片。
 
-<img width="2151" height="953" alt="Library view" src="https://github.com/user-attachments/assets/d42867cb-1b99-4966-8e5e-1693e97a1c25" />
+可选 GPS 地图查看功能需要访问 OpenFreeMap 地图瓦片。除此之外，核心筛选流程不依赖云端服务。
 
-## Install
+## 项目结构
 
-### 📦 Offline package for Mac (recommended)
+- `desktop_app.py`：桌面窗口和本地服务启动器
+- `photo_curator.py`：主界面、API 和流程编排
+- `photo_dedup_batch.py`：相似照片聚类去重
+- `photo_ranking_v3.py`：照片质量评分
+- `photo_file_organizer.py`：照片移动 / 导出
+- `raw_loader.py`：RAW / HEIC 加载
+- `vendor/`：本地 MapLibre 资源
+- `.github/workflows/syntax-check.yml`：自动语法检查
 
-No Python, no terminal, no internet needed — everything is bundled (RAW and HEIC support included).
+## 上游与许可证
 
-➡️ **[Download · Apple Silicon](https://github.com/kotyzap/Photo-Curator/releases/download/v7.0/PhotoCurator-Mac-AppleSilicon-Offline-v7.0.zip)** — ~76 MB · M1–M6 · macOS 11+
+本项目基于：
 
-Unzip, keep the **PhotoCurator** folder together, right-click **"Start Photo Curator.command"** → **Open** (first time only) — your browser opens automatically.
+**kotyzap/Photo-Curator · v7.0**
 
-### 📦 Offline package for Windows
+原项目 README 已保存在：
 
-Self-contained Python 3.11 and every library included — nothing is installed into Windows.
+`UPSTREAM_README.md`
 
-➡️ **[Download · Windows x64](https://github.com/kotyzap/Photo-Curator/releases/download/v7.0/PhotoCurator-Windows-x64-Offline-v7.0.zip)** — ~86 MB · Windows 10 / 11 (64-bit)
-
-Unzip the folder, keep it together, double-click **"Start Photo Curator.bat"**. SmartScreen may ask once: *More info → Run anyway*.
-
-### 📦 Offline package for Linux
-
-Bundled CPython 3.11 and every library included — no `sudo`, no system Python, nothing installed outside the folder.
-
-➡️ **[Download · Linux x64](https://github.com/kotyzap/Photo-Curator/releases/download/v7.0/PhotoCurator-Linux-x64-Offline-v7.0.tar.gz)** — ~124 MB · x86_64 · glibc 2.28+ (Ubuntu 20.04+, Debian 10+, RHEL/Rocky 8+)
-
-```bash
-tar -xzf PhotoCurator-Linux-x64-Offline-v7.0.tar.gz
-cd PhotoCurator-Linux
-./start-photo-curator.sh
-```
-
-> x86_64 only — ARM (Raspberry Pi, Ampere) and musl distros (Alpine) are not covered by this bundle; run from source there instead.
-
-### 🛠️ Run from source
-
-Requires **Python 3.9+**.
-
-```bash
-pip install -r requirements.txt
-```
-
-> RAW support comes from `rawpy` and HEIC support from `pillow-heif` (both in `requirements.txt`). Installing on an older setup? Run `pip install rawpy pillow-heif`. Without either one Photo Curator keeps working on the remaining formats and shows a notice in the sidebar.
-
-## Run
-
-```bash
-python photo_curator.py
-```
-
-Then open <http://127.0.0.1:5014> (note 50 mm, F1.4 in the port) in your browser. Pick a folder (or paste a path), choose a step, and press **Start**.
-
-## Workflow
-
-A typical pass on a full card is **Cull → Dedup → Rank** in order — each step feeds its survivors to the next, so ranking only scores the photos worth scoring.
-
-In a hurry? Press **⚡ God Mode** to run all three automatically and jump straight to your ranked TOP N. Either way, **no files are deleted or moved until you explicitly choose to** — every stage is review-first.
-
-## How it works
-
-<img width="2752" height="1536" alt="Pipeline diagram" src="https://github.com/user-attachments/assets/4dba8472-c45a-42d6-aa04-070f9843c639" />
-
-| Step | Metric | Notes |
-|------|--------|-------|
-| RAW decode | Embedded JPEG preview via `rawpy`/LibRaw (fallback: half-size demosaic) | ~50× faster than developing the sensor data; EXIF/GPS/orientation preserved. Exports copy the original RAW. |
-| GPS map | MapLibre (bundled, no CDN) over [OpenFreeMap](https://openfreemap.org/) vector tiles | Shown in the lightbox for geotagged photos. OpenStreetMap's own tile servers refuse app traffic under their tile usage policy, so the map uses OpenFreeMap. One map instance is reused across photos. |
-| HEIC decode | `pillow-heif`/libheif, registered as a Pillow plugin | EXIF/GPS/orientation preserved. OpenCV can't read HEIF, so analysis routes through Pillow; the browser gets a cached JPEG transcode. Exports copy the original `.heic`. |
-| Cull | `var(Laplacian) / var(image)` on a 1024px copy | Resolution-independent; normalizes out contrast so haze ≠ blur. Threshold is adjustable. |
-| Dedup | 192-bit perceptual hash (avg + dual difference hash) + ORB confirm | Global clustering; EXIF-timed bursts get a relaxed bar; keeps the sharpest frame. RAW+JPG pairs can pre-collapse to one. |
-| Rank | Weighted focus / lighting / contrast / color / composition | Per-photo radar + TOP-N average profile. |
-
-Thumbnails are cached under your system temp dir, so the first pass over a folder is the only slow one.
-
-## Platform notes
-
-Tested on **macOS** (Apple Silicon), **Windows 10/11 x64** and **Linux x86_64**. On macOS the native folder picker uses `osascript` and SD-card detection scans `/Volumes`; on Windows it uses the standard folder dialog and scans drive letters for `DCIM`. On Linux those two conveniences are skipped, but you can paste a folder path into the field and everything else works the same.
-
-## ☕ Support the project
-
-Photo Curator is free, open source, and runs entirely on your own machine. If it saved you time, the best way to say thanks is to fuel the next feature:
-
-<div align="center">
-  <a href='https://ko-fi.com/B3S720JCU6' target='_blank'><img height='44' style='border:0px;height:44px;' src='https://storage.ko-fi.com/cdn/kofi6.png?v=6' border='0' alt='Buy Me a Coffee at ko-fi.com' /></a>
-</div>
-
-Every coffee genuinely helps — thank you! 🙏
-
-## License
-
-[MIT](LICENSE)
+许可证保持原项目 **MIT License**，原作者版权信息保留在 `LICENSE` 中。
