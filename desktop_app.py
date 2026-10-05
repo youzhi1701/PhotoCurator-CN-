@@ -70,7 +70,7 @@ except ImportError:
 
 # Import only after PHOTOCURATOR_PORT is set; photo_curator builds its local
 # security allow-list from this value at import time.
-from photo_curator import app
+from photo_curator import app, state
 
 URL = f"http://{HOST}:{PORT}"
 
@@ -133,7 +133,7 @@ def main():
             "请运行“调试运行.bat”或查看“启动错误.log”。"
         )
 
-    webview.create_window(
+    window = webview.create_window(
         APP_TITLE,
         URL,
         js_api=DesktopApi(),
@@ -143,9 +143,24 @@ def main():
         resizable=True,
         maximized=True,
         zoomable=True,
-        confirm_close=True,
+        confirm_close=False,
         text_select=True,
     )
+
+    def on_closing():
+        active = [k for k in ('cull', 'dedup', 'rank')
+                  if state.get(k, {}).get('running')]
+        if active:
+            try:
+                window.evaluate_js(
+                    "toast('当前照片处理任务仍在运行，请先点击“停止”后再关闭窗口。','bad')"
+                )
+            except Exception:
+                pass
+            return False
+        return True
+
+    window.events.closing += on_closing
 
     try:
         # Let pywebview use the best native backend available. On current
