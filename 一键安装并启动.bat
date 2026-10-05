@@ -27,14 +27,18 @@ if defined PY_CMD goto :python_found
 :try_python
 where python >nul 2>nul
 if errorlevel 1 goto :no_python
-python -c "import sys; raise SystemExit(0 if (3,9) <= sys.version_info[:2] <= (3,12) else 1)" >nul 2>nul
+python -c "import sys,struct; raise SystemExit(0 if (3,9) <= sys.version_info[:2] <= (3,12) and struct.calcsize('P')*8 == 64 else 1)" >nul 2>nul
 if errorlevel 1 goto :bad_python
 set "PY_CMD=python"
 
 :python_found
 echo [1/5] 使用兼容 Python：
-%PY_CMD% -c "import sys; print('      Python', sys.version.split()[0], '-', sys.executable)"
-if errorlevel 1 goto :fail
+%PY_CMD% -c "import sys,struct; print('      Python', sys.version.split()[0], '-', str(struct.calcsize('P')*8)+'位', '-', sys.executable); raise SystemExit(0 if struct.calcsize('P')*8 == 64 else 1)"
+if errorlevel 1 (
+    echo [错误] 当前 Python 不是 64 位版本。
+    echo 请安装 Python 3.11 64 位后重新运行。
+    goto :fail
+)
 
 if exist ".venv\Scripts\python.exe" (
     ".venv\Scripts\python.exe" -c "import sys; raise SystemExit(0 if (3,9) <= sys.version_info[:2] <= (3,12) else 1)" >nul 2>nul
