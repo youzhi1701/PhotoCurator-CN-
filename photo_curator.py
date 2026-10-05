@@ -773,7 +773,7 @@ def run_cull(folder, strictness, adaptive, rescue_on):
         s.pop('_last_classify_at', None)
 
         # Blurry photos are NOT moved automatically — they stay in place so you
-        # can review them first, then move them with the "Move blurry → Blurred/"
+        # can review them first, then move them with the "移动模糊照片 → Blurred/"
         # button (mirrors the TOP-N export flow).
         s['progress'] = 100
         s['complete'] = True   # full pass finished — survivors are safe to chain
@@ -864,7 +864,7 @@ def run_dedup(folder, threshold, ftype='all', pair='both'):
             # stays responsive. When finished, show ALL survivors so every kept
             # photo can be reviewed (rendered once, with lazy-loading images).
             # Iterate clusters (not just reps) so each card knows how many frames
-            # collapsed into it → "Best of N" / "N similar hidden".
+            # collapsed into it → "同组最佳" / "N similar hidden".
             clusters = dd.clusters
             shown = clusters if final else clusters[-GRID_CAP:]
             photos = []
@@ -1065,7 +1065,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   .viewport{display:flex;height:calc(100vh - 58px);height:calc(100dvh - 58px);min-height:0}
   .sidebar{width:clamp(260px,22vw,320px);flex:0 0 clamp(260px,22vw,320px);background:var(--panel);border-right:1px solid var(--border);padding:16px;overflow:hidden;display:flex;flex-direction:column}
   /* Scrollable region holds folder + settings + stats; the action footer below
-     is pinned so Start / Export / Move blurry stay above the fold. */
+     is pinned so Start / Export / 移动模糊照片 stay above the fold. */
   .sidebar-scroll{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:12px;padding-right:4px}
   .sidebar-actions{flex:0 0 auto;display:flex;flex-direction:column;gap:8px;padding-top:10px;margin-top:6px;border-top:1px solid var(--border)}
   #shortcuts{display:flex;flex-direction:column}
@@ -1080,7 +1080,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   .btn:hover{filter:brightness(1.07)}
   .btn.stopping{background:var(--bad)}
   .btn-ghost{width:100%;padding:9px;border:1px solid var(--border);border-radius:9px;background:var(--panel);color:var(--text);cursor:pointer;font-weight:500}
-  /* Muted Start when a contextual primary action (e.g. Move blurry) takes over */
+  /* Muted Start when a contextual primary action (e.g. 移动模糊照片) takes over */
   .btn.secondary{background:var(--panel2);color:var(--muted);border:1px solid var(--border)}
   .btn.secondary:hover{filter:none;border-color:var(--accent)}
   /* Emphasised contextual call-to-action */
@@ -1270,7 +1270,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
       <button id="zoomIn" type="button" aria-label="放大界面">＋</button>
       <button id="zoomReset" type="button" aria-label="恢复100%">↺</button>
     </div>
-    <button class="theme" id="themeToggle">🌙</button>
+    <button class="theme" id="themeToggle" title="切换浅色 / 深色主题" aria-label="切换浅色 / 深色主题">🌙</button>
   </div>
 </div>
 <div class="viewport">
@@ -1325,12 +1325,12 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
       <button class="lb-btn toggle" id="lbToggle" style="display:none">→ 标记为模糊</button>
       <button class="lb-btn restore" id="lbRestore" style="display:none">↺ 全部恢复</button>
       <button class="lb-btn remove" id="lbRemove" style="display:none">✕ 移除</button>
-      <button class="lb-close" id="lbClose">✕</button>
+      <button class="lb-close" id="lbClose" title="关闭大图" aria-label="关闭大图">✕</button>
     </div>
   </div>
-  <button class="lb-nav lb-prev" id="lbPrev">‹</button>
+  <button class="lb-nav lb-prev" id="lbPrev" title="上一张" aria-label="上一张">‹</button>
   <img class="lb-img" id="lbImg" src="">
-  <button class="lb-nav lb-next" id="lbNext">›</button>
+  <button class="lb-nav lb-next" id="lbNext" title="下一张" aria-label="下一张">›</button>
   <div class="lb-side" id="lbSide"></div>
 </div>
 
@@ -1769,7 +1769,7 @@ function emptyHTML(step){
 function cullCard(p){
   const i=photoIdx++;const path=escHtml(p.path);
   const isDedup=currentStep==='dedup';
-  // Dedup: the badge tells you this frame won a burst ("Best of N"); the info
+  // Dedup: the badge tells you this frame won a burst ("同组最佳"); the info
   // line says how many near-duplicates were set aside. The raw sharpness number
   // (used only to pick the winner) is no longer shown — it wasn't meaningful.
   const g=p.group||1;
@@ -1796,7 +1796,7 @@ function renderGallery(items){   /* dedup: paginated + reconciling (order-stable
   const start=gPage*PAGE_SIZE,end=Math.min(items.length,start+PAGE_SIZE);
   const slice=items.slice(start,end);
   // Signature includes the page + group size so paging and growing clusters
-  // ("Best of N") always re-render; reconcile within.
+  // ("同组最佳") always re-render; reconcile within.
   const sig=gPage+'#'+slice.map(p=>p.path+':'+(p.group||1)).join('|');
   if(sig===lastGallerySig){updatePager();document.getElementById('sShowing').textContent=items.length;return;}
   lastGallerySig=sig;
@@ -1807,7 +1807,7 @@ function renderGallery(items){   /* dedup: paginated + reconciling (order-stable
   const frag=document.createDocumentFragment();
   slice.forEach((p,k)=>{const i=start+k;const key=String(p.path);let node=existing[key];
     if(node){
-      // Keep reused cards in sync. For Dedup show "Best of N"/"no duplicates"
+      // Keep reused cards in sync. For Dedup show "同组最佳"/"无相似重复"
       // (never the raw sharpness number); the badge updates as clusters grow.
       const g=p.group||1;
       const b=node.querySelector('.badge');
@@ -2044,7 +2044,7 @@ function showLb(){
     let html=`<div style="text-align:center">${radarSVG(metrics,150)}</div><h3>分类评分</h3>`;
     CATS.forEach(([k,lab],ci)=>html+=barRow(lab,(p.scores&&p.scores[k])||0,CATINFO[k],true,CATCOLORS[ci]));
     const d=p.detail||{};GROUPS.forEach(([k,lab,keys])=>{const cv=(p.scores&&p.scores[k]);html+=`<h3>${lab}<span>${cv!=null?cv:''}</span></h3>`;keys.forEach(key=>{if(key in d)html+=barRow(key,d[key],SUBINFO[key]);});});
-    html+=`<div style="font-size:10px;opacity:.5;margin-top:14px">Hover any row for what it measures.</div>`;
+    html+=`<div style="font-size:10px;opacity:.5;margin-top:14px">将鼠标停留在任意评分项上，可查看该指标的含义。</div>`;
     side.style.display='block';side.innerHTML=html;
   }else{side.style.display='block';side.innerHTML=`<h3>${currentStep==='cull'?'清晰度':'照片'}</h3><div style="font-size:13px;opacity:.85">${escHtml(p.name)}</div><div style="font-size:26px;font-weight:700;margin-top:8px">${p.score!=null?p.score:''}</div>`;}
   loadExif(p.path,side);
@@ -2351,7 +2351,7 @@ def extract_exif(path):
                 return out
             tags = {TAGS.get(k, k): v for k, v in exif.items()}
             # Date / time
-            dt = tags.get('DateTimeOriginal') or tags.get('DateTime')
+            dt = tags.get('DateTime原始照片') or tags.get('DateTime')
             if isinstance(dt, str) and ' ' in dt:
                 d, t = dt.split(' ', 1)
                 out['date'] = d.replace(':', '-')
@@ -2370,7 +2370,7 @@ def extract_exif(path):
                 subtags = {TAGS.get(k, k): v for k, v in sub.items()}
             except Exception:
                 subtags = {}
-            dto = subtags.get('DateTimeOriginal')
+            dto = subtags.get('DateTime原始照片')
             if isinstance(dto, str) and ' ' in dto and 'date' not in out:
                 d, t = dto.split(' ', 1)
                 out['date'] = d.replace(':', '-'); out['time'] = t
