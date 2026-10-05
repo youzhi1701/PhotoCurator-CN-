@@ -868,11 +868,11 @@ def build_topn(weights=None, topn=None):
             'scores': {'composition': round(s.composition), 'technical': round(s.technical),
                        'sharpness': round(s.sharpness), 'color': round(s.color),
                        'aesthetic': round(s.aesthetic)},
-            'detail': {'Rule of thirds': round(s.rule_of_thirds), 'Horizon level': round(s.horizon_level),
-                       'Balance': round(s.balance), 'Exposure': round(s.exposure),
-                       'Dynamic range': round(s.dynamic_range), 'Tonal range': round(s.tonal),
-                       'White balance': round(s.white_balance), 'Noise (clean)': round(s.noise),
-                       'Colorfulness': round(s.colorfulness), 'Color harmony': round(s.harmony)},
+            'detail': {'三分法构图': round(s.rule_of_thirds), '水平线': round(s.horizon_level),
+                       '画面平衡': round(s.balance), '曝光': round(s.exposure),
+                       '动态范围': round(s.dynamic_range), '影调范围': round(s.tonal),
+                       '白平衡': round(s.white_balance), '噪点控制': round(s.noise),
+                       '色彩丰富度': round(s.colorfulness), '色彩协调': round(s.harmony)},
         })
     return out
 
@@ -1335,7 +1335,7 @@ let isRunning=false, runningStep=null;
 const startBtn=document.getElementById('startBtn');
 function setStartBtn(running){
   isRunning=running;
-  startBtn.textContent=running?'■ Stop':'🚀 Start';
+  startBtn.textContent=running?'■ 停止':'🚀 开始处理';
   startBtn.classList.toggle('stopping',running);
 }
 function startStep(step){
@@ -1354,7 +1354,7 @@ function startStep(step){
   // Carry the Cull file-type filter (RAW only / JPG only) into Dedup & Rank.
   if(step!=='cull'&&cullType!=='all'){
     const tl=cullType.startsWith('ext:')?cullType.slice(4).toUpperCase():cullType.toUpperCase();
-    toast('Continuing with '+tl+' files only — switch the Cull filter to "All types" to include everything','');
+    toast('继续处理 '+tl+' files only — switch the Cull filter to "All types" to include everything','');
   }
   fetch('/api/run/'+step,{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({folder,opt:opt?parseFloat(opt.value):0,
@@ -1365,7 +1365,7 @@ function startStep(step){
   setTimeout(()=>poll(step),200);
 }
 function doStart(){
-  if(!folder){toast('Pick a folder first','bad');return;}
+  if(!folder){toast('请先选择照片文件夹','bad');return;}
   startStep(currentStep);
 }
 function doStop(){
@@ -1378,9 +1378,9 @@ startBtn.onclick=()=>{ isRunning?doStop():doStart(); };
 /* ---- God mode: run Cull → Dedup → Rank back-to-back ---- */
 let godMode=false, godAbort=false, godResolve=null;
 const godBtn=document.getElementById('godBtn');
-function setGodBtn(on){ godBtn.textContent=on?'■ Stop God Mode':'⚡ God Mode · Run All'; godBtn.classList.toggle('stopping',on); }
+function setGodBtn(on){ godBtn.textContent=on?'■ 停止一键全流程':'⚡ 一键全流程'; godBtn.classList.toggle('stopping',on); }
 async function godRun(){
-  if(!folder){toast('Pick a folder first','bad');return;}
+  if(!folder){toast('请先选择照片文件夹','bad');return;}
   if(isRunning){toast('请先停止当前正在执行的任务。','bad');return;}
   godMode=true;godAbort=false;setGodBtn(true);startBtn.disabled=true;
   try{
@@ -1392,14 +1392,14 @@ async function godRun(){
       {const ao=document.getElementById('autoOrg'); if(ao)ao.disabled=true;}
       await new Promise(res=>{ godResolve=res; startStep(step); });
     }
-    if(!godAbort)toast('✨ God mode complete — your TOP photos are ranked','good');
+    if(!godAbort)toast('✨ 一键全流程完成，优选照片已排序','good');
   } finally {
     godMode=false;setGodBtn(false);startBtn.disabled=false;
     const ao=document.getElementById('autoOrg'); if(ao)ao.disabled=false;  // re-enable
   }
 }
 godBtn.onclick=()=>{
-  if(godMode){ godAbort=true; doStop(); toast('Stopping God mode…','bad'); }
+  if(godMode){ godAbort=true; doStop(); toast('正在停止一键全流程…','bad'); }
   else godRun();
 };
 function poll(step){
@@ -1458,17 +1458,17 @@ function radarSVG(metrics,size=210){
 const EMPTY='<div class="empty"><div class="icon">🎞️</div><div>No results</div></div>';
 function emptyHTML(step){
   const C={
-    cull:['✂️','Step 1 · Cull','Drop the out-of-focus shots before anything else.',
+    cull:['✂️','步骤 1 · 模糊筛选','先识别并筛出失焦、明显模糊的照片。',
       ['🔍 Measures real sharpness — haze &amp; night skies aren’t mistaken for blur',
        '🟢 Sharp &nbsp;·&nbsp; 🟠 Soft (recoverable) &nbsp;·&nbsp; 🔴 Blurry',
        '📁 Pick a folder, then press <b>Start</b>']],
-    dedup:['🪢','Step 2 · Dedup','Collapse burst sequences down to a single best frame.',
-      ['📸 Near-identical shots are grouped automatically',
-       '⭐ The sharpest frame wins — labelled “Best of N”',
+    dedup:['🪢','步骤 2 · 相似去重','将连拍或高度相似照片归组，保留其中最佳的一张。',
+      ['📸 自动识别并归组近似照片',
+       '⭐ 每组优先保留最清晰的一张',
        '🚀 Press <b>Start</b> — uses your Cull keepers, or the whole folder']],
-    rank:['🏆','Step 3 · Rank','Surface your very best photos.',
+    rank:['🏆','步骤 3 · 智能优选','综合画质、构图与色彩，找出更值得保留的照片。',
       ['🎯 Scores composition, lighting, focus, color &amp; contrast',
-       '🥇 Shows your TOP N with a per-photo radar chart',
+       '🥇 展示前 N 张优选照片，并提供单张评分雷达图',
        '⬇️ Press <b>Start</b>, then export the keepers']]
   };
   const c=C[step]||C.cull;
@@ -1484,12 +1484,12 @@ function cullCard(p){
   // (used only to pick the winner) is no longer shown — it wasn't meaningful.
   const g=p.group||1;
   const badge=isDedup
-    ? `<div class="badge good">${g>1?('★ Best of '+g):'KEPT'}</div>`
+    ? `<div class="badge good">${g>1?('★ 同组最佳 · 共 '+g+' 张'):'KEPT'}</div>`
     : (p.badge?`<div class="badge ${p.badgeType}">${p.badge}</div>`:'');
-  const toggle=currentStep==='cull'?`<button class="status-toggle" data-path="${path}">${p.kept?'→ Blurry':'✓ Keep'}</button>`:'';
+  const toggle=currentStep==='cull'?`<button class="status-toggle" data-path="${path}">${p.kept?'→ 模糊':'✓ 保留'}</button>`:'';
   const cls=p.kept?'kept':(p.rejected?'rejected':'');
   const info=isDedup
-    ? `<div class="photo-score" style="font-weight:500;opacity:.75">${g>1?((g-1)+' similar set aside'):'Original'}</div>`
+    ? `<div class="photo-score" style="font-weight:500;opacity:.75">${g>1?((g-1)+' 张相似照片已归组'):'原始照片'}</div>`
     : `<div class="photo-score">${p.score}</div>`;
   return `<div class="photo-card ${cls}" data-i="${i}" data-path="${path}">${badge}${toggle}
     <img class="photo-img" src="${p.thumb}" loading="lazy" decoding="async">
@@ -1522,8 +1522,8 @@ function renderGallery(items){   /* dedup: paginated + reconciling (order-stable
       const g=p.group||1;
       const b=node.querySelector('.badge');
       const sc=node.querySelector('.photo-score');
-      if(b)b.textContent=(g>1?('★ Best of '+g):'KEPT');
-      if(sc)sc.textContent=(g>1?((g-1)+' similar set aside'):'Original');
+      if(b)b.textContent=(g>1?('★ 同组最佳 · 共 '+g+' 张'):'KEPT');
+      if(sc)sc.textContent=(g>1?((g-1)+' 张相似照片已归组'):'原始照片');
       node.dataset.i=i;delete existing[key];}
     else{const w=document.createElement('div');w.innerHTML=cullCard(p);node=w.firstElementChild;node.dataset.i=i;}
     frag.appendChild(node);});
@@ -1659,12 +1659,12 @@ document.getElementById('gallery').addEventListener('click',e=>{
 function openLb(i){lbIndex=i;showLb();document.getElementById('lightbox').classList.add('open');}
 function closeLb(){document.getElementById('lightbox').classList.remove('open');}
 const CATINFO={aesthetic:'Overall "magazine appeal" — a transparent blend of composition, color, sharpness, dynamic range and exposure.',
-  composition:'Subject placement, horizon leveling and visual balance.',technical:'Exposure, dynamic range, tonal spread, white balance and noise.',
-  sharpness:'Contrast-normalized focus. High = crisp; haze does NOT count as blur.',color:'Vividness plus how well the hues relate.'};
-const SUBINFO={'Rule of thirds':'Closeness of the main subject to a rule-of-thirds / golden-ratio point.','Horizon level':'How level the dominant straight line is (100=straight, ~60=no clear horizon).',
-  'Balance':'Even spread of visual weight left vs right.','Exposure':'Freedom from clipped blacks/whites.','Dynamic range':'Spread between deepest shadow and brightest highlight.',
-  'Tonal range':'How richly tones fill the histogram (entropy).','White balance':'Neutrality of color cast (artistic warm/cool lowers it).','Noise (clean)':'Cleanliness in flat areas (high=clean).',
-  'Colorfulness':'Saturation & color variety.','Color harmony':'How well dominant hues relate (analogous/complementary).'};
+  composition:'主体位置、水平线与整体视觉平衡。',technical:'曝光、动态范围、影调、白平衡与噪点控制。',
+  sharpness:'Contrast-normalized focus. High = crisp; haze does NOT count as blur.',color:'色彩鲜明程度与不同色相之间的协调关系。'};
+const SUBINFO={'三分法构图':'主体与三分点或黄金分割位置的接近程度。','水平线':'画面主要水平线的平直程度。',
+  '画面平衡':'画面左右视觉重量是否均衡。','曝光':'高光和暗部是否存在明显截断。','动态范围':'最暗阴影与最亮高光之间的层次跨度。',
+  '影调范围':'影调在直方图中的分布丰富程度。','白平衡':'画面色偏的中性程度；刻意冷暖调会降低此项。','噪点控制':'平坦区域的纯净程度，数值越高越干净。',
+  '色彩丰富度':'饱和度与色彩种类的丰富程度。','色彩协调':'主要色相之间是否形成协调、邻近或互补关系。'};
 const GROUPS=[['composition','构图',['三分法构图','水平线','画面平衡']],
   ['technical','技术质量',['曝光','动态范围','影调范围','白平衡','噪点控制']],['color','色彩',['色彩丰富度','色彩协调']]];
 function barColor(v){return v>=70?'#22c55e':v>=45?'#f59e0b':'#ef4444';}
@@ -1687,7 +1687,7 @@ function showLb(){
   if(currentStep==='cull')tg.textContent='⇄ '+(TIER_NAME[p.tier]||'Sharp')+' → '+(TIER_NAME[NEXT_TIER[p.tier||'sharp']]);
   const pbg=document.getElementById('lbPhoneBg');
   pbg.style.display=currentStep==='rank'?'inline-block':'none';
-  if(currentStep==='rank'){pbg.classList.toggle('on',!!p.phonebg);pbg.textContent=p.phonebg?'📱 Phone BG ✓':'📱 Phone BG';}
+  if(currentStep==='rank'){pbg.classList.toggle('on',!!p.phonebg);pbg.textContent=p.phonebg?'📱 Phone BG ✓':'📱 手机壁纸';}
   const side=document.getElementById('lbSide');
   if(currentStep==='rank'&&p.scores){
     const metrics=CATS.map(([k,lab])=>({label:lab,value:(p.scores&&p.scores[k])||0}));
@@ -1814,14 +1814,14 @@ document.getElementById('exportBtn').onclick=function(){
   this.disabled=true;this.textContent='正在导出…';
   fetch('/api/export',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({topn:parseInt((document.getElementById('topn')||{}).value)||50})})
     .then(r=>r.json()).then(d=>{this.disabled=false;this.textContent='⬇ 导出优选照片…';
-      toast(d.error?('Export failed: '+d.error):('✓ Copied '+d.copied+' photos to\n'+d.dest), d.error?'bad':'good');});
+      toast(d.error?('导出失败：'+d.error):('✓ 已复制 '+d.copied+' 张照片到\n'+d.dest), d.error?'bad':'good');});
 };
 document.getElementById('exportPbgBtn').onclick=function(){
   this.disabled=true;this.textContent='正在导出…';
   fetch('/api/export-phonebg',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})})
     .then(r=>r.json()).then(d=>{this.disabled=false;this.textContent='📱 导出手机壁纸…';
       if(d.error){toast('导出失败：'+d.error,'bad');return;}
-      if(!d.copied&&!d.cropped){toast(d.note||'Nothing flagged as Phone BG.','bad');return;}
+      if(!d.copied&&!d.cropped){toast(d.note||'还没有标记为手机壁纸的照片。','bad');return;}
       toast('✓ '+d.copied+' originals + '+d.cropped+' wallpapers (1290×2796) to\n'+d.dest,'good');});
 };
 document.getElementById('moveBlurryBtn').onclick=function(){
@@ -1831,7 +1831,7 @@ document.getElementById('moveBlurryBtn').onclick=function(){
   fetch('/api/move-blurry',{method:'POST'})
     .then(r=>r.json()).then(d=>{this.disabled=false;this.textContent='🗂️ 移动模糊照片 → Blurred/';
       if(d.error){toast('移动失败：'+d.error,'bad');return;}
-      toast('✓ Moved '+d.moved+' blurry photos to\n'+d.dest,'good');
+      toast('✓ 已移动 '+d.moved+' 张模糊照片到\n'+d.dest,'good');
       this.style.display='none';this.classList.remove('cta');startBtn.classList.remove('secondary');});
 };
 </script></body></html>'''
@@ -2259,7 +2259,7 @@ def api_export_phonebg():
                         'dest': str(Path(folder) / 'PhoneBG'),
                         'note': 'No photos flagged as Phone BG yet.'})
     dest = Path(folder) / 'PhoneBG'
-    orig_dir = dest / 'Original'
+    orig_dir = dest / '原始照片'
     crop_dir = dest / 'Wallpaper_19.5x9'
     orig_dir.mkdir(parents=True, exist_ok=True)
     crop_dir.mkdir(parents=True, exist_ok=True)
