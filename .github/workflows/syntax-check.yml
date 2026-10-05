@@ -99,3 +99,41 @@ jobs:
                   raise SystemExit(f"Missing responsive rule: {query}")
           print("Embedded CSS structure OK")
           PY
+
+      - name: Visible UI localization regression check
+        run: |
+          python - <<'PY'
+          import re
+          from pathlib import Path
+
+          source = Path("photo_curator.py").read_text(encoding="utf-8")
+          html = re.search(r"HTML = r'''(.*?)</html>'''", source, re.S)
+          if not html:
+              raise SystemExit("Embedded HTML block not found")
+          ui = html.group(1)
+
+          banned = [
+              "Hover any row for what it measures.",
+              "Pick a folder",
+              "Browse…",
+              "God Mode",
+              "Export TOP photos",
+              "Export Phone BG",
+              "Move blurry →",
+              "Recommended defaults",
+              "All TOP photos",
+              "No photos flagged",
+              "Restore all",
+              "Remove from ranking",
+              "Set as phone wallpaper",
+              "Category scores",
+              "No EXIF metadata.",
+              "Step 1 · Cull",
+              "Step 2 · Dedup",
+              "Step 3 · Rank",
+          ]
+          leftovers = [x for x in banned if x in ui]
+          if leftovers:
+              raise SystemExit("Visible English UI regression: " + repr(leftovers))
+          print("Visible UI localization regression check OK")
+          PY
