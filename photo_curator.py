@@ -1901,7 +1901,7 @@ function renderRank(items){
   updatePager();
 }
 function togglePhoneBg(path){
-  fetch('/api/toggle-phonebg',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path})}).then(r=>r.json()).then(d=>{
+  fetch('/api/toggle-phonebg',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path})}).then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;}).then(d=>{
     if(d.error){toast(d.error,'bad');return;}
     const pp=photos.find(x=>x.path===path);if(pp)pp.phonebg=d.phonebg;
     lastRankSig='';renderRank(photos);
@@ -1983,9 +1983,9 @@ function cullSetTier(path,tier){
 function setRemoved(n){removedCount=n;document.getElementById('removedN').textContent=n;
   document.getElementById('removedBox').style.display=n>0?'block':'none';
   document.getElementById('lbRestore').style.display=(n>0&&currentStep==='rank')?'inline-block':'none';}
-function removePhoto(path){fetch('/api/exclude',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path})}).then(r=>r.json()).then(d=>{renderRank(d.photos||[]);setRemoved(d.removed);});}
-function restoreAll(syncLb){fetch('/api/restore',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({all:true})}).then(r=>r.json()).then(d=>{renderRank(d.photos||[]);setRemoved(d.removed);
-  if(syncLb&&document.getElementById('lightbox').classList.contains('open')){lbList=photos.slice();if(lbIndex>=lbList.length)lbIndex=lbList.length-1;if(lbList.length)showLb();else closeLb();}});}
+function removePhoto(path){fetch('/api/exclude',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path})}).then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;}).then(d=>{renderRank(d.photos||[]);setRemoved(d.removed);}).catch(err=>toast('移除失败：'+(err.message||'未知错误'),'bad'));}
+function restoreAll(syncLb){fetch('/api/restore',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({all:true})}).then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;}).then(d=>{renderRank(d.photos||[]);setRemoved(d.removed);
+  if(syncLb&&document.getElementById('lightbox').classList.contains('open')){lbList=photos.slice();if(lbIndex>=lbList.length)lbIndex=lbList.length-1;if(lbList.length)showLb();else closeLb();}}).catch(err=>toast('恢复失败：'+(err.message||'未知错误'),'bad'));}
 document.getElementById('restoreAll').onclick=()=>restoreAll(false);
 
 /* ---- cull status toggle ---- */
@@ -2534,27 +2534,65 @@ def api_weights():
     state['rank']['preview_at'] = time.time()
     return jsonify({'ok': True, 'photos': state['rank']['preview']})
 
+def _active_task_name():
+    """Return the currently running processing step, if any."""
+    for key in ('cull', 'dedup', 'rank'):
+        if state.get(key, {}).get('running'):
+            return key
+    return None
+
+
+def _reject_mutation_while_running():
+    """Prevent UI mutations while a processing thread is updating shared state."""
+    active = _active_task_name()
+    if active:
+        return jsonify({
+            'error': '照片处理任务正在运行，请先停止或等待完成后再执行此操作',
+            'active': active,
+        }), 409
+    return None
+
+
+def _known_rank_path(path):
+    """Allow rank-only actions only for files present in the current rank set."""
+    if not path:
+        return False
+    return any(getattr(sc, 'path', None) == path for sc in state['rank'].get('scores', []))
+
+
 @app.route('/api/exclude', methods=['POST'])
 def api_exclude():
+    blocked = _reject_mutation_while_running()
+    if blocked:
+        return blocked
     data = request.get_json() or {}
-    if data.get('path'):
-        state['excluded'].add(data['path'])
+    path = str(data.get('path') or '')
+    if not _known_rank_path(path):
+        return jsonify({'error': '当前优选结果中未找到这张照片'}), 404
+    state['excluded'].add(path)
     return jsonify({'ok': True, 'removed': len(state['excluded']), 'photos': build_topn()})
-
 
 @app.route('/api/restore', methods=['POST'])
 def api_restore():
+    blocked = _reject_mutation_while_running()
+    if blocked:
+        return blocked
     data = request.get_json() or {}
     if data.get('all'):
         state['excluded'].clear()
     elif data.get('path'):
-        state['excluded'].discard(data['path'])
+        path = str(data.get('path') or '')
+        if not _known_rank_path(path):
+            return jsonify({'error': '当前优选结果中未找到这张照片'}), 404
+        state['excluded'].discard(path)
     return jsonify({'ok': True, 'removed': len(state['excluded']), 'photos': build_topn()})
-
 
 @app.route('/api/toggle-status', methods=['POST'])
 def api_toggle_status():
     """Manually change review tier only; never move the underlying file."""
+    blocked = _reject_mutation_while_running()
+    if blocked:
+        return blocked
     data = request.get_json() or {}
     path = data.get('path', '')
     tier = data.get('tier', 'sharp')
@@ -2589,6 +2627,9 @@ def api_toggle_status():
 @app.route('/api/move-blurry', methods=['POST'])
 def api_move_blurry():
     """Move reviewed Blurry-tier photos only after explicit user action."""
+    blocked = _reject_mutation_while_running()
+    if blocked:
+        return blocked
     folder = state.get('folder')
     if not folder or not Path(folder).is_dir():
         return jsonify({'error': '未选择有效的照片文件夹'}), 400
@@ -2641,6 +2682,9 @@ def api_move_blurry():
 
 @app.route('/api/export', methods=['POST'])
 def api_export():
+    blocked = _reject_mutation_while_running()
+    if blocked:
+        return blocked
     data = request.get_json() or {}
     try:
         topn = min(500, max(1, int(data.get('topn', state['topn']))))
@@ -2695,10 +2739,15 @@ WALLPAPER_W, WALLPAPER_H = 1290, 2796  # universal 19.5:9 portrait
 @app.route('/api/toggle-phonebg', methods=['POST'])
 def api_toggle_phonebg():
     """Flag / unflag a photo as suitable for a phone wallpaper."""
+    blocked = _reject_mutation_while_running()
+    if blocked:
+        return blocked
     data = request.get_json() or {}
-    path = data.get('path', '')
+    path = str(data.get('path') or '')
     if not path:
         return jsonify({'error': '路径为空'}), 400
+    if not _known_rank_path(path):
+        return jsonify({'error': '当前优选结果中未找到这张照片'}), 404
     if path in state['phone_bg']:
         state['phone_bg'].discard(path)
         on = False
@@ -2733,6 +2782,9 @@ def crop_to_phone(img, target_w=WALLPAPER_W, target_h=WALLPAPER_H):
 @app.route('/api/export-phonebg', methods=['POST'])
 def api_export_phonebg():
     """Export flagged wallpaper originals and 1290x2796 crops."""
+    blocked = _reject_mutation_while_running()
+    if blocked:
+        return blocked
     folder = state.get('folder')
     if not folder or not Path(folder).is_dir():
         return jsonify({'error': '未选择有效的照片文件夹'}), 400
