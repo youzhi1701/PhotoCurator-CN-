@@ -1337,6 +1337,7 @@ const catColor=(i,n)=>`hsl(${Math.round(i*360/(n||CATS.length))},80%,62%)`;
 const CATCOLORS=CATS.map((_,i)=>catColor(i,CATS.length));
 const DEFAULTS={aesthetic:30,composition:22,technical:20,sharpness:16,color:12};
 let weights={...DEFAULTS};
+let autoDedup=false;
 
 /* theme */
 const tt=document.getElementById('themeToggle');
@@ -1394,7 +1395,20 @@ function renderSettings(){
   const pm=document.getElementById('pairMode');
   if(pm){pm.value=pairMode;pm.onchange=()=>{pairMode=pm.value;};}
   const ao=document.getElementById('autoOrg');
-  if(ao)ao.onchange=()=>fetch('/api/set-auto',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({step:currentStep,enabled:ao.checked})}).catch(()=>{});
+  if(ao){
+    ao.checked=autoDedup;
+    ao.onchange=()=>{
+      autoDedup=ao.checked;
+      fetch('/api/set-auto',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({step:'dedup',enabled:autoDedup})
+      }).catch(()=>{
+        autoDedup=false;ao.checked=false;
+        toast('无法保存自动移动设置，已恢复为关闭。','bad');
+      });
+    };
+  }
   if(currentStep==='rank'){renderWeights();
     const rw=document.getElementById('resetWeights');if(rw)rw.onclick=()=>{weights={...DEFAULTS};renderWeights();scheduleReweight();};}
 }
