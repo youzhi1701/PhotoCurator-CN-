@@ -1493,9 +1493,9 @@ function loadShortcuts(){fetch('/api/shortcuts').then(r=>r.json()).then(d=>{
     +`请重新运行“一键安装并启动.bat”修复依赖。</div>`+h;
   if(!(d.sd||[]).length)h+=`<div style="font-size:11px;color:var(--muted);margin-top:6px">未检测到相机存储卡；插入后会自动出现在这里，也可以直接选择文件夹。</div>`;
   document.getElementById('shortcuts').innerHTML=h;
-  document.querySelectorAll('.shortcut').forEach(b=>b.onclick=()=>{folder=b.dataset.p;document.getElementById('folderInput').value=folder;});});}
+  document.querySelectorAll('.shortcut').forEach(b=>{b.disabled=isRunning;b.onclick=()=>{if(isRunning)return;folder=b.dataset.p;document.getElementById('folderInput').value=folder;};});});}
 loadShortcuts();
-setInterval(()=>{if(!document.hidden)loadShortcuts();},8000);  // pick up a card inserted later
+setInterval(()=>{if(!document.hidden&&!isRunning)loadShortcuts();},30000);  // pick up a card inserted later
 document.getElementById('folderInput').oninput=e=>folder=e.target.value.trim();
 document.getElementById('browseBtn').onclick=async()=>{
   const btn=document.getElementById('browseBtn');
@@ -1523,6 +1523,11 @@ function setStartBtn(running){
   isRunning=running;
   startBtn.textContent=running?'■ 停止':'🚀 开始处理';
   startBtn.classList.toggle('stopping',running);
+  const fi=document.getElementById('folderInput');
+  const bb=document.getElementById('browseBtn');
+  if(fi)fi.disabled=running;
+  if(bb)bb.disabled=running;
+  document.querySelectorAll('.shortcut').forEach(x=>x.disabled=running);
 }
 async function startStep(step){
   runningStep=step;
@@ -2170,9 +2175,9 @@ def _raw_preview_file(image_path):
     if out.exists():
         return out
     try:
-        img = open_image_pil(image_path)
-        img = ImageOps.exif_transpose(img).convert('RGB')
-        img.save(out, format='JPEG', quality=90)
+        with open_image_pil(image_path) as src:
+            img = ImageOps.exif_transpose(src).convert('RGB')
+            img.save(out, format='JPEG', quality=90)
         return out
     except Exception as e:
         logger.warning(f"raw preview fail {image_path}: {e}")
