@@ -137,3 +137,26 @@ jobs:
               raise SystemExit("Visible English UI regression: " + repr(leftovers))
           print("Visible UI localization regression check OK")
           PY
+
+
+  windows-smoke:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install runtime dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Compile Python sources
+        run: |
+          python -m py_compile desktop_app.py photo_curator.py photo_dedup_batch.py photo_file_organizer.py photo_ranking_engine.py photo_ranking_v3.py raw_loader.py "基础冒烟测试.py"
+
+      - name: Unicode path and image IO smoke test
+        run: |
+          python "基础冒烟测试.py"
