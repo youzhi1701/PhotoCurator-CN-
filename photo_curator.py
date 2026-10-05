@@ -785,7 +785,8 @@ def run_dedup(folder, threshold, ftype='all', pair='both'):
         dd = FastBatchDeduplicator(threshold=threshold)
         # Persist perceptual signatures so a repeat run on this folder is fast.
         try:
-            dd.enable_disk_cache(Path(paths[0]).parent / '.dedup_sig_cache.json')
+            cache_key = hashlib.md5(os.path.realpath(folder).encode('utf-8')).hexdigest()
+            dd.enable_disk_cache(THUMB_DIR / f'dedup_{cache_key}.json')
         except Exception:
             pass
         dd.reset()
@@ -1382,10 +1383,10 @@ function setupFilterBar(){
     bar.innerHTML=opts.map(([k,l])=>`<button class="chip${k===cullFilter?' active':''}" data-f="${k}">${l}</button>`).join('')
       +`<span class="chip-sep"></span>`
       +types.map(([k,l])=>`<button class="chip${k===cullType?' active':''}" data-t="${k}">${l}</button>`).join('');
-    bar.querySelectorAll('.chip[data-f]').forEach(c=>c.onclick=()=>{cullFilter=c.dataset.f;
+    bar.querySelectorAll('.chip[data-f]').forEach(c=>c.onclick=()=>{cullFilter=c.dataset.f;gPage=0;
       bar.querySelectorAll('.chip[data-f]').forEach(x=>x.classList.toggle('active',x.dataset.f===cullFilter));
       renderCullStep(photos);});
-    bar.querySelectorAll('.chip[data-t]').forEach(c=>c.onclick=()=>{cullType=c.dataset.t;
+    bar.querySelectorAll('.chip[data-t]').forEach(c=>c.onclick=()=>{cullType=c.dataset.t;gPage=0;
       bar.querySelectorAll('.chip[data-t]').forEach(x=>x.classList.toggle('active',x.dataset.t===cullType));
       renderCullStep(photos);});
     return;
@@ -1696,14 +1697,22 @@ function renderGallery(items){   /* dedup: paginated + reconciling (order-stable
 function updatePager(){
   const pager=document.getElementById('pager');if(!pager)return;
   const total=gItems.length,pages=Math.max(1,Math.ceil(total/PAGE_SIZE));
-  if(currentStep!=='dedup'||total<=PAGE_SIZE){pager.style.display='none';return;}
+  if(!['cull','dedup'].includes(currentStep)||total<=PAGE_SIZE){
+    pager.style.display='none';return;
+  }
   const start=gPage*PAGE_SIZE+1,end=Math.min(total,(gPage+1)*PAGE_SIZE);
   pager.style.display='flex';
   pager.innerHTML=`<button id="pgPrev" ${gPage===0?'disabled':''}>← 上一页</button>`
     +`<span>第 ${gPage+1} / ${pages} 页 · ${start}–${end} / 共 ${total}</span>`
     +`<button id="pgNext" ${gPage>=pages-1?'disabled':''}>下一页 →</button>`;
-  document.getElementById('pgPrev').onclick=()=>{if(gPage>0){gPage--;lastGallerySig='';renderGallery(gItems);window.scrollTo(0,0);}};
-  document.getElementById('pgNext').onclick=()=>{if(gPage<pages-1){gPage++;lastGallerySig='';renderGallery(gItems);window.scrollTo(0,0);}};
+  const rerender=()=>{
+    lastGallerySig='';lastCullSig='';
+    if(currentStep==='cull')renderCullStep(photos);
+    else renderGallery(gItems);
+    document.querySelector('.main')?.scrollTo({top:0,behavior:'auto'});
+  };
+  document.getElementById('pgPrev').onclick=()=>{if(gPage>0){gPage--;rerender();}};
+  document.getElementById('pgNext').onclick=()=>{if(gPage<pages-1){gPage++;rerender();}};
 }
 function rankCard(p,idx){const path=String(p.path).replace(/"/g,'&quot;');
   const on=p.phonebg?' on':'';
@@ -1757,28 +1766,54 @@ function cullCardHtml(p,idx){const path=String(p.path).replace(/"/g,'&quot;');
     <div class="photo-info"><div class="pi-row"><span class="photo-name">${p.name}</span><span class="ftype${p.raw?'':(p.heic?' heic':' jpg')}">${p.fmt||(p.raw?'RAW':p.heic?'HEIC':'JPG')}</span></div><div class="photo-score">${p.score}</div></div></div>`;}
 function renderCullStep(items){
   photos=items;
-  // Rebuild the type chips if a new RAW format appeared during the run.
   const fSig=[...new Set(items.filter(p=>p.raw).map(p=>p.fmt||'RAW'))].sort().join(',');
   if(fSig!==lastFmtSig){lastFmtSig=fSig;setupFilterBar();}
-  cullView=items.filter(p=>(cullFilter==='all'||p.tier===cullFilter)
+
+  const filtered=items.filter(p=>(cullFilter==='all'||p.tier===cullFilter)
     &&(cullType==='all'||(cullType==='raw'?!!p.raw
       :cullType==='heic'?!!p.heic
       :cullType==='jpg'?(!p.raw&&!p.heic)
       :('ext:'+String(p.fmt||'').toLowerCase())===cullType)));
+
+  gItems=filtered;
+  const pages=Math.max(1,Math.ceil(filtered.length/PAGE_SIZE));
+  if(gPage>=pages)gPage=pages-1;
+  if(gPage<0)gPage=0;
+  const start=gPage*PAGE_SIZE,end=Math.min(filtered.length,start+PAGE_SIZE);
+  cullView=filtered.slice(start,end);
+
   const g=document.getElementById('gallery');
-  if(!cullView.length){g.innerHTML=EMPTY;lastCullSig='';lastStep=currentStep;document.getElementById('sShowing').textContent=0;return;}
-  const sig=cullView.map(p=>p.path+':'+p.tier).join('|');
-  if(sig===lastCullSig&&lastStep===currentStep)return;
+  if(!filtered.length){
+    g.innerHTML=EMPTY;lastCullSig='';lastStep=currentStep;
+    document.getElementById('sShowing').textContent=0;
+    updatePager();
+    return;
+  }
+
+  const sig=gPage+'#'+cullView.map(p=>p.path+':'+p.tier).join('|');
+  if(sig===lastCullSig&&lastStep===currentStep){
+    document.getElementById('sShowing').textContent=filtered.length;
+    updatePager();
+    return;
+  }
   lastCullSig=sig;lastStep=currentStep;
   const emp=g.querySelector('.empty');if(emp)emp.remove();
   const existing={};g.querySelectorAll('.photo-card').forEach(n=>existing[n.dataset.path]=n);
   const frag=document.createDocumentFragment();
-  cullView.forEach((p,idx)=>{let node=existing[p.path];
-    if(node&&node.dataset.tier===p.tier){node.dataset.i=idx;delete existing[p.path];}
-    else{if(node)node.remove();const w=document.createElement('div');w.innerHTML=cullCardHtml(p,idx);node=w.firstElementChild;}
-    frag.appendChild(node);});
-  Object.values(existing).forEach(n=>n.remove());g.appendChild(frag);
-  document.getElementById('sShowing').textContent=cullView.length;
+  cullView.forEach((p,idx)=>{
+    let node=existing[p.path];
+    if(node&&node.dataset.tier===p.tier){
+      node.dataset.i=idx;delete existing[p.path];
+    }else{
+      if(node)node.remove();
+      const w=document.createElement('div');w.innerHTML=cullCardHtml(p,idx);node=w.firstElementChild;
+    }
+    frag.appendChild(node);
+  });
+  Object.values(existing).forEach(n=>n.remove());
+  g.appendChild(frag);
+  document.getElementById('sShowing').textContent=filtered.length;
+  updatePager();
 }
 function cullSetTier(path,tier){
   fetch('/api/toggle-status',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path,tier})}).then(r=>r.json()).then(d=>{
@@ -2263,8 +2298,9 @@ def api_stop(step):
 def api_progress(step):
     if step == 'cull':
         s = state['cull']
+        photos = s['photos'][:400] if s['running'] else s['photos']
         return jsonify({'running': s['running'], 'progress': s['progress'], 'status': s['status'],
-                        'photos': s['photos'],
+                        'photos': photos,
                         'stats': {'images': len(s['photos']), 'sharp': s['sharp'],
                                   'soft': s['soft'], 'blurry': s['blurry']}})
     if step == 'dedup':
