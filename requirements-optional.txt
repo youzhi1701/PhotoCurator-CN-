@@ -1,0 +1,8 @@
+# 可选照片格式支持
+# 安装失败不会影响 JPEG / PNG / WebP 等核心功能。
+
+# Canon CR2/CR3、Nikon NEF、Sony ARW、DNG 等 RAW
+rawpy>=0.21,<1.0
+
+# iPhone HEIC / HEIF / HIF
+pillow-heif>=0.18,<2.0
