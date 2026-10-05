@@ -1168,8 +1168,6 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   .exmap .cred a{color:inherit}
   .maplibregl-ctrl-attrib,.maplibregl-ctrl-logo{display:none!important}
   .top-right{display:flex;align-items:center;gap:10px;flex:0 0 auto}
-  .kofi-btn{display:block;line-height:0;transition:transform .12s}
-  .kofi-btn:hover{transform:translateY(-2px)} .kofi-btn img{display:block;border-radius:8px;box-shadow:0 3px 12px var(--shadow)}
   /* toasts */
   .toast-wrap{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);z-index:400;display:flex;flex-direction:column;gap:8px;align-items:center;pointer-events:none}
   .toast{background:var(--panel);color:var(--text);border:1px solid var(--border);border-left:4px solid var(--accent);
@@ -1186,7 +1184,6 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
     .sidebar{width:260px;flex-basis:260px;padding:12px}
     .main{padding:12px}
     .gallery{grid-template-columns:repeat(auto-fill,minmax(145px,1fr));gap:10px}
-    .kofi-btn{display:none}
     .lb-side{width:280px}
     .lb-bar{right:292px}
     .lb-next{right:298px}
@@ -1503,9 +1500,15 @@ document.getElementById('browseBtn').onclick=async()=>{
   const old=btn.textContent;btn.disabled=true;btn.textContent='正在选择…';
   try{
     let selected=null;
+    let nativeError=null;
     if(window.pywebview&&window.pywebview.api&&window.pywebview.api.pick_folder){
-      selected=await window.pywebview.api.pick_folder();
-    }else{
+      try{
+        selected=await window.pywebview.api.pick_folder();
+      }catch(err){
+        nativeError=err;
+      }
+    }
+    if(selected==null && (!window.pywebview||nativeError)){
       const r=await fetch('/api/browse',{method:'POST'});
       if(!r.ok)throw new Error('HTTP '+r.status);
       const d=await r.json();
