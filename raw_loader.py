@@ -131,6 +131,27 @@ def open_image_pil(path):
     return Image.fromarray(rgb)
 
 
+def _cv_imread_unicode(path, flag):
+    """Unicode-safe OpenCV read for Windows paths.
+
+    cv2.imread can fail on some Windows builds when the path contains Chinese,
+    emoji or other non-ASCII characters. Reading bytes with numpy.fromfile and
+    decoding them in memory avoids that path-encoding boundary.
+    """
+    try:
+        data = np.fromfile(str(path), dtype=np.uint8)
+        if data.size:
+            img = cv2.imdecode(data, flag)
+            if img is not None:
+                return img
+    except Exception as e:
+        logger.debug(f"unicode-safe cv read failed {path}: {e}")
+    try:
+        return cv2.imread(str(path), flag)
+    except Exception:
+        return None
+
+
 def imread_bgr(path, reduced=True):
     """RAW-aware replacement for cv2.imread(..., COLOR). Returns BGR or None.
 
@@ -159,10 +180,10 @@ def imread_bgr(path, reduced=True):
             logger.warning(f"heif decode failed {path}: {e}")
             return None
     if reduced:
-        bgr = cv2.imread(str(path), cv2.IMREAD_REDUCED_COLOR_2)
+        bgr = _cv_imread_unicode(path, cv2.IMREAD_REDUCED_COLOR_2)
         if bgr is not None:
             return bgr
-    return cv2.imread(str(path), cv2.IMREAD_COLOR)
+    return _cv_imread_unicode(path, cv2.IMREAD_COLOR)
 
 
 def imread_gray(path, reduced=True):
@@ -171,7 +192,7 @@ def imread_gray(path, reduced=True):
         bgr = imread_bgr(path, reduced=reduced)
         return cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY) if bgr is not None else None
     if reduced:
-        gray = cv2.imread(str(path), cv2.IMREAD_REDUCED_GRAYSCALE_2)
+        gray = _cv_imread_unicode(path, cv2.IMREAD_REDUCED_GRAYSCALE_2)
         if gray is not None:
             return gray
-    return cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
+    return _cv_imread_unicode(path, cv2.IMREAD_GRAYSCALE)
