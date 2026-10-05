@@ -109,9 +109,9 @@ class FastBatchDeduplicator:
             if self._disk_cache_path.exists():
                 with open(self._disk_cache_path) as f:
                     self._disk_cache = json.load(f)
-                logger.info(f"Loaded {len(self._disk_cache)} cached signatures")
+                logger.info(f"已载入 {len(self._disk_cache)} 条去重缓存特征")
         except Exception as e:
-            logger.warning(f"Could not load signature cache: {e}")
+            logger.warning(f"无法读取去重特征缓存：{e}")
             self._disk_cache = {}
 
     def save_disk_cache(self):
@@ -121,7 +121,7 @@ class FastBatchDeduplicator:
             with open(self._disk_cache_path, 'w') as f:
                 json.dump(self._disk_cache, f)
         except Exception as e:
-            logger.warning(f"Could not save signature cache: {e}")
+            logger.warning(f"无法保存去重特征缓存：{e}")
 
     @staticmethod
     def _cache_key(image_path: str):
@@ -165,7 +165,7 @@ class FastBatchDeduplicator:
                 dhash_v = (dv[1:, :] > dv[:-1, :]).flatten()
                 sig = np.concatenate([ahash, dhash_h, dhash_v]).astype(bool)
         except Exception as e:
-            logger.warning(f"Signature failed for {image_path}: {e}")
+            logger.warning(f"生成图片特征失败 {image_path}: {e}")
             sig = None
         self._sig_cache[image_path] = sig
         if ckey is not None and sig is not None:
@@ -413,14 +413,14 @@ class FastBatchDeduplicator:
         for i, score in enumerate(items):
             if progress_callback and (i % 5 == 0 or i == total - 1):
                 progress_callback(int(i / total * 100),
-                                  f"Comparing {i + 1}/{total} · "
+                                  f"正在比较 {i + 1}/{total} · "
                                   f"{len(self.clusters)} unique so far")
             self.add_photo(score)
 
         survivors = self.current_survivors()
         removed = total - len(survivors)
-        logger.info(f"Global dedup: {total} → {len(survivors)} unique "
-                    f"({removed} duplicates removed across {len(self.clusters)} clusters)")
+        logger.info(f"全局去重：{total} → {len(survivors)} 张保留 "
+                    f"（识别 {removed} 张重复照片，共 {len(self.clusters)} 组）")
         self.last_clusters = self.clusters
         return survivors
 
