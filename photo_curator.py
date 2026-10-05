@@ -89,11 +89,9 @@ def _security_headers(resp):
     resp.headers['Referrer-Policy'] = 'no-referrer'
     resp.headers.setdefault(
         'Content-Security-Policy',
-        # img-src allows https: for the Ko-fi badge. The GPS map is MapLibre
-        # (served from /vendor, so script-src stays 'self') drawing vector
-        # tiles fetched from OpenFreeMap — hence connect-src, and worker-src
-        # for MapLibre's tile-decoding worker.
-        "default-src 'self'; img-src 'self' data: blob: https:; "
+        # GPS map resources are requested only through connect-src. Core UI,
+        # scripts and image previews remain local.
+        "default-src 'self'; img-src 'self' data: blob:; "
         "style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; "
         f"connect-src 'self' {MAP_TILES_ORIGIN}; "
         "worker-src 'self' blob:; child-src 'self' blob:")
@@ -1201,7 +1199,6 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
     <div class="step" data-step="rank">3 · 智能优选</div>
   </div>
   <div class="top-right">
-    <a class="kofi-btn" href='https://ko-fi.com/B3S720JCU6' target='_blank' rel='noopener'><img height='32' style='border:0;height:32px' src='https://storage.ko-fi.com/cdn/kofi6.png?v=6' alt='Buy Me a Coffee at ko-fi.com'></a>
     <button class="theme" id="themeToggle">🌙</button>
   </div>
 </div>
