@@ -30,6 +30,7 @@ import hashlib
 import logging
 import threading
 import subprocess
+import tempfile
 from pathlib import Path
 from dataclasses import dataclass
 from urllib.parse import quote
@@ -131,7 +132,7 @@ VENDOR_FILES = {'maplibre-gl-csp.js': 'text/javascript',
                 'maplibre-gl.css': 'text/css'}
 
 RECENTS_FILE = Path.home() / '.photo_curator_recents.json'
-THUMB_DIR = Path('/tmp/photocurator_thumbs')
+THUMB_DIR = Path(tempfile.gettempdir()) / 'photocurator_thumbs'
 THUMB_DIR.mkdir(parents=True, exist_ok=True)
 
 DEFAULT_WEIGHTS = {'aesthetic': 30, 'composition': 22, 'technical': 20,
@@ -456,18 +457,52 @@ def detect_sd_cards(volumes_root=None):
     return found
 
 
-def native_folder_dialog(prompt="Select a folder"):
+def native_folder_dialog(prompt="选择照片文件夹"):
+    """Open a native folder picker on Windows/macOS/Linux."""
     try:
-        script = f'POSIX path of (choose folder with prompt "{prompt}")'
-        out = subprocess.run(['osascript', '-e', script],
-                             capture_output=True, text=True, timeout=120)
-        path = out.stdout.strip()
-        if path:
-            return path.rstrip('/')
+        if os.name == 'nt':
+            safe_prompt = str(prompt).replace("'", "''")
+            ps = (
+                "$ErrorActionPreference='Stop';"
+                "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8;"
+                "Add-Type -AssemblyName System.Windows.Forms;"
+                "$d=New-Object System.Windows.Forms.FolderBrowserDialog;"
+                f"$d.Description='{safe_prompt}';"
+                "$d.ShowNewFolderButton=$true;"
+                "if($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK)"
+                "{Write-Output $d.SelectedPath}"
+            )
+            out = subprocess.run(
+                ['powershell.exe', '-NoProfile', '-STA', '-Command', ps],
+                capture_output=True, text=True, encoding='utf-8',
+                errors='replace', timeout=300
+            )
+            path = out.stdout.strip()
+            if path:
+                return path
+        elif sys.platform == 'darwin':
+            safe_prompt = str(prompt).replace('"', '\\"')
+            script = f'POSIX path of (choose folder with prompt "{safe_prompt}")'
+            out = subprocess.run(['osascript', '-e', script],
+                                 capture_output=True, text=True, timeout=300)
+            path = out.stdout.strip()
+            if path:
+                return path.rstrip('/')
+        else:
+            for cmd in (
+                ['zenity', '--file-selection', '--directory', '--title', str(prompt)],
+                ['kdialog', '--getexistingdirectory', '.', '--title', str(prompt)],
+            ):
+                try:
+                    out = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+                    path = out.stdout.strip()
+                    if path:
+                        return path.rstrip('/')
+                except FileNotFoundError:
+                    continue
     except Exception as e:
         logger.warning(f"folder dialog fail: {e}")
     return None
-
 
 # --------------------------------------------------------------------------- #
 #  Sharpness (shared by Cull, and as the dedup quality key)
@@ -1165,7 +1200,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
 </div>
 
 <div class="toast-wrap" id="toastWrap"></div>
-<div id="cn-build-badge" style="position:fixed;right:10px;bottom:8px;z-index:50;font-size:10px;color:var(--muted);opacity:.55;pointer-events:none">照片筛选 · 中文桌面版 v1.0</div>
+<div id="cn-build-badge" style="position:fixed;right:10px;bottom:8px;z-index:50;font-size:10px;color:var(--muted);opacity:.55;pointer-events:none">照片筛选 · 中文桌面版 v1.1</div>
 
 <script>
 function toast(msg,type){
@@ -2040,30 +2075,53 @@ def api_set_auto():
 @app.route('/api/run/<step>', methods=['POST'])
 def api_run(step):
     data = request.get_json() or {}
-    folder = data.get('folder', '')
-    state['folder'] = folder
-    if folder and Path(folder).is_dir():
-        save_recent(folder)
-    if step == 'cull':
-        strictness = float(data.get('opt') or 1.0)
-        adaptive = bool(data.get('adaptive', True))
-        rescue_on = bool(data.get('rescue', True))
-        threading.Thread(target=run_cull, args=(folder, strictness, adaptive, rescue_on),
-                         daemon=True).start()
-    elif step == 'dedup':
-        threading.Thread(target=run_dedup,
-                         args=(folder, float(data.get('opt') or 0.8),
-                               data.get('ftype', 'all'), data.get('pair', 'both')),
-                         daemon=True).start()
-    elif step == 'rank':
-        state['topn'] = int(data.get('topn', 50))
-        threading.Thread(target=run_rank,
-                         args=(folder, data.get('ftype', 'all'),
-                               data.get('pair', 'both')), daemon=True).start()
-    else:
+    if step not in ('cull', 'dedup', 'rank'):
         return jsonify({'error': '无效处理步骤'}), 404
-    return jsonify({'ok': True})
 
+    raw_folder = str(data.get('folder') or '').strip()
+    if not raw_folder:
+        return jsonify({'error': '请先选择照片文件夹'}), 400
+    folder = os.path.realpath(os.path.expanduser(raw_folder))
+    if not Path(folder).is_dir():
+        return jsonify({'error': '照片文件夹不存在或无法访问'}), 400
+
+    active = [k for k in ('cull', 'dedup', 'rank') if state[k].get('running')]
+    if active:
+        return jsonify({
+            'error': '已有照片处理任务正在运行，请先停止或等待完成',
+            'active': active[0]
+        }), 409
+
+    state['folder'] = folder
+    save_recent(folder)
+
+    try:
+        if step == 'cull':
+            strictness = min(1.6, max(0.6, float(data.get('opt') or 1.0)))
+            adaptive = bool(data.get('adaptive', True))
+            rescue_on = bool(data.get('rescue', True))
+            target, args = run_cull, (folder, strictness, adaptive, rescue_on)
+        elif step == 'dedup':
+            threshold = min(0.95, max(0.5, float(data.get('opt') or 0.8)))
+            target, args = run_dedup, (
+                folder, threshold, data.get('ftype', 'all'), data.get('pair', 'both')
+            )
+        else:
+            state['topn'] = min(500, max(1, int(data.get('topn', 50))))
+            target, args = run_rank, (
+                folder, data.get('ftype', 'all'), data.get('pair', 'both')
+            )
+    except (TypeError, ValueError):
+        return jsonify({'error': '处理参数无效，请恢复默认设置后重试'}), 400
+
+    state[step]['running'] = True
+    try:
+        threading.Thread(target=target, args=args, daemon=True,
+                         name=f'photocurator-{step}').start()
+    except Exception:
+        state[step]['running'] = False
+        raise
+    return jsonify({'ok': True})
 
 @app.route('/api/stop/<step>', methods=['POST'])
 def api_stop(step):
