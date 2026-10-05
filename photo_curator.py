@@ -1302,7 +1302,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   }
 </style></head><body>
 <div class="top">
-  <div class="brand">🖼️ 照片筛选 <small>PhotoCurator 中文版 · v1.2</small></div>
+  <div class="brand">🖼️ 照片筛选 <small>PhotoCurator 中文版 · v1.2.1</small></div>
   <div class="steps">
     <div class="step active" data-step="cull">1 · 模糊筛选</div>
     <div class="step" data-step="dedup">2 · 相似去重</div>
@@ -1381,7 +1381,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
 </div>
 
 <div class="toast-wrap" id="toastWrap"></div>
-<div id="cn-build-badge" style="position:fixed;right:10px;bottom:8px;z-index:50;font-size:10px;color:var(--muted);opacity:.55;pointer-events:none">照片筛选 · 中文桌面版 v1.2</div>
+<div id="cn-build-badge" style="position:fixed;right:10px;bottom:8px;z-index:50;font-size:10px;color:var(--muted);opacity:.55;pointer-events:none">照片筛选 · 中文桌面版 v1.2.1</div>
 
 <script>
 function toast(msg,type){
