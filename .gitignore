@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+.venv/
+venv/
+
+# Runtime/cache
+启动错误.log
+*.log
+.dedup_sig_cache.json
+photocurator_thumbs/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# User output folders (when repository itself is used as a test folder)
+Blurred/
+Duplicates/
+TOP_*/
+PhoneBG/
