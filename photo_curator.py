@@ -1184,6 +1184,15 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
          opacity:0;transform:translateY(12px);transition:opacity .25s,transform .25s;white-space:pre-line;text-align:center}
   .toast.show{opacity:1;transform:translateY(0)}
   .toast.good{border-left-color:var(--good)} .toast.bad{border-left-color:var(--bad)} .toast.info{border-left-color:var(--accent)}
+  body.processing .pbg-toggle,
+  body.processing .remove-btn,
+  body.processing .status-toggle,
+  body.processing .badge-tier,
+  body.processing #restoreAll,
+  body.processing #exportBtn,
+  body.processing #exportPbgBtn,
+  body.processing #moveBlurryBtn{pointer-events:none;opacity:.45;filter:grayscale(.25)}
+  body.processing .photo-card{cursor:default}
 
   .zoomctl{display:flex;align-items:center;gap:4px;background:rgba(255,255,255,.14);padding:3px;border-radius:8px;flex:0 0 auto}
   .zoomctl button{border:0;background:transparent;color:#fff;min-width:28px;height:26px;border-radius:6px;cursor:pointer;font-weight:700}
@@ -1577,6 +1586,7 @@ document.getElementById('browseBtn').onclick=async()=>{
 const startBtn=document.getElementById('startBtn');
 function setStartBtn(running){
   isRunning=running;
+  document.body.classList.toggle('processing',running);
   startBtn.textContent=running?'■ 停止':'🚀 开始处理';
   startBtn.classList.toggle('stopping',running);
   const fi=document.getElementById('folderInput');
@@ -1901,12 +1911,18 @@ function renderRank(items){
   updatePager();
 }
 function togglePhoneBg(path){
-  fetch('/api/toggle-phonebg',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path})}).then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;}).then(d=>{
-    if(d.error){toast(d.error,'bad');return;}
-    const pp=photos.find(x=>x.path===path);if(pp)pp.phonebg=d.phonebg;
-    lastRankSig='';renderRank(photos);
-    if(document.getElementById('lightbox').classList.contains('open')){lbList=(rankFilter==='pbg')?photos.filter(p=>p.phonebg):photos.slice();if(lbIndex>=lbList.length)lbIndex=Math.max(0,lbList.length-1);if(lbList.length)showLb();else closeLb();}
-    toast(d.phonebg?'📱 已加入手机壁纸（'+d.count+'）':'已取消手机壁纸（'+d.count+'）','good');});
+  fetch('/api/toggle-phonebg',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path})})
+    .then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;})
+    .then(d=>{
+      const pp=photos.find(x=>x.path===path);if(pp)pp.phonebg=d.phonebg;
+      lastRankSig='';renderRank(photos);
+      if(document.getElementById('lightbox').classList.contains('open')){
+        lbList=(rankFilter==='pbg')?photos.filter(p=>p.phonebg):photos.slice();
+        if(lbIndex>=lbList.length)lbIndex=Math.max(0,lbList.length-1);
+        if(lbList.length)showLb();else closeLb();
+      }
+      toast(d.phonebg?'📱 已加入手机壁纸（'+d.count+'）':'已取消手机壁纸（'+d.count+'）','good');
+    }).catch(err=>toast('壁纸标记失败：'+(err.message||'未知错误'),'bad'));
 }
 
 /* ---- cull (3-tier, reconciling, filterable) ---- */
@@ -1971,12 +1987,14 @@ function renderCullStep(items){
   updatePager();
 }
 function cullSetTier(path,tier){
-  fetch('/api/toggle-status',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path,tier})}).then(r=>r.json()).then(d=>{
-    if(d.error){toast(d.error,'bad');return;}
-    document.getElementById('sSharp').textContent=d.sharp;document.getElementById('sSoft').textContent=d.soft;document.getElementById('sBlurry').textContent=d.blurry;
-    const pp=photos.find(x=>x.path===path||x.path===d.path);
-    if(pp){pp.tier=d.tier;pp.badge=d.badge;pp.badgeType=d.badgeType;pp.kept=d.kept;pp.rejected=!d.kept;if(d.path)pp.path=d.path;if(d.thumb)pp.thumb=d.thumb;}
-    lastCullSig='';renderCullStep(photos);});
+  fetch('/api/toggle-status',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path,tier})})
+    .then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;})
+    .then(d=>{
+      document.getElementById('sSharp').textContent=d.sharp;document.getElementById('sSoft').textContent=d.soft;document.getElementById('sBlurry').textContent=d.blurry;
+      const pp=photos.find(x=>x.path===path||x.path===d.path);
+      if(pp){pp.tier=d.tier;pp.badge=d.badge;pp.badgeType=d.badgeType;pp.kept=d.kept;pp.rejected=!d.kept;if(d.path)pp.path=d.path;if(d.thumb)pp.thumb=d.thumb;}
+      lastCullSig='';renderCullStep(photos);
+    }).catch(err=>toast('分类修改失败：'+(err.message||'未知错误'),'bad'));
 }
 
 /* ---- remove / restore (rank) ---- */
