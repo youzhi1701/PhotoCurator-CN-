@@ -64,14 +64,14 @@ class PhotoOrganizer:
                 
                 if progress_cb and (idx + 1) % 5 == 0:
                     progress_cb(int(idx / len(blurry_paths) * 100), 
-                              f"Moving {idx + 1}/{len(blurry_paths)} blurry photos…")
+                              f"正在移动模糊照片 {idx + 1}/{len(blurry_paths)}…")
             
             except Exception as e:
-                logger.warning(f"Failed to move {path_str}: {e}")
+                logger.warning(f"移动失败 {path_str}: {e}")
                 results['failed'] += 1
                 results['errors'].append(str(e))
         
-        logger.info(f"Moved {results['moved']} blurry photos to Blurred/")
+        logger.info(f"已将 {results['moved']} 张模糊照片移动到 Blurred/")
         return results
     
     def move_duplicate_photos(self, duplicate_paths: List[str], 
@@ -108,14 +108,14 @@ class PhotoOrganizer:
                 
                 if progress_cb and (idx + 1) % 5 == 0:
                     progress_cb(int(idx / len(duplicate_paths) * 100),
-                              f"Moving {idx + 1}/{len(duplicate_paths)} duplicates…")
+                              f"正在移动重复照片 {idx + 1}/{len(duplicate_paths)}…")
             
             except Exception as e:
-                logger.warning(f"Failed to move {path_str}: {e}")
+                logger.warning(f"移动失败 {path_str}: {e}")
                 results['failed'] += 1
                 results['errors'].append(str(e))
         
-        logger.info(f"Moved {results['moved']} duplicate photos to Duplicates/")
+        logger.info(f"已将 {results['moved']} 张重复照片移动到 Duplicates/")
         return results
     
     def copy_top_photos(self, top_photo_paths: List[str], topn: int = 50,
@@ -146,14 +146,14 @@ class PhotoOrganizer:
                 
                 if progress_cb and (idx + 1) % 10 == 0:
                     progress_cb(int(idx / min(topn, len(top_photo_paths)) * 100),
-                              f"Copying {idx + 1}/{min(topn, len(top_photo_paths))} top photos…")
+                              f"正在复制优选照片 {idx + 1}/{min(topn, len(top_photo_paths))}…")
             
             except Exception as e:
-                logger.warning(f"Failed to copy {path_str}: {e}")
+                logger.warning(f"复制失败 {path_str}: {e}")
                 results['failed'] += 1
                 results['errors'].append(str(e))
         
-        logger.info(f"Copied {results['copied']} top photos to {topn_name}/")
+        logger.info(f"已复制 {results['copied']} 张优选照片到 {topn_name}/")
         return results
     
     def preview_moves(self, blurry_paths: List[str], duplicate_paths: List[str], 
