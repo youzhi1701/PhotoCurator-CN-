@@ -2318,10 +2318,19 @@ def api_progress(step):
 def api_weights():
     data = request.get_json() or {}
     w = data.get('weights') or {}
-    state['weights'] = {k: float(w.get(k, DEFAULT_WEIGHTS[k])) for k in CATEGORIES}
-    state['topn'] = int(data.get('topn', state['topn']))
+    try:
+        clean = {}
+        for k in CATEGORIES:
+            v = float(w.get(k, DEFAULT_WEIGHTS[k]))
+            if not np.isfinite(v):
+                v = DEFAULT_WEIGHTS[k]
+            clean[k] = min(100.0, max(0.0, v))
+        topn = min(500, max(1, int(data.get('topn', state['topn']))))
+    except (TypeError, ValueError, OverflowError):
+        return jsonify({'error': '评分参数无效'}), 400
+    state['weights'] = clean
+    state['topn'] = topn
     return jsonify({'ok': True, 'photos': build_topn()})
-
 
 @app.route('/api/exclude', methods=['POST'])
 def api_exclude():
@@ -2431,24 +2440,45 @@ def api_move_blurry():
 @app.route('/api/export', methods=['POST'])
 def api_export():
     data = request.get_json() or {}
-    topn = int(data.get('topn', state['topn']))
+    try:
+        topn = min(500, max(1, int(data.get('topn', state['topn']))))
+    except (TypeError, ValueError, OverflowError):
+        return jsonify({'error': '导出数量无效'}), 400
+
     folder = state.get('folder')
     if not folder or not Path(folder).is_dir():
         return jsonify({'error': '未选择有效的照片文件夹'}), 400
+
     top = build_topn(topn=topn)
-    dest = Path(folder) / f"TOP_{topn}"
+    if not top:
+        return jsonify({'error': '当前没有可导出的优选照片'}), 400
+
+    base = Path(folder) / f"TOP_{topn}"
+    dest = base
+    if dest.exists() and any(dest.iterdir()):
+        stamp = time.strftime('%Y%m%d_%H%M%S')
+        dest = Path(folder) / f"TOP_{topn}_{stamp}"
+        n = 1
+        while dest.exists():
+            n += 1
+            dest = Path(folder) / f"TOP_{topn}_{stamp}_{n}"
     dest.mkdir(parents=True, exist_ok=True)
-    copied = 0
+
+    copied = failed = 0
     for item in top:
         try:
             src = Path(item['path'])
             if src.is_file():
                 shutil.copy2(str(src), str(dest / f"{item['rank']:03d}_{src.name}"))
                 copied += 1
+            else:
+                failed += 1
         except Exception as e:
+            failed += 1
             logger.warning(f"export fail {item['path']}: {e}")
-    return jsonify({'ok': True, 'copied': copied, 'dest': str(dest)})
 
+    return jsonify({'ok': failed == 0, 'copied': copied, 'failed': failed,
+                    'dest': str(dest)})
 
 # --------------------------------------------------------------------------- #
 #  Phone Background selector
@@ -2540,5 +2570,12 @@ def api_export_phonebg():
 
 
 if __name__ == '__main__':
+    # Browser compatibility mode opens only after the server has had time to
+    # bind, avoiding the common first-load "connection refused" race.
+    if os.environ.get('PHOTOCURATOR_OPEN_BROWSER') == '1':
+        import webbrowser
+        threading.Timer(
+            0.8, lambda: webbrowser.open(f'http://127.0.0.1:{PORT}')
+        ).start()
     # Bind to loopback only — never reachable from the local network.
     app.run(host='127.0.0.1', port=PORT, debug=False, threaded=True)
