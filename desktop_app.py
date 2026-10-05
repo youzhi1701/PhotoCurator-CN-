@@ -182,7 +182,8 @@ def main():
         maximized=True,
         zoomable=False,
         confirm_close=False,
-        text_select=True,\n        background_color="#f4f6fb",
+        text_select=True,
+        background_color="#f4f6fb",
     )
 
     def on_closing():
