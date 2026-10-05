@@ -1465,7 +1465,7 @@ function setupFilterBar(){
     bar.style.display='flex';
     bar.innerHTML=`<button class="chip${rankFilter==='all'?' active':''}" data-f="all">全部优选照片</button>`
       +`<button class="chip${rankFilter==='pbg'?' active':''}" data-f="pbg">📱 手机壁纸 (<span id="pbgChipCount">0</span>)</button>`;
-    bar.querySelectorAll('.chip').forEach(c=>c.onclick=()=>{rankFilter=c.dataset.f;
+    bar.querySelectorAll('.chip').forEach(c=>c.onclick=()=>{rankFilter=c.dataset.f;gPage=0;
       bar.querySelectorAll('.chip').forEach(x=>x.classList.toggle('active',x.dataset.f===rankFilter));
       lastRankSig='';renderRank(photos);});
     return;
@@ -1737,7 +1737,7 @@ function cullCard(p){
     <div class="photo-info"><div class="pi-row"><span class="photo-name">${escHtml(p.name)}</span></div>${info}</div></div>`;
 }
 let lastGallerySig='', gPage=0, gItems=[];
-const PAGE_SIZE=400;
+const PAGE_SIZE=200;
 function renderGallery(items){   /* dedup: paginated + reconciling (order-stable) */
   gItems=items;photos=items;const g=document.getElementById('gallery');
   if(lastStep!==currentStep){g.innerHTML='';lastGallerySig='';lastStep=currentStep;gPage=0;}
@@ -1775,7 +1775,7 @@ function renderGallery(items){   /* dedup: paginated + reconciling (order-stable
 function updatePager(){
   const pager=document.getElementById('pager');if(!pager)return;
   const total=gItems.length,pages=Math.max(1,Math.ceil(total/PAGE_SIZE));
-  if(!['cull','dedup'].includes(currentStep)||total<=PAGE_SIZE){
+  if(!['cull','dedup','rank'].includes(currentStep)||total<=PAGE_SIZE){
     pager.style.display='none';return;
   }
   const start=gPage*PAGE_SIZE+1,end=Math.min(total,(gPage+1)*PAGE_SIZE);
@@ -1786,6 +1786,7 @@ function updatePager(){
   const rerender=()=>{
     lastGallerySig='';lastCullSig='';
     if(currentStep==='cull')renderCullStep(photos);
+    else if(currentStep==='rank')renderRank(photos);
     else renderGallery(gItems);
     document.querySelector('.main')?.scrollTo({top:0,behavior:'auto'});
   };
@@ -1802,26 +1803,51 @@ function rankCard(p,idx){const path=escHtml(p.path);
       <div class="photo-score">${p.score}</div></div></div>`;}
 function renderRank(items){
   photos=items;const g=document.getElementById('gallery');
-  if(lastStep!==currentStep){g.innerHTML='';lastRankSig='';lastStep=currentStep;}
+  if(lastStep!==currentStep){g.innerHTML='';lastRankSig='';lastStep=currentStep;gPage=0;}
   const fbar=document.getElementById('filterBar');
   if(!items.length){fbar.style.display='none';}
   else if(fbar.style.display==='none'||!fbar.querySelector('.chip')){setupFilterBar();}
-  const view=(rankFilter==='pbg')?items.filter(p=>p.phonebg):items;
+
+  rankView=(rankFilter==='pbg')?items.filter(p=>p.phonebg):items;
+  gItems=rankView;
   const pbgN=items.filter(p=>p.phonebg).length;
   const pbgChip=document.getElementById('pbgChipCount');if(pbgChip)pbgChip.textContent=pbgN;
   document.getElementById('exportPbgBtn').style.display=(currentStep==='rank'&&pbgN>0)?'block':'none';
-  if(!view.length){g.innerHTML=(items.length&&rankFilter==='pbg')?'<div class="empty"><div class="icon">📱</div><div>还没有标记为手机壁纸的照片。<br>点击优选照片上的 📱 按钮即可标记。</div></div>':EMPTY;lastRankSig='';return;}
-  const sig=rankFilter+'|'+view.map(p=>p.rank+':'+p.path+':'+(p.phonebg?1:0)).join('|');if(sig===lastRankSig)return;lastRankSig=sig;
+
+  if(!rankView.length){
+    g.innerHTML=(items.length&&rankFilter==='pbg')
+      ?'<div class="empty"><div class="icon">📱</div><div>还没有标记为手机壁纸的照片。<br>点击优选照片上的 📱 按钮即可标记。</div></div>'
+      :EMPTY;
+    lastRankSig='';updatePager();return;
+  }
+
+  const pages=Math.max(1,Math.ceil(rankView.length/PAGE_SIZE));
+  if(gPage>=pages)gPage=pages-1;if(gPage<0)gPage=0;
+  const start=gPage*PAGE_SIZE,end=Math.min(rankView.length,start+PAGE_SIZE);
+  const slice=rankView.slice(start,end);
+  const sig=rankFilter+'#'+gPage+'|'+slice.map(p=>p.rank+':'+p.path+':'+(p.phonebg?1:0)).join('|');
+  if(sig===lastRankSig){updatePager();return;}
+  lastRankSig=sig;
+
   const emp=g.querySelector('.empty');if(emp)emp.remove();
   const existing={};g.querySelectorAll('.photo-card').forEach(n=>existing[n.dataset.path]=n);
   const frag=document.createDocumentFragment();
-  view.forEach((p,idx)=>{let node=existing[p.path];
-    if(node&&node.classList.contains('pbg')===!!p.phonebg){const rn=node.querySelector('.rank-num');if(rn)rn.textContent=p.rank!=null?p.rank:idx+1;
-      const sc=node.querySelector('.photo-score');if(sc)sc.textContent=p.score;node.dataset.i=idx;delete existing[p.path];}
-    else{if(node)node.remove();const w=document.createElement('div');w.innerHTML=rankCard(p,idx);node=w.firstElementChild;}
-    frag.appendChild(node);});
+  slice.forEach((p,k)=>{
+    const idx=start+k;
+    let node=existing[p.path];
+    if(node&&node.classList.contains('pbg')===!!p.phonebg){
+      const rn=node.querySelector('.rank-num');if(rn)rn.textContent=p.rank!=null?p.rank:idx+1;
+      const sc=node.querySelector('.photo-score');if(sc)sc.textContent=p.score;
+      node.dataset.i=idx;delete existing[p.path];
+    }else{
+      if(node)node.remove();
+      const w=document.createElement('div');w.innerHTML=rankCard(p,idx);node=w.firstElementChild;
+    }
+    frag.appendChild(node);
+  });
   Object.values(existing).forEach(n=>n.remove());g.appendChild(frag);
-  document.getElementById('sShowing').textContent=view.length;
+  document.getElementById('sShowing').textContent=rankView.length;
+  updatePager();
 }
 function togglePhoneBg(path){
   fetch('/api/toggle-phonebg',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path})}).then(r=>r.json()).then(d=>{
@@ -1833,7 +1859,7 @@ function togglePhoneBg(path){
 }
 
 /* ---- cull (3-tier, reconciling, filterable) ---- */
-let cullView=[], lastCullSig='';
+let cullView=[], rankView=[], lastCullSig='';
 const TIER_NAME={sharp:'清晰',soft:'轻微软',blurry:'模糊'};
 const NEXT_TIER={sharp:'soft',soft:'blurry',blurry:'sharp'};
 function cullCardHtml(p,idx){const path=escHtml(p.path);
@@ -2416,7 +2442,7 @@ def api_stop(step):
 def api_progress(step):
     if step == 'cull':
         s = state['cull']
-        photos = s['photos'][:400] if s['running'] else s['photos']
+        photos = s['photos'][:200] if s['running'] else s['photos']
         return jsonify({'running': s['running'], 'progress': s['progress'], 'status': s['status'],
                         'photos': photos,
                         'stats': {'images': len(s['photos']), 'sharp': s['sharp'],
