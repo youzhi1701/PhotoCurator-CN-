@@ -29,6 +29,7 @@ import time
 import shutil
 import hashlib
 import logging
+from logging.handlers import RotatingFileHandler
 import threading
 import subprocess
 import tempfile
@@ -50,6 +51,24 @@ from photo_file_organizer import PhotoOrganizer
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Persist runtime diagnostics for the no-console desktop launcher. Keep logs
+# bounded so long photo-library sessions cannot grow them indefinitely.
+try:
+    LOG_DIR = Path.home() / '.photo_curator' / 'logs'
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    _file_handler = RotatingFileHandler(
+        LOG_DIR / 'photocurator.log',
+        maxBytes=2 * 1024 * 1024,
+        backupCount=3,
+        encoding='utf-8',
+    )
+    _file_handler.setFormatter(logging.Formatter(
+        '%(asctime)s | %(levelname)s | %(name)s | %(message)s'
+    ))
+    logging.getLogger().addHandler(_file_handler)
+except Exception:
+    LOG_DIR = None
 
 app = Flask(__name__)
 
