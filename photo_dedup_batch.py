@@ -152,17 +152,18 @@ class FastBatchDeduplicator:
                 pass
         try:
             from raw_loader import open_image_pil
-            img = open_image_pil(image_path).convert('L')   # RAW-aware
-            # average hash: 8x8
-            a = np.asarray(img.resize((8, 8), Image.BILINEAR), dtype=np.float32)
-            ahash = (a > a.mean()).flatten()
-            # difference hash horizontal: 9x8 -> compare adjacent cols
-            dh = np.asarray(img.resize((9, 8), Image.BILINEAR), dtype=np.float32)
-            dhash_h = (dh[:, 1:] > dh[:, :-1]).flatten()
-            # difference hash vertical: 8x9 -> compare adjacent rows
-            dv = np.asarray(img.resize((8, 9), Image.BILINEAR), dtype=np.float32)
-            dhash_v = (dv[1:, :] > dv[:-1, :]).flatten()
-            sig = np.concatenate([ahash, dhash_h, dhash_v]).astype(bool)
+            with open_image_pil(image_path) as src:   # RAW-aware
+                img = src.convert('L')
+                # average hash: 8x8
+                a = np.asarray(img.resize((8, 8), Image.BILINEAR), dtype=np.float32)
+                ahash = (a > a.mean()).flatten()
+                # difference hash horizontal: 9x8 -> compare adjacent cols
+                dh = np.asarray(img.resize((9, 8), Image.BILINEAR), dtype=np.float32)
+                dhash_h = (dh[:, 1:] > dh[:, :-1]).flatten()
+                # difference hash vertical: 8x9 -> compare adjacent rows
+                dv = np.asarray(img.resize((8, 9), Image.BILINEAR), dtype=np.float32)
+                dhash_v = (dv[1:, :] > dv[:-1, :]).flatten()
+                sig = np.concatenate([ahash, dhash_h, dhash_v]).astype(bool)
         except Exception as e:
             logger.warning(f"Signature failed for {image_path}: {e}")
             sig = None
@@ -192,15 +193,15 @@ class FastBatchDeduplicator:
         result = None
         try:
             from raw_loader import open_image_pil
-            img = open_image_pil(image_path)   # RAW-aware (EXIF from preview)
-            exif = img.getexif()
-            # 36867 = DateTimeOriginal, 306 = DateTime
-            for tag in (36867, 306):
-                val = exif.get(tag)
-                if val:
-                    import time as _t
-                    result = _t.mktime(_t.strptime(str(val), "%Y:%m:%d %H:%M:%S"))
-                    break
+            with open_image_pil(image_path) as img:   # RAW-aware (EXIF from preview)
+                exif = img.getexif()
+                # 36867 = DateTimeOriginal, 306 = DateTime
+                for tag in (36867, 306):
+                    val = exif.get(tag)
+                    if val:
+                        import time as _t
+                        result = _t.mktime(_t.strptime(str(val), "%Y:%m:%d %H:%M:%S"))
+                        break
         except Exception:
             result = None
         self._ts_cache[image_path] = result
