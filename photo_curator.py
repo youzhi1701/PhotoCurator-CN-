@@ -206,7 +206,7 @@ state = {
     'auto': {'cull': False, 'dedup': False},
     'cull':  {**_blank(), 'sharp': 0, 'soft': 0, 'blurry': 0, 'sharp_paths': []},
     'dedup': {**_blank(), 'groups': 0, 'kept_paths': []},
-    'rank':  {**_blank(), 'scores': [], 'total': 0, 'analyzed': 0},
+    'rank':  {**_blank(), 'scores': [], 'total': 0, 'analyzed': 0, 'preview': [], 'preview_at': 0.0},
 }
 
 
@@ -685,9 +685,16 @@ def run_cull(folder, strictness, adaptive, rescue_on):
             items.append({'name': p.name, 'path': str(p),
                           'region_s': region_sharpness(gray),
                           'q': quick_quality(bgr, gray)})
-            if idx % 5 == 0 or idx == len(images) - 1:
+            # Reclassification is for live UI only; final output is still
+            # classified once more below. Throttle it so very large folders do
+            # not repeatedly rescan the entire processed list every five files.
+            now = time.time()
+            if (idx < 20 and idx % 5 == 0) or idx == len(images) - 1 \
+                    or now - s.get('_last_classify_at', 0.0) >= 1.0:
                 classify_all()
+                s['_last_classify_at'] = now
         classify_all()
+        s.pop('_last_classify_at', None)
 
         # Blurry photos are NOT moved automatically — they stay in place so you
         # can review them first, then move them with the "Move blurry → Blurred/"
@@ -915,7 +922,7 @@ def build_topn(weights=None, topn=None):
 def run_rank(folder, ftype='all', pair='both'):
     s = state['rank']
     s.update({'running': True, 'cancel': False, 'progress': 0, 'status': '正在准备…',
-              'scores': [], 'total': 0, 'analyzed': 0})
+              'scores': [], 'total': 0, 'analyzed': 0, 'preview': [], 'preview_at': 0.0})
     state['excluded'] = set()
     try:
         # Prefer a COMPLETED Dedup on this folder, then a COMPLETED Cull on this
@@ -2313,8 +2320,13 @@ def api_progress(step):
                         'photos': s['photos'], 'stats': {'groups': s['groups']}})
     if step == 'rank':
         s = state['rank']
+        now = time.time()
+        if (not s['running']) or now - float(s.get('preview_at', 0.0)) >= 1.0:
+            s['preview'] = build_topn()
+            s['preview_at'] = now
         return jsonify({'running': s['running'], 'progress': s['progress'], 'status': s['status'],
-                        'photos': build_topn(), 'stats': {'images': s['total']}})
+                        'photos': s.get('preview', []),
+                        'stats': {'images': s['total']}})
     abort(404)
 
 
@@ -2334,7 +2346,9 @@ def api_weights():
         return jsonify({'error': '评分参数无效'}), 400
     state['weights'] = clean
     state['topn'] = topn
-    return jsonify({'ok': True, 'photos': build_topn()})
+    state['rank']['preview'] = build_topn()
+    state['rank']['preview_at'] = time.time()
+    return jsonify({'ok': True, 'photos': state['rank']['preview']})
 
 @app.route('/api/exclude', methods=['POST'])
 def api_exclude():
