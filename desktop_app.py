@@ -1,33 +1,70 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-照片筛选 · PhotoCurator 中文桌面版
-默认启动方式：独立桌面窗口（pywebview）+ 本地 Flask 服务。
-核心算法继续复用 photo_curator.py，避免二次重写造成筛选/去重/排序逻辑偏差。
-"""
+"""照片筛选 · PhotoCurator 中文桌面版启动器。"""
+
+import os
 import sys
 import time
+import socket
+import tempfile
 import threading
+import traceback
 import urllib.request
+from pathlib import Path
+
 from werkzeug.serving import make_server
+
+APP_TITLE = "照片筛选 · PhotoCurator 中文版"
+APP_VERSION = "1.1.0-cn.1"
+HOST = "127.0.0.1"
+DEFAULT_PORT = 5014
+
+# Keep one desktop instance only. This avoids two windows moving/ranking the
+# same library at the same time. The socket stays open for the process lifetime.
+_instance_guard = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+try:
+    _instance_guard.bind((HOST, 5013))
+    _instance_guard.listen(1)
+except OSError:
+    raise SystemExit("照片筛选已经在运行，请先切换到现有窗口。")
+
+
+def choose_port():
+    """Prefer 5014 for compatibility, otherwise ask Windows for a free port."""
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        probe.bind((HOST, DEFAULT_PORT))
+        return DEFAULT_PORT
+    except OSError:
+        probe.close()
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        probe.bind((HOST, 0))
+        return int(probe.getsockname()[1])
+    finally:
+        try:
+            probe.close()
+        except Exception:
+            pass
+
+
+PORT = choose_port()
+os.environ["PHOTOCURATOR_PORT"] = str(PORT)
 
 try:
     import webview
 except ImportError:
-    print("缺少 pywebview，请先运行“一键安装并启动.bat”。")
-    raise
+    raise RuntimeError("缺少 pywebview，请先运行“一键安装并启动.bat”。")
 
-from photo_curator import app, PORT
+# Import only after PHOTOCURATOR_PORT is set; photo_curator builds its local
+# security allow-list from this value at import time.
+from photo_curator import app
 
-APP_TITLE = "照片筛选 · PhotoCurator 中文版"
-APP_VERSION = "1.0.0-cn.1"
-HOST = "127.0.0.1"
 URL = f"http://{HOST}:{PORT}"
 
 
 class LocalServer(threading.Thread):
     def __init__(self):
-        super().__init__(daemon=True)
+        super().__init__(daemon=True, name="photocurator-local-server")
         self.server = make_server(HOST, PORT, app, threaded=True)
 
     def run(self):
@@ -36,16 +73,17 @@ class LocalServer(threading.Thread):
     def stop(self):
         try:
             self.server.shutdown()
+            self.server.server_close()
         except Exception:
             pass
 
 
-def wait_until_ready(timeout=12.0):
+def wait_until_ready(timeout=15.0):
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
-            with urllib.request.urlopen(URL, timeout=0.8) as r:
-                if 200 <= r.status < 500:
+            with urllib.request.urlopen(URL, timeout=0.8) as response:
+                if 200 <= response.status < 500:
                     return True
         except Exception:
             time.sleep(0.15)
@@ -59,40 +97,57 @@ def main():
     if not wait_until_ready():
         server.stop()
         raise RuntimeError(
-            f"本地服务启动失败。请检查端口 {PORT} 是否被占用，"
-            "或使用“浏览器兼容模式.bat”查看详细错误。"
+            f"本地服务启动失败（端口 {PORT}）。"
+            "请运行“调试运行.bat”或查看“启动错误.log”。"
         )
 
-    window = webview.create_window(
+    webview.create_window(
         APP_TITLE,
         URL,
-        width=1480,
-        height=920,
-        min_size=(1080, 680),
+        width=1440,
+        height=900,
+        min_size=(860, 580),
+        resizable=True,
         confirm_close=True,
         text_select=True,
     )
 
     try:
-        # 不指定 GUI 引擎，让 pywebview 在 Windows 上自动选择可用的 WebView2/MSHTML 后端。
-        # Windows 10/11 通常会直接使用 Edge WebView2。
+        # Let pywebview use the best native backend available. On current
+        # Windows 10/11 systems this is normally Microsoft Edge WebView2 and
+        # follows Windows DPI scaling automatically.
         webview.start(debug=False)
     finally:
         server.stop()
 
 
+def write_error_log(exc):
+    log = Path(__file__).with_name("启动错误.log")
+    details = [
+        f"照片筛选 {APP_VERSION}",
+        f"Python: {sys.version}",
+        f"Executable: {sys.executable}",
+        f"Platform: {sys.platform}",
+        f"Port: {PORT}",
+        "",
+        f"{type(exc).__name__}: {exc}",
+        "",
+        traceback.format_exc(),
+    ]
+    log.write_text("\n".join(details), encoding="utf-8")
+
+
 if __name__ == "__main__":
     try:
         main()
+    except SystemExit:
+        raise
     except Exception as exc:
-        # pythonw 启动时没有控制台，错误写入日志方便排查。
         try:
-            from pathlib import Path
-            log = Path(__file__).with_name("启动错误.log")
-            log.write_text(str(exc), encoding="utf-8")
+            write_error_log(exc)
         except Exception:
             pass
-        # 调试模式/命令行启动时仍打印错误。
         if getattr(sys, "stderr", None):
             print(f"启动失败：{exc}", file=sys.stderr)
+            traceback.print_exc()
         raise
