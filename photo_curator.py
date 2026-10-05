@@ -1276,6 +1276,11 @@ function toast(msg,type){
   w.appendChild(el);requestAnimationFrame(()=>el.classList.add('show'));
   setTimeout(()=>{el.classList.remove('show');setTimeout(()=>el.remove(),300);},3600);
 }
+function escHtml(v){
+  return String(v==null?'':v).replace(/[&<>"']/g,ch=>({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  })[ch]);
+}
 let folder=null, photos=[], lbList=[], lbIndex=0, currentStep='cull';
 let lastRankSig='', renderedCount=0, photoIdx=0, lastStep=null, weightTimer=null, removedCount=0, pollFailures=0;
 const CATS=[['aesthetic','综合观感'],['composition','构图'],['technical','技术质量'],['sharpness','清晰度'],['color','色彩']];
@@ -1413,8 +1418,8 @@ function sdLabel(p){const parts=p.split(/[\\/]/).filter(Boolean);
 function loadShortcuts(){fetch('/api/shortcuts').then(r=>r.json()).then(d=>{
   let h='';(d.sd||[]).forEach(o=>{const p=(typeof o==='string')?o:o.path;
     const br=(o&&o.brand)?(' · '+o.brand):'';
-    h+=`<button class="shortcut" data-p="${p}"><span class="tag sd">SD${br}</span>${sdLabel(p)}</button>`;});
-  (d.recent||[]).slice(0,4).forEach(p=>h+=`<button class="shortcut" data-p="${p}"><span class="tag recent">最近</span>${sdLabel(p)}</button>`);
+    h+=`<button class="shortcut" data-p="${escHtml(p)}"><span class="tag sd">SD${escHtml(br)}</span>${escHtml(sdLabel(p))}</button>`;});
+  (d.recent||[]).slice(0,4).forEach(p=>h+=`<button class="shortcut" data-p="${escHtml(p)}"><span class="tag recent">最近</span>${escHtml(sdLabel(p))}</button>`);
   if(d.rawpy===false)h=`<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:8px;`
     +`padding:8px 10px;font-size:11px;line-height:1.5;margin-bottom:6px">⚠️ <b>RAW 支持未启用</b> — `
     +`未安装 rawpy，CR2/NEF/ARW/DNG 等 RAW 文件会被跳过。<br>`
@@ -1640,7 +1645,7 @@ function emptyHTML(step){
     <div class="lines">${c[3].map(l=>`<div>${l}</div>`).join('')}</div></div>`;
 }
 function cullCard(p){
-  const i=photoIdx++;const path=String(p.path).replace(/"/g,'&quot;');
+  const i=photoIdx++;const path=escHtml(p.path);
   const isDedup=currentStep==='dedup';
   // Dedup: the badge tells you this frame won a burst ("Best of N"); the info
   // line says how many near-duplicates were set aside. The raw sharpness number
@@ -1656,7 +1661,7 @@ function cullCard(p){
     : `<div class="photo-score">${p.score}</div>`;
   return `<div class="photo-card ${cls}" data-i="${i}" data-path="${path}">${badge}${toggle}
     <img class="photo-img" src="${p.thumb}" loading="lazy" decoding="async">
-    <div class="photo-info"><div class="pi-row"><span class="photo-name">${p.name}</span></div>${info}</div></div>`;
+    <div class="photo-info"><div class="pi-row"><span class="photo-name">${escHtml(p.name)}</span></div>${info}</div></div>`;
 }
 let lastGallerySig='', gPage=0, gItems=[];
 const PAGE_SIZE=400;
@@ -1714,7 +1719,7 @@ function updatePager(){
   document.getElementById('pgPrev').onclick=()=>{if(gPage>0){gPage--;rerender();}};
   document.getElementById('pgNext').onclick=()=>{if(gPage<pages-1){gPage++;rerender();}};
 }
-function rankCard(p,idx){const path=String(p.path).replace(/"/g,'&quot;');
+function rankCard(p,idx){const path=escHtml(p.path);
   const on=p.phonebg?' on':'';
   return `<div class="photo-card kept${p.phonebg?' pbg':''}" data-i="${idx}" data-path="${path}"><div class="rank-num">${p.rank!=null?p.rank:idx+1}</div>
     <button class="pbg-toggle${on}" data-path="${path}" title="${p.phonebg?'已设为手机壁纸，点击取消':'设为手机壁纸'}">📱</button>
@@ -1758,7 +1763,7 @@ function togglePhoneBg(path){
 let cullView=[], lastCullSig='';
 const TIER_NAME={sharp:'清晰',soft:'轻微软',blurry:'模糊'};
 const NEXT_TIER={sharp:'soft',soft:'blurry',blurry:'sharp'};
-function cullCardHtml(p,idx){const path=String(p.path).replace(/"/g,'&quot;');
+function cullCardHtml(p,idx){const path=escHtml(p.path);
   const cls=p.tier==='sharp'?'kept':p.tier==='soft'?'soft':'rejected';
   return `<div class="photo-card ${cls}" data-i="${idx}" data-path="${path}" data-tier="${p.tier}">
     <button class="badge ${p.badgeType} badge-tier" data-path="${path}" data-tier="${p.tier}" title="点击切换：清晰 → 轻微软 → 模糊">⇄ ${p.badge}</button>
@@ -1896,7 +1901,9 @@ function showLb(){
   }else{side.style.display='block';side.innerHTML=`<h3>${currentStep==='cull'?'Sharpness':'Photo'}</h3><div style="font-size:13px;opacity:.85">${p.name}</div><div style="font-size:26px;font-weight:700;margin-top:8px">${p.score!=null?p.score:''}</div>`;}
   loadExif(p.path,side);
 }
-function exifRow(label,val){return `<div class="exrow"><span class="lab">${label}</span><span class="val">${val}</span></div>`;}
+function exifRow(label,val,allowHtml=false){
+  return `<div class="exrow"><span class="lab">${escHtml(label)}</span><span class="val">${allowHtml?val:escHtml(val)}</span></div>`;
+}
 function loadExif(path,side){
   const token=path;side.dataset.exifToken=token;
   fetch('/api/exif?path='+encodeURIComponent(path)).then(r=>r.json()).then(e=>{
@@ -1907,11 +1914,11 @@ function loadExif(path,side){
     if(e.camera)rows+=exifRow('相机',e.camera);
     if(e.lens)rows+=exifRow('镜头',e.lens);
     const settings=[e.focal,e.aperture,e.shutter,e.iso].filter(Boolean)
-      .map(s=>`<span style="white-space:nowrap">${s}</span>`).join(' · ');
+      .map(v=>`<span style="white-space:nowrap">${escHtml(v)}</span>`).join(' · ');
     if(settings)rows+=exifRow('拍摄参数',settings);
     if(e.lat!=null&&e.lon!=null){
       const c=e.lat.toFixed(5)+',&nbsp;'+e.lon.toFixed(5);
-      rows+=exifRow('位置',`<a href="https://www.google.com/maps?q=${e.lat},${e.lon}" target="_blank" style="white-space:nowrap">${c}</a>`);
+      rows+=exifRow('位置',`<a href="https://www.google.com/maps?q=${e.lat},${e.lon}" target="_blank" rel="noopener" style="white-space:nowrap">${c}</a>`,true);
       rows+=`<div class="exmap"><div class="mapslot" id="exMapSlot"><span class="mappin"></span></div>`
         +`<span class="cred"><a href="https://openfreemap.org/" target="_blank" rel="noopener">OpenFreeMap</a> © `
         +`<a href="https://www.openmaptiles.org/" target="_blank" rel="noopener">OpenMapTiles</a> · data © `
