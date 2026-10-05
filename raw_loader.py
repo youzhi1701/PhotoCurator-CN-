@@ -114,11 +114,11 @@ def open_image_pil(path):
     Image.open() semantics so existing except blocks behave the same.
     """
     if is_heif(path) and not HAS_HEIF:
-        raise OSError(f"pillow-heif not installed — cannot open HEIC file {path}")
+        raise OSError(f"未安装 pillow-heif，无法打开 HEIC 文件：{path}")
     if not is_raw(path):
         return Image.open(path)   # pillow-heif has registered .heic by now
     if not HAS_RAWPY:
-        raise OSError(f"rawpy not installed — cannot open RAW file {path}")
+        raise OSError(f"未安装 rawpy，无法打开 RAW 文件：{path}")
     data = _embedded_jpeg(path)
     if data is not None:
         try:
@@ -127,7 +127,7 @@ def open_image_pil(path):
             pass
     rgb = _demosaic_rgb(path)
     if rgb is None:
-        raise OSError(f"could not decode RAW file {path}")
+        raise OSError(f"无法解码 RAW 文件：{path}")
     return Image.fromarray(rgb)
 
 
