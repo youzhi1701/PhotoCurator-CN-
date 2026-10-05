@@ -1206,6 +1206,19 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   @media (max-width: 620px){
     .lb-shortcuts{display:none}.zoomctl{order:2}.zoomctl .zoomval{display:none}}
 
+  /* High in-app zoom needs a compact layout even if the native window itself
+     is still wide enough that ordinary media queries would not fire. */
+  .ui-zoom-large .brand small{display:none}
+  .ui-zoom-large .step{padding:7px 10px;font-size:12px;white-space:nowrap}
+  .ui-zoom-large .sidebar{width:235px;flex-basis:235px;padding:10px}
+  .ui-zoom-large .folder-row{flex-direction:column}
+  .ui-zoom-large .folder-row .btn{width:100%;padding:9px 10px}
+  .ui-zoom-large .sidebar-scroll{gap:9px}
+  .ui-zoom-large .sidebar-actions{gap:6px}
+  .ui-zoom-large .btn,.ui-zoom-large .btn-ghost{padding-top:9px;padding-bottom:9px}
+  .ui-zoom-large .main{padding:10px}
+  .ui-zoom-large .gallery{grid-template-columns:repeat(auto-fill,minmax(128px,1fr));gap:8px}
+
   /* Responsive desktop layout: important on Windows 125%/150%/200% DPI. */
   @media (max-width: 1100px){
     .top{padding:10px 12px}
@@ -1390,6 +1403,7 @@ try{
 function applyUiZoom(v){
   uiZoom=Math.round(Math.min(ZOOM_MAX,Math.max(ZOOM_MIN,v))*100)/100;
   document.documentElement.style.zoom=String(uiZoom);
+  document.documentElement.classList.toggle('ui-zoom-large',uiZoom>=1.20);
   const z=document.getElementById('zoomVal');if(z)z.textContent=Math.round(uiZoom*100)+'%';
   try{localStorage.setItem('pc-ui-zoom',String(uiZoom));}catch(_){}
 }
