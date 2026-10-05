@@ -117,10 +117,12 @@ def main():
     webview.create_window(
         APP_TITLE,
         URL,
-        width=1440,
-        height=900,
-        min_size=(860, 580),
+        width=1180,
+        height=760,
+        min_size=(640, 440),
         resizable=True,
+        maximized=True,
+        zoomable=True,
         confirm_close=True,
         text_select=True,
     )
