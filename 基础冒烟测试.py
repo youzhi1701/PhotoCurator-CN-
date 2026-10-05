@@ -57,6 +57,18 @@ def main():
             safe = photo_curator._safe_image_path(str(p))
             assert_true(safe is not None, f"安全路径校验误拒绝：{p}")
 
+        # Verify the local HTTP endpoints also survive Unicode/special paths.
+        client = photo_curator.app.test_client()
+        sample = str(found[0])
+        thumb = client.get("/api/thumb", query_string={"path": sample},
+                           headers={"Host": f"127.0.0.1:{photo_curator.PORT}"})
+        assert_true(thumb.status_code == 200,
+                    f"缩略图接口读取失败：HTTP {thumb.status_code}")
+        full = client.get("/api/image", query_string={"path": sample},
+                          headers={"Host": f"127.0.0.1:{photo_curator.PORT}"})
+        assert_true(full.status_code == 200,
+                    f"大图接口读取失败：HTTP {full.status_code}")
+
         outside = Path(td) / "目录外照片.jpg"
         Image.new("RGB", (20, 20), "white").save(outside)
         assert_true(photo_curator._safe_image_path(str(outside)) is None,
