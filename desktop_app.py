@@ -13,7 +13,7 @@ import urllib.request
 from pathlib import Path
 
 APP_TITLE = "照片筛选 · PhotoCurator 中文版"
-APP_VERSION = "1.1.0-cn.1"
+APP_VERSION = "1.2.0-cn.1"
 HOST = "127.0.0.1"
 DEFAULT_PORT = 5014
 
@@ -177,12 +177,12 @@ def main():
         js_api=DesktopApi(),
         width=1180,
         height=760,
-        min_size=(640, 440),
+        min_size=(720, 520),
         resizable=True,
         maximized=True,
         zoomable=True,
         confirm_close=False,
-        text_select=True,
+        text_select=True,\n        background_color="#f4f6fb",
     )
 
     def on_closing():
