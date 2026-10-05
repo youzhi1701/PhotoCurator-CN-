@@ -34,7 +34,7 @@ def main():
             arr[:, :, 0] = 20 + i * 20
             arr[:, :, 1] = 100
             arr[:, :, 2] = 180
-            Image.fromarray(arr, "RGB").save(p)
+            Image.fromarray(arr).save(p)
 
             bgr = imread_bgr(p, reduced=False)
             gray = imread_gray(p, reduced=False)
@@ -68,6 +68,9 @@ def main():
                           headers={"Host": f"127.0.0.1:{photo_curator.PORT}"})
         assert_true(full.status_code == 200,
                     f"大图接口读取失败：HTTP {full.status_code}")
+        # Windows keeps send_file handles locked until responses are closed.
+        thumb.close()
+        full.close()
 
         outside = Path(td) / "目录外照片.jpg"
         Image.new("RGB", (20, 20), "white").save(outside)
