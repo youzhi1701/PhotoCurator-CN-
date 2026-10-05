@@ -1207,6 +1207,13 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   .toast.show{opacity:1;transform:translateY(0)}
   .toast.good{border-left-color:var(--good)} .toast.bad{border-left-color:var(--bad)} .toast.info{border-left-color:var(--accent)}
 
+  .zoomctl{display:flex;align-items:center;gap:4px;background:rgba(255,255,255,.14);padding:3px;border-radius:8px;flex:0 0 auto}
+  .zoomctl button{border:0;background:transparent;color:#fff;min-width:28px;height:26px;border-radius:6px;cursor:pointer;font-weight:700}
+  .zoomctl button:hover{background:rgba(255,255,255,.18)}
+  .zoomctl .zoomval{min-width:48px;text-align:center;font-size:11px;font-weight:700;user-select:none}
+  @media (max-width: 820px){.zoomctl .zoomval{min-width:42px}.zoomctl button{min-width:26px}}
+  @media (max-width: 620px){.zoomctl{order:2}.zoomctl .zoomval{display:none}}
+
   /* Responsive desktop layout: important on Windows 125%/150%/200% DPI. */
   @media (max-width: 1100px){
     .top{padding:10px 12px}
@@ -1279,6 +1286,12 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
     <div class="step" data-step="rank">3 · 智能优选</div>
   </div>
   <div class="top-right">
+    <div class="zoomctl" title="界面缩放（Ctrl + / Ctrl - / Ctrl 0）">
+      <button id="zoomOut" type="button" aria-label="缩小界面">−</button>
+      <span class="zoomval" id="zoomVal">100%</span>
+      <button id="zoomIn" type="button" aria-label="放大界面">＋</button>
+      <button id="zoomReset" type="button" aria-label="恢复100%">↺</button>
+    </div>
     <button class="theme" id="themeToggle">🌙</button>
   </div>
 </div>
@@ -1373,6 +1386,30 @@ const tt=document.getElementById('themeToggle');
 tt.onclick=()=>{const d=document.documentElement.getAttribute('data-theme')==='dark';
   document.documentElement.setAttribute('data-theme',d?'light':'dark');tt.textContent=d?'🌙':'☀️';
   if(exMap){exMapTheme=currentMapStyle();exMap.setStyle(MAP_STYLES[exMapTheme]);}};
+
+/* UI zoom: independent from Windows DPI scaling; persisted per user. */
+const ZOOM_MIN=0.80, ZOOM_MAX=1.40, ZOOM_STEP=0.10;
+let uiZoom=1;
+try{
+  const saved=parseFloat(localStorage.getItem('pc-ui-zoom')||'1');
+  if(Number.isFinite(saved))uiZoom=Math.min(ZOOM_MAX,Math.max(ZOOM_MIN,saved));
+}catch(_){}
+function applyUiZoom(v){
+  uiZoom=Math.round(Math.min(ZOOM_MAX,Math.max(ZOOM_MIN,v))*100)/100;
+  document.documentElement.style.zoom=String(uiZoom);
+  const z=document.getElementById('zoomVal');if(z)z.textContent=Math.round(uiZoom*100)+'%';
+  try{localStorage.setItem('pc-ui-zoom',String(uiZoom));}catch(_){}
+}
+document.getElementById('zoomOut').onclick=()=>applyUiZoom(uiZoom-ZOOM_STEP);
+document.getElementById('zoomIn').onclick=()=>applyUiZoom(uiZoom+ZOOM_STEP);
+document.getElementById('zoomReset').onclick=()=>applyUiZoom(1);
+document.addEventListener('keydown',e=>{
+  if(!e.ctrlKey)return;
+  if(e.key==='+'||e.key==='='){e.preventDefault();applyUiZoom(uiZoom+ZOOM_STEP);}
+  else if(e.key==='-'){e.preventDefault();applyUiZoom(uiZoom-ZOOM_STEP);}
+  else if(e.key==='0'){e.preventDefault();applyUiZoom(1);}
+});
+applyUiZoom(uiZoom);
 
 /* settings panels per step */
 function settingsHTML(step){
