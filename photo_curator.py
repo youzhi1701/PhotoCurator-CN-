@@ -1502,13 +1502,18 @@ document.getElementById('browseBtn').onclick=async()=>{
   const btn=document.getElementById('browseBtn');
   const old=btn.textContent;btn.disabled=true;btn.textContent='正在选择…';
   try{
-    const r=await fetch('/api/browse',{method:'POST'});
-    if(!r.ok)throw new Error('HTTP '+r.status);
-    const d=await r.json();
-    if(d.folder){
-      folder=d.folder;
+    let selected=null;
+    if(window.pywebview&&window.pywebview.api&&window.pywebview.api.pick_folder){
+      selected=await window.pywebview.api.pick_folder();
+    }else{
+      const r=await fetch('/api/browse',{method:'POST'});
+      if(!r.ok)throw new Error('HTTP '+r.status);
+      const d=await r.json();
+      selected=d.folder||null;
+    }
+    if(selected){
+      folder=selected;
       document.getElementById('folderInput').value=folder;
-      loadShortcuts();
     }
   }catch(err){
     toast('无法打开文件夹选择器：'+(err.message||'未知错误'),'bad');
