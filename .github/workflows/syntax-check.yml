@@ -1,4 +1,4 @@
-name: Python syntax check
+name: Source syntax check
 
 on:
   push:
@@ -12,9 +12,55 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+
       - name: Compile Python sources
         run: |
           python -m py_compile             desktop_app.py             photo_curator.py             photo_dedup_batch.py             photo_file_organizer.py             photo_ranking_engine.py             photo_ranking_v3.py             raw_loader.py
+
+      - name: Extract embedded UI JavaScript
+        run: |
+          python - <<'PY'
+          import re
+          from pathlib import Path
+
+          source = Path("photo_curator.py").read_text(encoding="utf-8")
+          html = re.search(r"HTML = r'''(.*?)</html>'''", source, re.S)
+          if not html:
+              raise SystemExit("Embedded HTML block not found")
+          script = re.search(r"<script>(.*?)</script>", html.group(1), re.S)
+          if not script:
+              raise SystemExit("Embedded JavaScript block not found")
+
+          js = script.group(1)
+          # Jinja values become valid JSON strings when Flask renders the page.
+          js = re.sub(r"\{\{\s*map_style_(?:light|dark)\|tojson\s*\}\}", '""', js)
+          Path("/tmp/photocurator-ui.js").write_text(js, encoding="utf-8")
+          print("Extracted", len(js), "characters of JavaScript")
+          PY
+
+      - name: Check embedded UI JavaScript
+        run: node --check /tmp/photocurator-ui.js
+
+      - name: Validate embedded HTML structure
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          s = Path("photo_curator.py").read_text(encoding="utf-8")
+          checks = {
+              "<html": 1,
+              "</html>": 1,
+              "<style>": 1,
+              "</style>": 1,
+              "<script>": 1,
+              "</script>": 1,
+          }
+          for token, expected in checks.items():
+              count = s.count(token)
+              if count != expected:
+                  raise SystemExit(f"{token}: expected {expected}, got {count}")
+          print("Embedded HTML structure OK")
+          PY
