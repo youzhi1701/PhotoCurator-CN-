@@ -134,20 +134,20 @@ if HAS_RAWPY:
     IMG_EXTS |= RAW_EXTS
 else:
     logger.warning("=" * 64)
-    logger.warning("rawpy is NOT installed — RAW files (CR2/CR3/NEF/ARW/DNG...)")
-    logger.warning("will be IGNORED. Enable RAW support with:")
+    logger.warning("未安装 rawpy：RAW 文件（CR2/CR3/NEF/ARW/DNG 等）将被跳过。")
+    logger.warning("如需 RAW 支持，请安装：")
     logger.warning("    pip install rawpy")
-    logger.warning("then restart Photo Curator.")
+    logger.warning("安装后请重新启动“照片筛选”。")
     logger.warning("=" * 64)
 # HEIC/HEIF (iPhone photos) — decoded via pillow-heif if installed.
 if HAS_HEIF:
     IMG_EXTS |= HEIF_EXTS
 else:
     logger.warning("=" * 64)
-    logger.warning("pillow-heif is NOT installed — HEIC/HEIF files (iPhone")
-    logger.warning("photos) will be IGNORED. Enable HEIC support with:")
+    logger.warning("未安装 pillow-heif：HEIC/HEIF 文件（包括 iPhone 照片）将被跳过。")
+    logger.warning("如需 HEIC/HEIF 支持，请安装：")
     logger.warning("    pip install pillow-heif")
-    logger.warning("then restart Photo Curator.")
+    logger.warning("安装后请重新启动“照片筛选”。")
     logger.warning("=" * 64)
 # The GPS map. OpenStreetMap's own tile servers refuse app traffic (their tile
 # usage policy forbids it, and they answer with an "Access blocked" tile), so
