@@ -180,7 +180,7 @@ def main():
         min_size=(720, 520),
         resizable=True,
         maximized=True,
-        zoomable=True,
+        zoomable=False,
         confirm_close=False,
         text_select=True,\n        background_color="#f4f6fb",
     )
