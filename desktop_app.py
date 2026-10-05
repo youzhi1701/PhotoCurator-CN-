@@ -202,10 +202,31 @@ def main():
     window.events.closing += on_closing
 
     try:
-        # Let pywebview use the best native backend available. On current
-        # Windows 10/11 systems this is normally Microsoft Edge WebView2 and
-        # follows Windows DPI scaling automatically.
-        webview.start(debug=False)
+        # On Windows force Edge WebView2. Falling back to IE/MSHTML would open
+        # a window but break the modern UI, which is worse than a clear error.
+        if os.name == 'nt':
+            webview.start(gui='edgechromium', debug=False)
+        else:
+            webview.start(debug=False)
+    except Exception as exc:
+        if os.name == 'nt':
+            try:
+                import ctypes
+                ctypes.windll.user32.MessageBoxW(
+                    None,
+                    "桌面窗口引擎启动失败。\n\n"
+                    "请确认 Microsoft Edge WebView2 Runtime 已安装。\n"
+                    "你也可以直接运行“浏览器兼容模式.bat”继续使用。\n\n"
+                    f"错误：{exc}",
+                    APP_TITLE,
+                    0x10,
+                )
+            except Exception:
+                pass
+        raise RuntimeError(
+            "桌面窗口引擎启动失败；请安装/修复 Microsoft Edge WebView2 Runtime，"
+            "或使用“浏览器兼容模式.bat”。"
+        ) from exc
     finally:
         server.stop()
 
