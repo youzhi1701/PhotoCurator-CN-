@@ -168,6 +168,7 @@ jobs:
 
 
       - name: Technical identifier localization guard
+        shell: bash
         run: |
           python - <<'PY'
           from pathlib import Path
