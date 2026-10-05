@@ -75,6 +75,25 @@ from photo_curator import app
 URL = f"http://{HOST}:{PORT}"
 
 
+class DesktopApi:
+    """Small native bridge used only by the desktop WebView."""
+
+    def pick_folder(self):
+        window = webview.active_window()
+        if window is None:
+            return None
+        enum = getattr(webview, 'FileDialog', None)
+        dialog_type = getattr(enum, 'FOLDER', None) if enum else None
+        if dialog_type is None:
+            dialog_type = getattr(webview, 'FOLDER_DIALOG', None)
+        if dialog_type is None:
+            raise RuntimeError("当前 pywebview 不支持文件夹选择器")
+        result = window.create_file_dialog(dialog_type)
+        if not result:
+            return None
+        return str(result[0])
+
+
 class LocalServer(threading.Thread):
     def __init__(self):
         super().__init__(daemon=True, name="photocurator-local-server")
@@ -117,6 +136,7 @@ def main():
     webview.create_window(
         APP_TITLE,
         URL,
+        js_api=DesktopApi(),
         width=1180,
         height=760,
         min_size=(640, 440),
