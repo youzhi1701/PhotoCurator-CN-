@@ -152,6 +152,11 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+          pip install -r requirements-optional.txt
+
+      - name: Verify optional photo formats
+        run: |
+          python -c "import raw_loader; assert raw_loader.HAS_RAWPY, 'RAW support missing'; assert raw_loader.HAS_HEIF, 'HEIC support missing'; print('RAW/HEIC support OK')"
 
       - name: Compile Python sources
         run: |
