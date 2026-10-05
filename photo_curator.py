@@ -22,6 +22,7 @@ Pure cv2 / numpy / Pillow + Flask. Fully offline. Port 5001.
 """
 
 import os
+import sys
 import io
 import json
 import time
@@ -320,7 +321,7 @@ def thumb_url(image_path):
 def load_recents():
     try:
         if RECENTS_FILE.exists():
-            return json.loads(RECENTS_FILE.read_text())
+            return json.loads(RECENTS_FILE.read_text(encoding='utf-8'))
     except Exception:
         pass
     return []
@@ -330,7 +331,7 @@ def save_recent(folder):
     recents = [r for r in load_recents() if r != folder]
     recents.insert(0, folder)
     try:
-        RECENTS_FILE.write_text(json.dumps(recents[:8]))
+        RECENTS_FILE.write_text(json.dumps(recents[:8], ensure_ascii=False), encoding='utf-8')
     except Exception as e:
         logger.warning(f"save recents fail: {e}")
 
