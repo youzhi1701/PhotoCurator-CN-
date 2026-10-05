@@ -30,6 +30,10 @@ if errorlevel 1 goto :fail
 ".venv\Scripts\python.exe" -c "import tempfile,pathlib; p=pathlib.Path(tempfile.gettempdir())/'photocurator_selfcheck.tmp'; p.write_text('ok',encoding='utf-8'); p.unlink(); print('[缓存] 系统临时目录可写')"
 if errorlevel 1 goto :fail
 
+".venv\Scripts\python.exe" "基础冒烟测试.py"
+if errorlevel 1 goto :fail
+echo [路径] 中文目录、特殊字符文件名和图像读取检查通过
+
 echo.
 echo [通过] 当前基础运行环境正常。
 echo 如独立窗口仍有问题，请运行“调试运行.bat”。
