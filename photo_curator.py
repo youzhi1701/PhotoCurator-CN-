@@ -1,24 +1,15 @@
 #!/usr/bin/env python3
 """
-Photo Curator v3 — full pipeline (Cull · Dedup · Rank)
-=============================================================================
-v3 combines v2's proven Cull and Dedup steps with the advanced, magazine-style
-Ranking Studio:
+PhotoCurator 中文版 — 模糊筛选 · 相似去重 · 智能优选
 
-  1 · CULL   contrast-normalized sharpness (haze/night/low-contrast shots are
-             kept; only true blur is flagged). Per-photo Sharp/Blurry override
-             that physically moves files in/out of Blurred/.
-  2 · DEDUP  global perceptual-hash clustering (FastBatchDeduplicator) — burst
-             sequences collapse to their sharpest frame; optional auto-move of
-             duplicates to Duplicates/.
-  3 · RANK   the advanced engine (photo_ranking_v3) with LIVE weight sliders,
-             per-photo radar + sub-score breakdown, and non-destructive
-             Remove/Restore from both the grid and the lightbox.
+核心原则：
+  1 · 模糊筛选先分析、再人工复核；只有明确确认后才移动文件。
+  2 · 相似去重先分组、再选择保留项；支持同组保留多张与跨文件夹全局对比。
+  3 · 智能优选提供质量评分、人工移除/恢复与明确导出。
 
-Steps feed each other: Rank uses Dedup survivors if present, else Cull
-survivors, else the whole folder.
-
-Pure cv2 / numpy / Pillow + Flask. Fully offline. Port 5001.
+支持单文件夹或递归子文件夹处理。递归结果按来源文件夹组织，程序生成的
+结果目录会自动排除，避免二次扫描。核心照片分析在本机执行；GPS 地图是
+可选联网显示，不影响筛选流程。
 """
 
 import os
@@ -47,7 +38,6 @@ from raw_loader import (RAW_EXTS, HAS_RAWPY, is_raw,
                         open_image_pil, imread_bgr, imread_gray)
 from photo_ranking_v3 import AdvancedPhotoAnalyzer
 from photo_dedup_batch import FastBatchDeduplicator
-from photo_file_organizer import PhotoOrganizer
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
