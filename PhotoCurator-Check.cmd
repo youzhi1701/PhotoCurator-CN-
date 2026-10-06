@@ -6,11 +6,11 @@ set "PYTHONUTF8=1"
 if "%PHOTOCURATOR_BATCH_PARSE_ONLY%"=="1" exit /b 0
 if not exist ".venv\Scripts\python.exe" goto no_env
 
-".venv\Scripts\python.exe" -m py_compile desktop_app.py photo_curator.py photo_dedup_batch.py photo_file_organizer.py photo_ranking_engine.py photo_ranking_v3.py raw_loader.py "基础冒烟测试.py" "Codespaces冒烟测试.py"
+".venv\Scripts\python.exe" -m py_compile desktop_app.py photo_curator.py photo_dedup_batch.py photo_file_organizer.py photo_ranking_engine.py photo_ranking_v3.py raw_loader.py windows_smoke_test.py
 if errorlevel 1 goto fail
 ".venv\Scripts\python.exe" -c "import flask,cv2,numpy,PIL,webview; import raw_loader; print('Runtime OK')"
 if errorlevel 1 goto fail
-".venv\Scripts\python.exe" "基础冒烟测试.py"
+".venv\Scripts\python.exe" "windows_smoke_test.py"
 if errorlevel 1 goto fail
 
 echo.
