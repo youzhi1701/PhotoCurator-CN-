@@ -72,7 +72,7 @@ except Exception:
 
 app = Flask(__name__)
 
-APP_VERSION = "1.2.3-cn.5"
+APP_VERSION = "1.2.3-cn.6"
 IS_CODESPACES = os.environ.get('CODESPACES', '').strip().lower() == 'true'
 CODESPACE_NAME = os.environ.get('CODESPACE_NAME', '').strip()
 _CODESPACES_DOMAIN_RAW = os.environ.get(
@@ -467,42 +467,47 @@ def save_recent(folder):
         logger.warning(f"save recents fail: {e}")
 
 
-def ensure_codespaces_demo():
-    """Guarantee a persistent, usable demo dataset for Codespaces preview.
+def ensure_builtin_demo():
+    """Keep one built-in test dataset inside the program directory.
 
-    Existing demo files and test outputs are never deleted or overwritten.
-    Missing canonical samples are recreated so file-operation tests cannot
-    permanently empty the demo folder.
+    The dataset is deterministic and intentionally small: 12 JPEGs total,
+    including 4 clear, 4 slightly-soft and 4 blurry samples. Existing files
+    are never overwritten. If a test moves a canonical sample away, only the
+    missing canonical file is recreated on the next shortcut refresh.
     """
-    if not CODESPACES_PUBLIC_HOST:
-        return None
-    raw_demo = (
-        os.environ.get('PHOTOCURATOR_DEMO_DIR')
-        or str(Path(__file__).resolve().parent / '.codespaces_demo')
-    )
-    demo = Path(raw_demo)
+    demo = Path(__file__).resolve().parent / '内置测试数据'
     try:
         demo.mkdir(parents=True, exist_ok=True)
         from PIL import ImageDraw, ImageFilter
         for i in range(12):
             kind = 'blurry' if i >= 8 else ('soft' if i >= 4 else 'sharp')
-            target = demo / f"sample_{i+1:02d}_{kind}.jpg"
+            zh = {'sharp': '清晰', 'soft': '轻微软', 'blurry': '模糊'}[kind]
+            target = demo / f"测试_{i+1:02d}_{zh}.jpg"
             if target.exists():
                 continue
             w, h = 960, 640
-            img = Image.new('RGB', (w, h), (235, 238, 244))
+            img = Image.new('RGB', (w, h), (238, 241, 247))
             d = ImageDraw.Draw(img)
-            step = 32 + (i % 3) * 8
+
+            # Distinct geometry gives the cull / dedup / ranking views enough
+            # visual structure to exercise their real UI instead of blank cards.
+            step = 30 + (i % 4) * 7
             for x in range(0, w, step):
-                d.line((x, 0, w - x // 2, h), width=2 + i % 4,
-                       fill=(35 + i * 8, 65, 120 + i * 6))
-            for y in range(0, h, step):
-                d.line((0, y, w, h - y // 2), width=1 + (i % 3),
-                       fill=(110, 70 + i * 7, 60))
-            d.ellipse((180 + i * 8, 120, 560 + i * 8, 500),
-                      outline=(25, 25, 25), width=10)
-            d.rectangle((620, 120 + i * 7, 860, 420 + i * 4),
-                        outline=(20, 110, 80), width=8)
+                d.line((x, 0, max(0, w - x // 2), h),
+                       width=2 + (i % 3),
+                       fill=(40 + i * 7, 72 + (i % 4) * 10, 118 + i * 5))
+            for y in range(0, h, step + 8):
+                d.line((0, y, w, max(0, h - y // 2)),
+                       width=1 + (i % 2),
+                       fill=(118, 72 + i * 6, 66 + (i % 3) * 12))
+            d.ellipse((150 + i * 10, 120, 500 + i * 8, 490),
+                      outline=(30, 35, 45), width=10)
+            d.rectangle((600, 105 + i * 6, 855, 410 + i * 3),
+                        outline=(30, 118, 88), width=8)
+            d.text((34, 28), f"PhotoCurator 内置测试 {i+1:02d} / 12",
+                   fill=(25, 30, 40))
+            d.text((34, 58), f"类型：{zh}", fill=(25, 30, 40))
+
             if kind == 'blurry':
                 img = img.filter(ImageFilter.GaussianBlur(radius=5.0))
             elif kind == 'soft':
@@ -510,7 +515,7 @@ def ensure_codespaces_demo():
             img.save(target, quality=92)
         return os.path.realpath(demo)
     except Exception as e:
-        logger.warning(f"ensure Codespaces demo failed: {e}")
+        logger.warning(f"ensure built-in demo failed: {e}")
         return os.path.realpath(demo) if demo.is_dir() else None
 
 
@@ -1699,14 +1704,22 @@ function loadShortcuts(){fetch('/api/shortcuts').then(r=>r.json()).then(d=>{
     bb.disabled=true;bb.textContent='云端路径模式';
     fi.placeholder='输入 Codespaces 中的云端文件夹路径';
     h+=`<div style="background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:9px 10px;font-size:11px;line-height:1.55;margin-bottom:7px">☁️ <b>Codespaces 在线预览</b><br>当前只能访问云端工作区文件，不能直接读取你电脑的 C:/F: 等本地硬盘。</div>`;
-    if(d.demo_folder){
-      const p=d.demo_folder;
-      h+=`<button class="shortcut" data-p="${escHtml(p)}"><span class="tag recent">在线样例</span>${escHtml(sdLabel(p))}</button>`;
-      if(!folder){folder=p;fi.value=p;}
-    }
   }else{
     bb.disabled=isRunning;bb.textContent='选择文件夹…';
     fi.placeholder='请选择或粘贴照片文件夹路径';
+  }
+
+  if(d.demo_folder){
+    const p=d.demo_folder;
+    const n=d.demo_count||12, br=d.demo_breakdown||{};
+    h+=`<button class="shortcut" data-p="${escHtml(p)}" style="border-color:var(--accent);background:color-mix(in srgb,var(--accent) 7%,var(--panel));align-items:flex-start">
+      <span class="tag recent" style="margin-top:1px">内置测试</span>
+      <span style="display:flex;flex-direction:column;gap:2px;min-width:0">
+        <b style="font-size:12px;color:var(--text)">内置测试数据 · ${n} 张</b>
+        <span style="font-size:10px;color:var(--muted)">清晰 ${br.sharp||4} · 轻微软 ${br.soft||4} · 模糊 ${br.blurry||4} · 程序内永久保留</span>
+      </span>
+    </button>`;
+    if(codespacesMode&&!folder){folder=p;fi.value=p;}
   }
 
   (d.sd||[]).forEach(o=>{const p=(typeof o==='string')?o:o.path;
@@ -2567,9 +2580,9 @@ def index():
 
 @app.route('/api/shortcuts')
 def api_shortcuts():
-    # Repair/recreate only missing canonical demo samples on every preview
-    # shortcut refresh. This keeps test data available even after move tests.
-    demo_folder = ensure_codespaces_demo() if CODESPACES_PUBLIC_HOST else None
+    # Built-in demo is part of the application experience, not a temporary
+    # Codespaces-only fixture. It is available on desktop and online preview.
+    demo_folder = ensure_builtin_demo()
 
     return jsonify({
         'sd': [] if CODESPACES_PUBLIC_HOST else detect_sd_cards(),
@@ -2578,6 +2591,8 @@ def api_shortcuts():
         'heif': HAS_HEIF,
         'codespaces': bool(CODESPACES_PUBLIC_HOST),
         'demo_folder': demo_folder,
+        'demo_count': 12 if demo_folder else 0,
+        'demo_breakdown': {'sharp': 4, 'soft': 4, 'blurry': 4} if demo_folder else {},
     })
 
 
