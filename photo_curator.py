@@ -2752,7 +2752,7 @@ async function startStep(step,config=null){
     toast('启动失败：'+msg,'bad');
     if(godMode){
       godAbort=true;
-      if(godResolve){const r=godResolve;godResolve=null;r();}
+      if(godResolve){const r=godResolve;godResolve=null;r({failed:true,status:msg});}
     }
     return false;
   }
@@ -2779,7 +2779,27 @@ async function godRun(){
     for(const step of ['cull','dedup','rank']){
       if(godAbort)break;
       if(first){activateStep('cull');first=false;}
-      await new Promise(res=>{ godResolve=res; startStep(step,pipelineConfig); });
+      const result=await new Promise(res=>{ godResolve=res; startStep(step,pipelineConfig); });
+      const status=String((result||{}).status||'');
+      if(!result || result.failed || status.includes('发生错误') || status.includes('启动失败')){
+        godAbort=true;
+        toast('分析未能继续，请查看当前任务提示。','bad');
+        break;
+      }
+      if(status.includes('已停止')){
+        godAbort=true;
+        break;
+      }
+      if(step==='cull'){
+        const st=(result&&result.stats)||{};
+        const survivors=Number(st.sharp||0)+Number(st.soft||0);
+        if(survivors<=0){
+          toast(Number(st.images||0)>0
+            ?'清晰度复核后没有需要继续处理的照片，已跳过相似分析和精选评分。'
+            :'所选范围没有可分析的照片，请检查文件夹或格式支持。','info');
+          break;
+        }
+      }
     }
     if(!godAbort)toast('✨ 分析完成：清晰度、相似组和精选结果均已生成','good');
   } finally {
@@ -2865,7 +2885,7 @@ function poll(step){
         const ab=document.getElementById('dedupApplyBtn');
         ab.style.display=(!godMode&&dg>0)?'block':'none';
       }
-      if(godResolve){const r=godResolve;godResolve=null;r();}
+      if(godResolve){const r=godResolve;godResolve=null;r(d);}
     })
     .catch(err=>{
       pollFailures++;
@@ -2880,7 +2900,7 @@ function poll(step){
       setStartBtn(false);runningStep=null;
       if(godMode){
         godAbort=true;
-        if(godResolve){const r=godResolve;godResolve=null;r();}
+        if(godResolve){const r=godResolve;godResolve=null;r({failed:true,status:msg});}
       }
     });
 }
