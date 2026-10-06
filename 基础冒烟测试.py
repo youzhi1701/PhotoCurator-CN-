@@ -289,6 +289,36 @@ def main():
         assert_true(photo_curator._safe_image_path(str(outside)) is None,
                     "安全路径校验错误地允许了所选目录外文件")
 
+        # A completed Cull with zero survivors is a valid result. Dedup/Rank
+        # must never fall back to scanning the original folder again, otherwise
+        # photos the user/algorithm rejected as blurry would re-enter later stages.
+        photo_curator.state["folder"] = str(root)
+        photo_curator.state["cull"].update({
+            "complete": True,
+            "running": False,
+            "src_folder": str(root),
+            "recursive": True,
+            "sharp_paths": [],
+            "photos": [],
+            "sharp": 0,
+            "soft": 0,
+            "blurry": len(photo_curator.list_images(root, recursive=True)),
+        })
+        photo_curator.run_dedup(
+            str(root), threshold=0.8, ftype="all", pair="both",
+            recursive=True, compare_scope="folder"
+        )
+        assert_true(photo_curator.state["dedup"].get("complete") is True,
+                    "零保留照片时相似分析应正常完成")
+        assert_true(not photo_curator.state["dedup"].get("kept_paths"),
+                    "零保留照片时相似分析错误地重新引入了原照片")
+
+        photo_curator.run_rank(str(root), ftype="all", pair="both", recursive=True)
+        assert_true(photo_curator.state["rank"].get("complete") is True,
+                    "零保留照片时精选评分应正常完成")
+        assert_true(not photo_curator.state["rank"].get("scores"),
+                    "零保留照片时精选评分错误地重新引入了原照片")
+
     print("基础冒烟测试通过：中文路径 / 特殊字符 / 图像解码 / 安全路径均正常")
 
 
