@@ -257,6 +257,57 @@ jobs:
         run: |
           python -c "import raw_loader; assert raw_loader.HAS_RAWPY, 'RAW support missing'; assert raw_loader.HAS_HEIF, 'HEIC support missing'; print('RAW/HEIC support OK')"
 
+      - name: Validate Windows launcher scripts
+        shell: cmd
+        run: |
+          set PHOTOCURATOR_BATCH_PARSE_ONLY=1
+          call PhotoCurator-Install.cmd
+          if errorlevel 1 exit /b 1
+          call PhotoCurator-Start.cmd
+          if errorlevel 1 exit /b 1
+          call PhotoCurator-Browser.cmd
+          if errorlevel 1 exit /b 1
+          call PhotoCurator-Debug.cmd
+          if errorlevel 1 exit /b 1
+          call PhotoCurator-Check.cmd
+          if errorlevel 1 exit /b 1
+          call PhotoCurator-Logs.cmd
+          if errorlevel 1 exit /b 1
+          call "一键安装并启动.bat"
+          if errorlevel 1 exit /b 1
+          call "启动照片筛选.bat"
+          if errorlevel 1 exit /b 1
+          call "浏览器兼容模式.bat"
+          if errorlevel 1 exit /b 1
+          call "调试运行.bat"
+          if errorlevel 1 exit /b 1
+          call "环境自检.bat"
+          if errorlevel 1 exit /b 1
+          call "打开日志文件夹.bat"
+          if errorlevel 1 exit /b 1
+
+      - name: Verify canonical launchers are ASCII only
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          names = [
+              "PhotoCurator-Install.cmd",
+              "PhotoCurator-Start.cmd",
+              "PhotoCurator-Browser.cmd",
+              "PhotoCurator-Debug.cmd",
+              "PhotoCurator-Check.cmd",
+              "PhotoCurator-Logs.cmd",
+          ]
+          for name in names:
+              data = Path(name).read_bytes()
+              try:
+                  data.decode("ascii")
+              except UnicodeDecodeError as exc:
+                  raise SystemExit(f"{name} is not ASCII-only: {exc}")
+          print("Canonical Windows launchers are ASCII-only")
+          PY
+
       - name: Compile Python sources
         run: |
           python -m py_compile desktop_app.py photo_curator.py photo_dedup_batch.py photo_file_organizer.py photo_ranking_engine.py photo_ranking_v3.py raw_loader.py "基础冒烟测试.py" "Codespaces冒烟测试.py"
