@@ -2179,6 +2179,10 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   .remove-btn:hover{background:#dc2626;color:#fff}
   .delete-btn{flex:0 0 auto;border:none;background:rgba(220,38,38,.12);color:#dc2626;border-radius:5px;font-size:10px;font-weight:700;padding:2px 7px;cursor:pointer;line-height:1.5}
   .delete-btn:hover{background:#dc2626;color:#fff}
+  .trash-restore-btn{flex:0 0 auto;border:none;background:rgba(37,99,235,.12);color:#2563eb;border-radius:5px;font-size:10px;font-weight:700;padding:2px 7px;cursor:pointer;line-height:1.5}
+  .trash-restore-btn:hover{background:#2563eb;color:#fff}
+  .trash-purge-btn{flex:0 0 auto;border:none;background:rgba(185,28,28,.12);color:#b91c1c;border-radius:5px;font-size:10px;font-weight:700;padding:2px 7px;cursor:pointer;line-height:1.5}
+  .trash-purge-btn:hover{background:#b91c1c;color:#fff}
   .lb-btn.delete{background:rgba(185,28,28,.88)} .lb-btn.delete:hover{background:#b91c1c}
   #removedBox{font-size:12px;color:var(--muted);margin-top:2px}#removedBox a{color:var(--accent);cursor:pointer;text-decoration:underline}
   /* lightbox */
@@ -2447,7 +2451,8 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
         <div class="stat-row" data-steps="cull"><span>轻微软（可保留）</span><span class="v" id="sSoft" style="color:var(--warn)">0</span></div>
         <div class="stat-row" data-steps="cull"><span>模糊</span><span class="v" id="sBlurry">0</span></div>
         <div class="stat-row" data-steps="dedup"><span>相似分组</span><span class="v" id="sGroups">0</span></div>
-        <div class="stat-row" data-steps="cull dedup rank"><span>当前显示</span><span class="v" id="sShowing">0</span></div>
+        <div class="stat-row" data-steps="cull dedup rank trash"><span>当前显示</span><span class="v" id="sShowing">0</span></div>
+        <div class="stat-row" data-steps="trash"><span>软件回收站</span><span class="v" id="sTrash">0</span></div>
         <div id="removedBox" style="display:none">已移除 <b id="removedN">0</b> 张 · <a id="restoreAll">全部恢复</a></div>
       </div>
       <details class="activity-panel" id="activityPanel">
@@ -2471,6 +2476,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
       <div class="step active" data-step="cull">清晰度结果</div>
       <div class="step" data-step="dedup">相似组选优</div>
       <div class="step" data-step="rank">精选推荐</div>
+      <div class="step" data-step="trash">回收站复核</div>
     </div>
     <div class="progress-wrap" id="progressWrap">
       <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
@@ -2501,7 +2507,9 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
       <button class="lb-btn toggle" id="lbToggle" style="display:none">→ 标记为模糊</button>
       <button class="lb-btn restore" id="lbRestore" style="display:none">↺ 全部恢复</button>
       <button class="lb-btn remove" id="lbRemove" style="display:none">✕ 移除</button>
-      <button class="lb-btn delete" id="lbDelete" style="display:none">🗑 移入回收站</button>
+      <button class="lb-btn delete" id="lbDelete" style="display:none">🗑 移入软件回收站</button>
+      <button class="lb-btn restore" id="lbTrashRestore" style="display:none">↩ 恢复原位</button>
+      <button class="lb-btn delete" id="lbTrashPurge" style="display:none">永久删除</button>
       <button class="lb-close" id="lbClose" title="关闭大图" aria-label="关闭大图">✕</button>
     </div>
   </div>
@@ -2744,6 +2752,10 @@ function settingsHTML(step){
       </select>
       <div class="slider-value">同名 RAW/JPG（如 IMG_0001.CR2 + .JPG）会在去重前合并为一张</div></div>
       <div class="slider-value" style="margin-top:10px;line-height:1.55">先完成筛选和分组，不会立即移动文件。筛选后可逐组对比并切换“保留”照片，最后再统一确认处理。</div>${librarySettingsHTML(step)}`;
+  if(step==='trash') return `<div class="panel-box">
+      <div style="font-size:12px;font-weight:700;margin-bottom:6px">🗑️ 软件回收站 · 最后一轮复核</div>
+      <div class="slider-value" style="line-height:1.6">这里的照片尚未永久删除。可以再次查看大图并决定“恢复原位”或“永久删除”。永久删除后不可从 PhotoCurator 恢复。</div>
+    </div>`;
   // rank
   return `<div class="sidebar-title" style="margin-bottom:4px">⚖️ 评分权重</div>
     <div class="panel-box" id="weightPanel"></div>
@@ -2843,6 +2855,7 @@ function activateStep(step){
 /* step tabs (blocked while a step is running) */
 document.querySelectorAll('.step').forEach(t=>t.onclick=()=>{
   activateStep(t.dataset.step);
+  if(currentStep==='trash'){loadTrash();return;}
   fetch('/api/progress/'+currentStep).then(r=>r.json()).then(d=>{
     if(d.src_folder && folder && !sameFolder(d.src_folder,folder)){
       document.getElementById('gallery').innerHTML=emptyHTML(currentStep);
@@ -2899,6 +2912,17 @@ function setupFilterBar(){
     bar.querySelectorAll('.chip').forEach(c=>c.onclick=()=>{rankFilter=c.dataset.f;gPage=0;
       bar.querySelectorAll('.chip').forEach(x=>x.classList.toggle('active',x.dataset.f===rankFilter));
       lastRankSig='';renderRank(photos);});
+    return;
+  }
+  if(currentStep==='trash'){
+    bar.style.display='flex';
+    bar.innerHTML=`<span class="move-summary">最后复核 <b>${photos.length}</b> 张</span>
+      <button class="chip move-bulk" id="trashRestoreAll">全部恢复</button>
+      <button class="chip move-bulk" id="trashPurgeAll">清空回收站</button>`;
+    const ra=document.getElementById('trashRestoreAll');
+    const pa=document.getElementById('trashPurgeAll');
+    if(ra)ra.onclick=trashRestoreAll;
+    if(pa)pa.onclick=trashPurgeAll;
     return;
   }
   bar.style.display='none';
@@ -3325,7 +3349,11 @@ function emptyHTML(step){
     rank:['🏆','精选推荐','综合画质、构图与色彩，找出更值得保留的照片。',
       ['🎯 综合评估构图、光线、清晰度、色彩与对比度',
        '🥇 先完成智能评分并展示候选照片，提供单张评分雷达图',
-       '☑️ 大目录结果按来源文件夹分组；筛选后可继续移除、删除或导出优选照片']]
+       '☑️ 大目录结果按来源文件夹分组；筛选后可继续移除、删除或导出优选照片']],
+    trash:['🗑️','软件回收站','删除后的照片先进入这里，作为永久删除前的最后一轮复核。',
+      ['👀 可继续查看缩略图和大图',
+       '↩ 发现误删可恢复到原位置；同名文件存在时自动避让，不覆盖',
+       '⚠️ 只有在这里点击“永久删除”后，照片才真正从磁盘删除']]
   };
   const c=C[step]||C.cull;
   return `<div class="empty"><div class="icon">${c[0]}</div>
