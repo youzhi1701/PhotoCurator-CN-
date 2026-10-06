@@ -34,6 +34,8 @@ jobs:
           --version-file packaging\version_info.txt
           --add-data "vendor;vendor"
           --collect-all webview
+          --collect-all rawpy
+          --collect-all pillow_heif
           desktop_app.py
 
       - name: Verify packaged executable
