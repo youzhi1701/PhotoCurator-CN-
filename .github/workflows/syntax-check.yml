@@ -144,12 +144,12 @@ jobs:
               "Duplicates（重复照片）",
               "id=\"resultTools\"",
               "data-view=\"small\"",
-                        "data-view=\"list\"",
+              "data-view=\"list\"",
               "collapsedFolders",
-    "send2trash",
-    "library_index.sqlite3",
-    "Ctrl + mouse wheel changes thumbnail density only",
-    "移入 Windows 回收站",
+              "send2trash",
+              "library_index.sqlite3",
+              "Ctrl + mouse wheel changes thumbnail density only",
+              "移入 Windows 回收站",
           ]
           missing = [x for x in required if x not in source]
           if missing:
