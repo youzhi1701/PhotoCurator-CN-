@@ -1,5 +1,5 @@
 #define MyAppName "PhotoCurator"
-#define MyAppVersion "1.4.1"
+#define MyAppVersion "1.4.2"
 #define MyAppPublisher "PhotoCurator-CN"
 #define MyAppExeName "PhotoCurator.exe"
 
@@ -28,7 +28,7 @@ UsePreviousAppDir=yes
 Uninstallable=yes
 ShowLanguageDialog=no
 AppMutex=Local\PhotoCurator_CN_youzh1701
-VersionInfoVersion=1.4.1.0
+VersionInfoVersion=1.4.2.0
 SetupIconFile=PhotoCurator.ico
 CloseApplications=yes
 RestartApplications=no
