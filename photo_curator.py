@@ -4814,13 +4814,15 @@ def api_trash_restore():
     blocked = _reject_mutation_while_running()
     if blocked:
         return blocked
+    folder = state.get('folder')
+    if not folder or not Path(folder).is_dir():
+        return jsonify({'error': '请先选择照片文件夹'}), 400
     data = request.get_json() or {}
     try:
         trash_id = int(data.get('id'))
     except (TypeError, ValueError):
         return jsonify({'error': '无效的回收站记录'}), 400
     try:
-        folder = state.get('folder')
         current = _trash_rows(folder)
         if trash_id not in {row['id'] for row in current}:
             return jsonify({'error': '当前照片库的回收站中没有这条记录'}), 404
@@ -4839,8 +4841,10 @@ def api_trash_purge():
     blocked = _reject_mutation_while_running()
     if blocked:
         return blocked
-    data = request.get_json() or {}
     folder = state.get('folder')
+    if not folder or not Path(folder).is_dir():
+        return jsonify({'error': '请先选择照片文件夹'}), 400
+    data = request.get_json() or {}
     try:
         if data.get('all'):
             rows = _trash_rows(folder)
@@ -4873,6 +4877,8 @@ def api_trash_restore_all():
     if blocked:
         return blocked
     folder = state.get('folder')
+    if not folder or not Path(folder).is_dir():
+        return jsonify({'error': '请先选择照片文件夹'}), 400
     rows = _trash_rows(folder)
     restored = failed = 0
     for row in rows:
@@ -4904,6 +4910,8 @@ def api_delete_photo():
     if target is None:
         return jsonify({'error': '照片路径无效或已不在允许的照片目录中'}), 400
     folder = state.get('folder')
+    if not folder or not Path(folder).is_dir():
+        return jsonify({'error': '请先选择有效的照片文件夹'}), 400
     try:
         trash_id, trash_path = _move_to_software_trash(target, folder, step)
     except Exception as e:
