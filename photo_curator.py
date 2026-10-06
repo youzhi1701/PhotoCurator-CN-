@@ -1741,6 +1741,8 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   .task-row{display:flex;justify-content:space-between;gap:12px;padding:8px 4px;border-top:1px solid rgba(120,135,170,.12);font-size:12px}
   .task-row b{color:var(--accent);font-weight:700}
   .task-tip{font-size:10px;color:var(--muted);line-height:1.5;padding-top:7px}
+  .task-exit{width:100%;margin-top:10px;padding:8px;border:1px solid rgba(220,38,38,.18);border-radius:9px;background:rgba(255,255,255,.5);color:#b91c1c;font-size:11px;font-weight:700;cursor:pointer}
+  .task-exit:hover{background:rgba(254,226,226,.8)}
 </style></head><body>
 <div class="top">
   <div class="brand">🖼️ PhotoCurator <small>照片整理工作区 · v{{ app_version }}</small></div>
@@ -1844,6 +1846,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   <div class="task-row"><span>相似分析</span><b id="taskDedup">待开始</b></div>
   <div class="task-row"><span>精选评分</span><b id="taskRank">待开始</b></div>
   <div class="task-tip">分析过程中可以切换结果视图，已经完成的结果可继续复核。</div>
+  <button class="task-exit" id="appExit">退出 PhotoCurator</button>
 </aside>
 <div class="toast-wrap" id="toastWrap"></div>
 <div id="cn-build-badge" style="position:fixed;right:10px;bottom:8px;z-index:50;font-size:10px;color:var(--muted);opacity:.55;pointer-events:none">照片筛选 · 中文桌面版 v{{ app_version }}</div>
@@ -2004,6 +2007,12 @@ setTimeout(()=>{if(!(window.pywebview&&window.pywebview.api))document.querySelec
 const taskCenter=document.getElementById('taskCenter');
 document.getElementById('taskToggle').onclick=()=>taskCenter.classList.toggle('open');
 document.getElementById('taskClose').onclick=()=>taskCenter.classList.remove('open');
+document.getElementById('appExit').onclick=()=>{
+  const msg=isRunning?'当前仍有分析任务在运行。确定停止并退出 PhotoCurator 吗？':'确定退出 PhotoCurator 吗？';
+  if(!confirm(msg))return;
+  if(isRunning&&runningStep)fetch('/api/stop/'+runningStep,{method:'POST'}).finally(()=>setTimeout(()=>nativeWindow('exit'),250));
+  else nativeWindow('exit');
+};
 function taskLabel(d){if(!d)return '待开始';if(d.running)return Math.max(0,Math.min(100,Number(d.progress)||0))+'% · 处理中';if((d.progress||0)>=100)return '已完成';return (d.status&&d.status!=='待开始')?'已暂停':'待开始';}
 async function refreshTaskCenter(){
   try{
