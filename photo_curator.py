@@ -72,7 +72,7 @@ except Exception:
 
 app = Flask(__name__)
 
-APP_VERSION = "1.2.3-cn.8"
+APP_VERSION = "1.2.3-cn.9"
 IS_CODESPACES = os.environ.get('CODESPACES', '').strip().lower() == 'true'
 CODESPACE_NAME = os.environ.get('CODESPACE_NAME', '').strip()
 _CODESPACES_DOMAIN_RAW = os.environ.get(
@@ -1271,6 +1271,9 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   .photo-score{font-size:15px;font-weight:700;color:var(--accent)}
   .remove-btn{flex:0 0 auto;border:none;background:rgba(220,38,38,.12);color:#dc2626;border-radius:5px;font-size:10px;font-weight:700;padding:2px 7px;cursor:pointer;line-height:1.5}
   .remove-btn:hover{background:#dc2626;color:#fff}
+  .delete-btn{flex:0 0 auto;border:none;background:rgba(220,38,38,.12);color:#dc2626;border-radius:5px;font-size:10px;font-weight:700;padding:2px 7px;cursor:pointer;line-height:1.5}
+  .delete-btn:hover{background:#dc2626;color:#fff}
+  .lb-btn.delete{background:rgba(185,28,28,.88)} .lb-btn.delete:hover{background:#b91c1c}
   #removedBox{font-size:12px;color:var(--muted);margin-top:2px}#removedBox a{color:var(--accent);cursor:pointer;text-decoration:underline}
   /* lightbox */
   .lightbox{position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:200;display:none;flex-direction:column;align-items:center;justify-content:center}
@@ -1314,6 +1317,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   .toast.good{border-left-color:var(--good)} .toast.bad{border-left-color:var(--bad)} .toast.info{border-left-color:var(--accent)}
   body.processing .pbg-toggle,
   body.processing .remove-btn,
+  body.processing .delete-btn,
   body.processing .status-toggle,
   body.processing .badge-tier,
   body.processing .move-select,
@@ -1495,6 +1499,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
       <button class="lb-btn toggle" id="lbToggle" style="display:none">→ 标记为模糊</button>
       <button class="lb-btn restore" id="lbRestore" style="display:none">↺ 全部恢复</button>
       <button class="lb-btn remove" id="lbRemove" style="display:none">✕ 移除</button>
+      <button class="lb-btn delete" id="lbDelete" style="display:none">🗑 删除原文件</button>
       <button class="lb-close" id="lbClose" title="关闭大图" aria-label="关闭大图">✕</button>
     </div>
   </div>
@@ -1995,7 +2000,7 @@ function cullCard(p){
     : `<div class="photo-score">${p.score}</div>`;
   return `<div class="photo-card ${cls}" data-i="${i}" data-path="${path}">${badge}${toggle}
     <img class="photo-img" src="${p.thumb}" loading="lazy" decoding="async">
-    <div class="photo-info"><div class="pi-row"><span class="photo-name">${escHtml(p.name)}</span></div>${info}</div></div>`;
+    <div class="photo-info"><div class="pi-row"><span class="photo-name">${escHtml(p.name)}</span><button class="delete-btn" data-step="${currentStep}" data-path="${path}" title="直接删除原文件">🗑 删除</button></div>${info}</div></div>`;
 }
 let lastGallerySig='', gPage=0, gItems=[];
 const PAGE_SIZE=200;
@@ -2051,7 +2056,8 @@ function renderDedupGroups(groups){
           +(sel?'<div class="dedup-recommend">✓ 当前保留</div>':'')
           +'<img src="'+p.thumb+'" loading="lazy" decoding="async">'
           +'<div class="dedup-choice-meta"><div class="dedup-choice-name">'+escHtml(p.name)+'</div>'
-          +'<div class="dedup-choice-state">'+(sel?'系统推荐 / 当前选择':'点击改为保留')+'</div></div></div>';
+          +'<div class="dedup-choice-state">'+(sel?'系统推荐 / 当前选择':'点击改为保留')+'</div>'
+          +'<button class="delete-btn" data-step="dedup" data-path="'+escHtml(p.path)+'" style="margin-top:6px" title="直接删除原文件">🗑 删除</button></div></div>';
       }).join('')+'</div></div>';
   }).join('')+'</div>';
 }
@@ -2103,7 +2109,8 @@ function rankCard(p,idx){const path=escHtml(p.path);
     <button class="pbg-toggle${on}" data-path="${path}" title="${p.phonebg?'已设为手机壁纸，点击取消':'设为手机壁纸'}">📱</button>
     <img class="photo-img" src="${p.thumb}" loading="lazy" decoding="async">
     <div class="photo-info"><div class="pi-row"><span class="photo-name">${escHtml(p.name)}</span>
-      <button class="remove-btn" data-path="${path}" title="从优选结果中移除（不会删除原文件）">✕ 移除</button></div>
+      <button class="remove-btn" data-path="${path}" title="从优选结果中移除（不会删除原文件）">✕ 移除</button>
+      <button class="delete-btn" data-step="rank" data-path="${path}" title="直接删除原文件">🗑 删除</button></div>
       <div class="photo-score">${p.score}</div></div></div>`;}
 function renderRank(items){
   photos=items;const g=document.getElementById('gallery');
@@ -2182,7 +2189,7 @@ function cullCardHtml(p,idx){const path=escHtml(p.path);
     ${moveSel}
     <button class="badge ${p.badgeType} badge-tier" data-path="${path}" data-tier="${p.tier}" title="点击切换：清晰 → 轻微软 → 模糊">⇄ ${p.badge}</button>
     <img class="photo-img" src="${p.thumb}" loading="lazy" decoding="async">
-    <div class="photo-info"><div class="pi-row"><span class="photo-name">${escHtml(p.name)}</span><span class="ftype${p.raw?'':(p.heic?' heic':' jpg')}">${p.fmt||(p.raw?'RAW':p.heic?'HEIC':'JPG')}</span></div><div class="photo-score">${p.score}</div></div></div>`;}
+    <div class="photo-info"><div class="pi-row"><span class="photo-name">${escHtml(p.name)}</span><span class="ftype${p.raw?'':(p.heic?' heic':' jpg')}">${p.fmt||(p.raw?'RAW':p.heic?'HEIC':'JPG')}</span><button class="delete-btn" data-step="cull" data-path="${path}" title="直接删除原文件">🗑 删除</button></div><div class="photo-score">${p.score}</div></div></div>`;}
 
 function syncCullCardNode(node,p,idx){
   const moveOn=p.move_selected!==false;
@@ -2333,6 +2340,41 @@ function cullSetTier(path,tier){
     }).catch(err=>toast('分类修改失败：'+(err.message||'未知错误'),'bad'));
 }
 
+/* ---- direct delete (all three steps) ---- */
+function deletePhoto(step,path,fromLightbox=false){
+  const p=(photos||[]).find(x=>x.path===path)||((lbList||[]).find(x=>x.path===path));
+  const name=p&&p.name?p.name:path.split(/[\\/]/).pop();
+  if(!confirm('确认直接删除原文件？\n\n'+name+'\n\n此操作不可撤销。'))return;
+  fetch('/api/delete-photo',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({step,path})})
+    .then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;})
+    .then(d=>{
+      toast('已删除原文件：'+name,'good');
+      if(step==='cull'){
+        photos=d.photos||[];
+        document.getElementById('sSharp').textContent=d.sharp||0;
+        document.getElementById('sSoft').textContent=d.soft||0;
+        document.getElementById('sBlurry').textContent=d.blurry||0;
+        lastCullSig='';lastCullMoveSig='';renderCullStep(photos);updateCullMoveButton();
+      }else if(step==='dedup'){
+        photos=d.photos||[];
+        renderDedupGroups(photos);
+        document.getElementById('sGroups').textContent=d.groups||0;
+      }else{
+        renderRank(d.photos||[]);
+        setRemoved(d.removed||0);
+      }
+      if(fromLightbox){
+        lbList=(step==='cull')?cullView.slice():(step==='dedup'?[]:photos.slice());
+        if(!lbList.length){closeLb();return;}
+        if(lbIndex>=lbList.length)lbIndex=lbList.length-1;
+        showLb();
+      }
+    }).catch(err=>toast('删除失败：'+(err.message||'未知错误'),'bad'));
+}
+function lbDeleteCurrent(){
+  const p=lbList[lbIndex];if(p)deletePhoto(currentStep,p.path,true);
+}
+
 /* ---- remove / restore (rank) ---- */
 function setRemoved(n){removedCount=n;document.getElementById('removedN').textContent=n;
   document.getElementById('removedBox').style.display=n>0?'block':'none';
@@ -2352,6 +2394,7 @@ function toggleStatus(path,btn,cb){
 
 /* ---- gallery clicks ---- */
 document.getElementById('gallery').addEventListener('click',e=>{
+  const db=e.target.closest('.delete-btn');if(db){e.stopPropagation();deletePhoto(db.dataset.step||currentStep,db.dataset.path);return;}
   const dc=e.target.closest('.dedup-choice');if(dc&&currentStep==='dedup'){e.stopPropagation();selectDedupPhoto(dc.dataset.group,dc.dataset.path);return;}
   const rm=e.target.closest('.remove-btn');if(rm){e.stopPropagation();removePhoto(rm.dataset.path);return;}
   const pb=e.target.closest('.pbg-toggle');
@@ -2389,8 +2432,9 @@ function showLb(){
     ? ((p.group>1)?('   ·   同组最佳 · 共 '+p.group+' 张（'+(p.group-1)+' 张相似照片已归组）'):'   ·   原始照片')
     : (p.score!=null?'   ·   '+p.score:'');
   document.getElementById('lbCount').textContent=(lbIndex+1)+' / '+lbList.length+extra;
-  const rm=document.getElementById('lbRemove'),rs=document.getElementById('lbRestore'),tg=document.getElementById('lbToggle'),ms=document.getElementById('lbMoveSelect');
+  const rm=document.getElementById('lbRemove'),rs=document.getElementById('lbRestore'),tg=document.getElementById('lbToggle'),ms=document.getElementById('lbMoveSelect'),del=document.getElementById('lbDelete');
   rm.style.display=currentStep==='rank'?'inline-block':'none';
+  del.style.display=['cull','dedup','rank'].includes(currentStep)?'inline-block':'none';
   rs.style.display=(currentStep==='rank'&&removedCount>0)?'inline-block':'none';
   tg.style.display=currentStep==='cull'?'inline-block':'none';
   ms.style.display=(currentStep==='cull'&&p.tier==='blurry')?'inline-block':'none';
@@ -2507,6 +2551,7 @@ function lbRemoveCurrent(){const p=lbList[lbIndex];if(!p)return;
     renderRank(d.photos||[]);setRemoved(d.removed);lbList=photos.slice();
     if(!lbList.length){closeLb();return;}if(lbIndex>=lbList.length)lbIndex=lbList.length-1;showLb();});}
 document.getElementById('lbRemove').onclick=lbRemoveCurrent;
+document.getElementById('lbDelete').onclick=lbDeleteCurrent;
 document.getElementById('lbRestore').onclick=()=>restoreAll(true);
 document.getElementById('lbToggle').onclick=()=>{const p=lbList[lbIndex];if(!p)return;
   const next=NEXT_TIER[p.tier||'sharp'];
@@ -2981,6 +3026,94 @@ def api_dedup_apply():
     except Exception as e:
         logger.warning(f"dedup apply failed: {e}")
         return jsonify({'error': f'处理相似照片失败：{e}'}), 500
+
+
+def _known_step_paths(step):
+    if step == 'cull':
+        return {str(p.get('path')) for p in state['cull'].get('photos', []) if p.get('path')}
+    if step == 'rank':
+        return {str(getattr(sc, 'path', '')) for sc in state['rank'].get('scores', [])
+                if getattr(sc, 'path', None)}
+    if step == 'dedup':
+        out = set()
+        for group in state['dedup'].get('groups_data', []):
+            for member in group.get('members', []):
+                if member.get('path'):
+                    out.add(str(member.get('path')))
+        return out
+    return set()
+
+
+@app.route('/api/delete-photo', methods=['POST'])
+def api_delete_photo():
+    """Permanently delete one reviewed source photo after explicit UI confirmation."""
+    blocked = _reject_mutation_while_running()
+    if blocked:
+        return blocked
+
+    data = request.get_json() or {}
+    step = str(data.get('step') or '')
+    path = str(data.get('path') or '')
+    if step not in ('cull', 'dedup', 'rank'):
+        return jsonify({'error': '无效板块'}), 400
+    if path not in _known_step_paths(step):
+        return jsonify({'error': '当前结果中未找到这张照片'}), 404
+
+    target = _safe_image_path(path)
+    if target is None:
+        return jsonify({'error': '照片路径无效或已不在允许的照片目录中'}), 400
+    try:
+        target.unlink()
+    except Exception as e:
+        logger.warning(f"delete-photo failed {target}: {e}")
+        return jsonify({'error': f'删除失败：{e}'}), 500
+
+    deleted = str(target)
+    state['excluded'].discard(deleted)
+    state['phone_bg'].discard(deleted)
+
+    # Cull: remove it from review/state and recalculate counters.
+    cull = state['cull']
+    cull['photos'] = [p for p in cull.get('photos', []) if p.get('path') != deleted]
+    cull['sharp_paths'] = [p for p in cull.get('sharp_paths', []) if p != deleted]
+    cull['sharp'] = sum(1 for p in cull['photos'] if p.get('tier') == 'sharp')
+    cull['soft'] = sum(1 for p in cull['photos'] if p.get('tier') == 'soft')
+    cull['blurry'] = sum(1 for p in cull['photos'] if p.get('tier') == 'blurry')
+
+    # Dedup: remove the member. If the selected keeper was deleted, promote the
+    # best remaining member (members are already quality-sorted in the UI data).
+    dedup = state['dedup']
+    new_groups = []
+    for group in dedup.get('groups_data', []):
+        members = [m for m in group.get('members', []) if m.get('path') != deleted]
+        if not members:
+            continue
+        group['members'] = members
+        group['count'] = len(members)
+        if group.get('selected_path') == deleted:
+            group['selected_path'] = members[0].get('path')
+        for m in members:
+            m['selected'] = m.get('path') == group.get('selected_path')
+        new_groups.append(group)
+    dedup['groups_data'] = new_groups
+    dedup['photos'] = [g for g in new_groups if g.get('count', 0) > 1]
+    dedup['groups'] = len(new_groups)
+    dedup['kept_paths'] = [g.get('selected_path') for g in new_groups if g.get('selected_path')]
+
+    # Rank: remove score object so deleted files cannot reappear after reweighting.
+    rank = state['rank']
+    rank['scores'] = [sc for sc in rank.get('scores', [])
+                      if getattr(sc, 'path', None) != deleted]
+    rank['total'] = len(rank['scores'])
+    rank['preview'] = build_topn()
+    rank['preview_at'] = time.time()
+
+    if step == 'cull':
+        return jsonify({'ok': True, 'photos': cull['photos'],
+                        'sharp': cull['sharp'], 'soft': cull['soft'], 'blurry': cull['blurry']})
+    if step == 'dedup':
+        return jsonify({'ok': True, 'photos': dedup['photos'], 'groups': dedup['groups']})
+    return jsonify({'ok': True, 'photos': rank['preview'], 'removed': len(state['excluded'])})
 
 
 @app.route('/api/weights', methods=['POST'])
