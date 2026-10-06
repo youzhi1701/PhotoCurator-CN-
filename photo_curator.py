@@ -2484,6 +2484,11 @@ function activateStep(step){
 document.querySelectorAll('.step').forEach(t=>t.onclick=()=>{
   activateStep(t.dataset.step);
   fetch('/api/progress/'+currentStep).then(r=>r.json()).then(d=>{
+    if(d.src_folder && folder && !sameFolder(d.src_folder,folder)){
+      document.getElementById('gallery').innerHTML=emptyHTML(currentStep);
+      document.getElementById('progressWrap').style.display='none';
+      return;
+    }
     if(currentStep==='cull')renderCullStep(d.photos||[]);
     else if(currentStep==='dedup')renderDedupGroups(d.photos||[]);
     else renderRank(d.photos||[]);
@@ -2540,6 +2545,35 @@ function setupFilterBar(){
 setupFilterBar();
 document.getElementById('gallery').innerHTML=emptyHTML(currentStep);  // step explainer on load
 
+function normalizedFolder(p){
+  return String(p||'').trim().replace(/\\/g,'/').replace(/\/+$/,'').toLowerCase();
+}
+function sameFolder(a,b){return normalizedFolder(a)===normalizedFolder(b);}
+function resetWorkspaceForFolder(){
+  cullChunkToken++;
+  cullReady=false;
+  photos=[];lbList=[];folderStatus={};
+  lastRankSig='';lastCullSig='';lastCullMoveSig='';lastGallerySig='';
+  gItems=[];gPage=0;
+  ['sImages','sSharp','sSoft','sBlurry','sGroups','sShowing'].forEach(id=>{
+    const el=document.getElementById(id);if(el)el.textContent='0';
+  });
+  document.getElementById('progressWrap').style.display='none';
+  document.getElementById('filterBar').style.display='none';
+  document.getElementById('resultTools').style.display='none';
+  document.getElementById('exportBtn').style.display='none';
+  document.getElementById('exportPbgBtn').style.display='none';
+  document.getElementById('moveBlurryBtn').style.display='none';
+  document.getElementById('dedupApplyBtn').style.display='none';
+  document.getElementById('gallery').innerHTML=emptyHTML(currentStep);
+}
+function selectFolderValue(value){
+  const next=String(value||'').trim();
+  if(next===folder)return;
+  folder=next||null;
+  resetWorkspaceForFolder();
+}
+
 /* shortcuts */
 function sdLabel(p){const parts=p.split(/[\\/]/).filter(Boolean);
   const tail=parts.slice(-2).join('/');
@@ -2569,7 +2603,7 @@ function loadShortcuts(){fetch('/api/shortcuts').then(r=>r.json()).then(d=>{
         <span style="font-size:10px;color:var(--muted)">清晰 ${br.sharp||4} · 轻微软 ${br.soft||4} · 模糊 ${br.blurry||4} · 程序内永久保留</span>
       </span>
     </button>`;
-    if(codespacesMode&&!folder){folder=p;fi.value=p;}
+    if(codespacesMode&&!folder){selectFolderValue(p);fi.value=p;}
   }
 
   (d.sd||[]).forEach(o=>{const p=(typeof o==='string')?o:o.path;
@@ -2586,12 +2620,13 @@ function loadShortcuts(){fetch('/api/shortcuts').then(r=>r.json()).then(d=>{
     +`请重新运行依赖安装后再试。</div>`+h;
   if(!(d.sd||[]).length&&!codespacesMode)h+=`<div style="font-size:11px;color:var(--muted);margin-top:6px">未检测到相机存储卡；插入后会自动出现在这里，也可以直接选择文件夹。</div>`;
   document.getElementById('shortcuts').innerHTML=h;
-  document.querySelectorAll('.shortcut').forEach(b=>{b.disabled=isRunning;b.onclick=()=>{if(isRunning)return;folder=b.dataset.p;fi.value=folder;};});
+  document.querySelectorAll('.shortcut').forEach(b=>{b.disabled=isRunning;b.onclick=()=>{if(isRunning)return;selectFolderValue(b.dataset.p);fi.value=folder||'';};});
 }).catch(()=>{});
 }
 loadShortcuts();
 setInterval(()=>{if(!document.hidden&&!isRunning)loadShortcuts();},30000);  // pick up a card inserted later
-document.getElementById('folderInput').oninput=e=>folder=e.target.value.trim();
+document.getElementById('folderInput').onchange=e=>selectFolderValue(e.target.value);
+document.getElementById('folderInput').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();selectFolderValue(e.target.value);}};
 document.getElementById('browseBtn').onclick=async()=>{
   const btn=document.getElementById('browseBtn');
   const old=btn.textContent;btn.disabled=true;btn.textContent='正在选择…';
@@ -2612,8 +2647,8 @@ document.getElementById('browseBtn').onclick=async()=>{
       selected=d.folder||null;
     }
     if(selected){
-      folder=selected;
-      document.getElementById('folderInput').value=folder;
+      selectFolderValue(selected);
+      document.getElementById('folderInput').value=folder||'';
     }
   }catch(err){
     toast('无法打开文件夹选择器：'+(err.message||'未知错误'),'bad');
@@ -2657,11 +2692,6 @@ async function startStep(step,config=null){
   setRemoved(0);
   setStartBtn(true);
 
-  if(step!=='cull'&&cullType!=='all'){
-    const tl=cullType.startsWith('ext:')?cullType.slice(4).toUpperCase():cullType.toUpperCase();
-    toast('继续处理：仅 '+tl+' 格式。若要包含全部照片，请将“模糊筛选”的格式切换为“全部格式”。','info');
-  }
-
   try{
     const response=await fetch('/api/run/'+step,{
       method:'POST',
@@ -2671,7 +2701,7 @@ async function startStep(step,config=null){
         opt:step==='cull'?cfg.cullStrictness:cfg.dedupThreshold,
         adaptive:cfg.cullAdaptive,
         rescue:cfg.cullRescue,
-        ftype:step==='cull'?'all':cullType,
+        ftype:'all',
         pair:step==='cull'?'both':cfg.pairMode,
         recursive:cfg.recursiveScan,
         compare_scope:cfg.compareScope,
@@ -2766,6 +2796,10 @@ function poll(step){
     .then(r=>{if(!r.ok)throw new Error('HTTP '+r.status);return r.json();})
     .then(d=>{
       pollFailures=0;
+      if(d.src_folder && folder && !sameFolder(d.src_folder,folder)){
+        setTimeout(()=>poll(step),800);
+        return;
+      }
       updateVisibleStepStatus(step,d);
       if(step===currentStep){
         if(step==='rank')renderRank(d.photos||[]);
@@ -3961,7 +3995,7 @@ def api_progress(step):
         limit = UI_LIVE_RESULT_CAP if s['running'] else UI_RESULT_CHUNK
         photos = all_photos[:limit]
         return jsonify({'running': s['running'], 'progress': s['progress'], 'status': s['status'],
-                        'photos': photos,
+                        'src_folder': s.get('src_folder'), 'photos': photos,
                         'truncated': (not s['running'] and len(all_photos) > len(photos)),
                         'result_total': len(all_photos),
                         'stats': {'images': len(all_photos), 'sharp': s['sharp'],
@@ -3978,7 +4012,7 @@ def api_progress(step):
         photos = all_photos[:UI_RESULT_CAP]
         duplicate_photos = sum(g.get('count', 0) for g in s.get('groups_data', []) if g.get('count', 0) > 1)
         return jsonify({'running': s['running'], 'progress': s['progress'], 'status': s['status'],
-                        'photos': photos,
+                        'src_folder': s.get('src_folder'), 'photos': photos,
                         'truncated': (not s['running'] and len(all_photos) > len(photos)),
                         'result_total': len(all_photos),
                         'stats': {'groups': s['groups'],
@@ -3991,7 +4025,7 @@ def api_progress(step):
             s['preview'] = build_topn()
             s['preview_at'] = now
         return jsonify({'running': s['running'], 'progress': s['progress'], 'status': s['status'],
-                        'photos': s.get('preview', []),
+                        'src_folder': s.get('src_folder'), 'photos': s.get('preview', []),
                         'stats': {'images': s['total'], 'cache_hits': s.get('cache_hits',0)}})
     abort(404)
 
