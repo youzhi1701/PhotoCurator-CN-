@@ -51,7 +51,7 @@ jobs:
           if (!(Test-Path "dist\PhotoCurator\PhotoCurator.exe")) { throw "PhotoCurator.exe not built" }
           $v=(Get-Item "dist\PhotoCurator\PhotoCurator.exe").VersionInfo.ProductVersion
           Write-Host "Packaged EXE version: $v"
-          if ($v -notlike "1.4.0*") { throw "Wrong EXE version: $v" }
+          if ($v -notlike "1.4.1*") { throw "Wrong EXE version: $v" }
 
       - name: Smoke test packaged executable
         shell: powershell
@@ -82,11 +82,11 @@ jobs:
           $pf86 = [Environment]::GetFolderPath('ProgramFilesX86')
           $iscc = Join-Path $pf86 "Inno Setup 6\ISCC.exe"
           & $iscc "packaging\PhotoCurator.iss"
-          if (!(Test-Path "release\PhotoCurator-Setup-v1.4.0.exe")) { throw "Installer not built" }
+          if (!(Test-Path "release\PhotoCurator-Setup-v1.4.1.exe")) { throw "Installer not built" }
 
       - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
-          name: PhotoCurator-Setup-v1.4.0
-          path: release/PhotoCurator-Setup-v1.4.0.exe
+          name: PhotoCurator-Setup-v1.4.1
+          path: release/PhotoCurator-Setup-v1.4.1.exe
           if-no-files-found: error
