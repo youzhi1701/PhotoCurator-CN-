@@ -1435,7 +1435,15 @@ def run_dedup(folder, threshold, ftype='all', pair='both',
         if npairs:
             s['status'] = f"已合并 {npairs} 组 RAW+JPG 同帧照片 · 保留 {pair.upper()}"
         if not paths:
-            s['status'] = ('没有可处理的照片' if ftype == 'all'
+            s['complete'] = True
+            s['progress'] = 100
+            s['groups'] = 0
+            s['kept_paths'] = []
+            s['groups_data'] = []
+            s['photos'] = []
+            s['singleton_paths'] = []
+            s['seen_paths'] = set()
+            s['status'] = ('清晰度复核后没有需要继续处理的照片' if ftype == 'all'
                            else f'没有可去重的 {ftype_label(ftype)} 照片')
             return
 
@@ -1623,7 +1631,7 @@ def run_rank(folder, ftype='all', pair='both', recursive=True):
     s = state['rank']
     s.update({'running': True, 'cancel': False, 'progress': 0, 'status': '正在准备…',
               'scores': [], 'total': 0, 'analyzed': 0, 'preview': [], 'preview_at': 0.0,
-              'cache_hits': 0, 'pending_paths': set(),
+              'cache_hits': 0, 'pending_paths': set(), 'complete': False,
               'src_folder': str(folder), 'recursive': bool(recursive)})
     state['excluded'] = set()
     try:
@@ -1651,7 +1659,9 @@ def run_rank(folder, ftype='all', pair='both', recursive=True):
             chain += f' · {npairs} 组 RAW+JPG → {pair.upper()}'
             logger.info(f"Rank: {npairs} RAW+JPG pairs collapsed (kept {pair.upper()})")
         if not paths:
-            s['status'] = ('没有可评分的照片' if ftype == 'all'
+            s['progress'] = 100
+            s['complete'] = True
+            s['status'] = ('清晰度复核后没有需要评分的照片' if ftype == 'all'
                            else f'没有可评分的 {ftype_label(ftype)} 照片')
             return
         total = len(paths)
@@ -1720,6 +1730,7 @@ def run_rank(folder, ftype='all', pair='both', recursive=True):
         s['progress'] = 100
         s['status'] = (f"完成 · 已评分 {len(s['scores'])} 张 · 来源：{chain} · 用时 {_fmt(time.time()-t0)}"
                        + (f" · 已复用 {s.get('cache_hits',0)} 张历史评分" if s.get('cache_hits') else ""))
+        s['complete'] = True
         _activity('完成精选评分', folder, f"评分 {len(s['scores'])} · 复用 {s.get('cache_hits',0)}")
     except Exception as e:
         logger.error(f"rank failed: {e}", exc_info=True)
