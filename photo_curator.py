@@ -27,7 +27,7 @@ import threading
 import subprocess
 import tempfile
 from pathlib import Path
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from urllib.parse import quote
 
 import cv2
@@ -39,7 +39,7 @@ from send2trash import send2trash
 from raw_loader import (RAW_EXTS, HAS_RAWPY, is_raw,
                         HEIF_EXTS, HAS_HEIF, is_heif, needs_jpeg_preview,
                         open_image_pil, imread_bgr, imread_gray)
-from photo_ranking_v3 import AdvancedPhotoAnalyzer
+from photo_ranking_v3 import AdvancedPhotoAnalyzer, PhotoScoreV3
 from photo_dedup_batch import FastBatchDeduplicator
 
 logging.basicConfig(level=logging.INFO)
@@ -93,6 +93,10 @@ def _db_init():
             path TEXT PRIMARY KEY, size INTEGER NOT NULL, mtime_ns INTEGER NOT NULL,
             region_s REAL NOT NULL, quality REAL NOT NULL, updated_at REAL NOT NULL
         )""")
+        db.execute("""CREATE TABLE IF NOT EXISTS rank_cache (
+            path TEXT PRIMARY KEY, size INTEGER NOT NULL, mtime_ns INTEGER NOT NULL,
+            score_json TEXT NOT NULL, updated_at REAL NOT NULL
+        )""")
         db.execute("""CREATE TABLE IF NOT EXISTS activity_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL NOT NULL,
             action TEXT NOT NULL, path TEXT, detail TEXT
@@ -138,6 +142,42 @@ def _save_cull_metrics(path, region_s, quality):
             db.commit()
     except Exception:
         logger.debug("cull cache write failed", exc_info=True)
+
+RANK_CACHE_VERSION = 1
+
+def _cached_rank_score(path):
+    try:
+        p = Path(path); st = p.stat()
+        with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=10) as db:
+            row = db.execute(
+                "SELECT score_json FROM rank_cache WHERE path=? AND size=? AND mtime_ns=?",
+                (str(p), int(st.st_size), int(st.st_mtime_ns))
+            ).fetchone()
+        if not row:
+            return None
+        payload = json.loads(row[0])
+        if int(payload.pop('_cache_version', 0)) != RANK_CACHE_VERSION:
+            return None
+        return PhotoScoreV3(**payload)
+    except Exception:
+        return None
+
+def _save_rank_score(path, score):
+    try:
+        p = Path(path); st = p.stat()
+        payload = asdict(score)
+        payload['_cache_version'] = RANK_CACHE_VERSION
+        with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=10) as db:
+            db.execute("""INSERT INTO rank_cache(path,size,mtime_ns,score_json,updated_at)
+                          VALUES(?,?,?,?,?)
+                          ON CONFLICT(path) DO UPDATE SET size=excluded.size,mtime_ns=excluded.mtime_ns,
+                          score_json=excluded.score_json,updated_at=excluded.updated_at""",
+                       (str(p), int(st.st_size), int(st.st_mtime_ns),
+                        json.dumps(payload, ensure_ascii=False), time.time()))
+            db.commit()
+    except Exception:
+        logger.debug("rank cache write failed", exc_info=True)
+
 
 try:
     _db_init()
@@ -1335,7 +1375,7 @@ def run_rank(folder, ftype='all', pair='both', recursive=True):
     s = state['rank']
     s.update({'running': True, 'cancel': False, 'progress': 0, 'status': '正在准备…',
               'scores': [], 'total': 0, 'analyzed': 0, 'preview': [], 'preview_at': 0.0,
-              'src_folder': str(folder), 'recursive': bool(recursive)})
+              'cache_hits': 0, 'src_folder': str(folder), 'recursive': bool(recursive)})
     state['excluded'] = set()
     try:
         # Prefer a COMPLETED Dedup on this folder, then a COMPLETED Cull on this
@@ -1391,12 +1431,20 @@ def run_rank(folder, ftype='all', pair='both', recursive=True):
             eta = (total - done) / rate if rate > 0 else 0
             s['status'] = (f"智能优选 {p.name}（{done}/{total}，{done/total*100:.0f}%）· "
                            f"已用时 {_fmt(elapsed)} · 预计剩余 {_fmt(eta)}")
-            sc = analyzer.analyze_image(str(p))
+            sc = _cached_rank_score(p)
+            if sc is not None:
+                s['cache_hits'] = int(s.get('cache_hits', 0)) + 1
+            else:
+                sc = analyzer.analyze_image(str(p))
+                if sc:
+                    _save_rank_score(p, sc)
             if sc:
                 s['scores'].append(sc)
             s['analyzed'] = len(s['scores'])
         s['progress'] = 100
-        s['status'] = f"完成 · 已评分 {len(s['scores'])} 张 · 来源：{chain} · 用时 {_fmt(time.time()-t0)}"
+        s['status'] = (f"完成 · 已评分 {len(s['scores'])} 张 · 来源：{chain} · 用时 {_fmt(time.time()-t0)}"
+                       + (f" · 已复用 {s.get('cache_hits',0)} 张历史评分" if s.get('cache_hits') else ""))
+        _activity('完成精选评分', folder, f"评分 {len(s['scores'])} · 复用 {s.get('cache_hits',0)}")
     except Exception as e:
         logger.error(f"rank failed: {e}", exc_info=True)
         s['status'] = f"发生错误：{e}"
@@ -3599,7 +3647,7 @@ def api_progress(step):
             s['preview_at'] = now
         return jsonify({'running': s['running'], 'progress': s['progress'], 'status': s['status'],
                         'photos': s.get('preview', []),
-                        'stats': {'images': s['total']}})
+                        'stats': {'images': s['total'], 'cache_hits': s.get('cache_hits',0)}})
     abort(404)
 
 
