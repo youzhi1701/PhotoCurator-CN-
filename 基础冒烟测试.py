@@ -65,7 +65,7 @@ def main():
         nested_img = nested / "IMG_递归测试.jpg"
         Image.new("RGB", (40, 30), "white").save(nested_img)
 
-        generated = root / "PhotoCurator_Result" / "Blurred"
+        generated = root / "PhotoCurator_Result（照片筛选结果）" / "Blurred（模糊照片）"
         generated.mkdir(parents=True, exist_ok=True)
         Image.new("RGB", (40, 30), "white").save(generated / "不应重新扫描.jpg")
         dup_generated = root / "Duplicates"
@@ -86,7 +86,7 @@ def main():
         source_dest = photo_curator._output_destination(
             nested_img, "Blurred", root, "source", ""
         )
-        assert_true(source_dest.parent == nested / "PhotoCurator_Result" / "Blurred",
+        assert_true(source_dest.parent == nested / "PhotoCurator_Result（照片筛选结果）" / "Blurred（模糊照片）",
                     f"默认输出位置错误：{source_dest}")
 
         # A custom result directory inside the selected tree must also be
@@ -267,7 +267,7 @@ def main():
                     f"相似照片处理结果错误：{payload}")
         assert_true(keep_a.exists() and keep_b.exists() and not drop_c.exists(),
                     "相似照片多选保留后错误移动了保留项，或未移动待处理项")
-        moved_c = apply_dir / "PhotoCurator_Result" / "Duplicates" / drop_c.name
+        moved_c = apply_dir / "PhotoCurator_Result（照片筛选结果）" / "Duplicates（重复照片）" / drop_c.name
         assert_true(moved_c.exists(),
                     f"待处理相似照片没有进入默认结果目录：{moved_c}")
 
