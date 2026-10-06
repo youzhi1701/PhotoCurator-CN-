@@ -137,9 +137,17 @@ class FastBatchDeduplicator:
 
     @staticmethod
     def _cache_key(image_path: str):
+        """Versioned, high-resolution fingerprint for persistent similarity cache.
+
+        Use nanosecond mtime + exact byte size, matching the main SQLite index.
+        The v2 prefix intentionally invalidates older second-resolution keys once,
+        preventing stale perceptual hashes when a file is rewritten within the
+        same second without changing its byte length.
+        """
         try:
             st = os.stat(image_path)
-            return f"{image_path}|{int(st.st_mtime)}|{st.st_size}"
+            mtime_ns = getattr(st, 'st_mtime_ns', int(st.st_mtime * 1_000_000_000))
+            return f"v2|{image_path}|{int(mtime_ns)}|{int(st.st_size)}"
         except Exception:
             return None
 
