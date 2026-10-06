@@ -2,7 +2,7 @@
 
 基于开源项目 **Photo Curator v7.0** 二次开发的 Windows 中文桌面照片筛选工具。
 
-当前中文桌面版：**v1.2.1-cn.1**
+当前中文桌面版：**v1.2.2-cn.1**
 
 ## 主要能力
 
@@ -31,6 +31,32 @@
 - 单实例保护，避免两个窗口同时修改同一图库
 - 启动错误完整日志
 - GitHub 自动检查 Python、嵌入 JavaScript、HTML 结构和响应式 CSS
+
+## GitHub Codespaces 在线预览
+
+不下载项目到电脑，也可以先在 GitHub Codespaces 中查看和测试最新版界面与核心处理流程。
+
+推荐流程：
+
+1. GitHub 仓库点击 **代码 → 代码空间（Codespaces）→ 创建代码空间**
+2. 第一次使用新版配置时，按 `Ctrl + Shift + P`，执行 **Codespaces: Rebuild Container**
+3. 打开 Codespaces 终端，运行：
+
+```bash
+bash 在线预览.sh
+```
+
+4. 等待依赖安装与服务启动，Codespaces 会检测到 **5014** 端口；在“端口”面板点击浏览器图标即可打开在线预览
+
+在线预览会自动生成一组小型测试照片，并在界面左侧显示“在线样例”，可直接点击“开始处理”验证流程。
+
+需要注意：
+
+- Codespaces 运行在 GitHub 云端，**不能直接读取你电脑的 C: / F: 等本地硬盘**
+- 如需测试自己的照片，可以把少量样片上传到 Codespaces 工作区，再把对应云端路径粘贴到“照片文件夹”
+- 5014 转发端口建议保持 GitHub 默认的 **Private（私有）**，不要改成 Public
+- Windows 桌面版仍保持仅监听本机 `127.0.0.1`；只有检测到真实 Codespaces 环境并成功推导出当前 Codespace 的专属转发域名时，才启用云端预览监听
+- 在线预览主要用于界面、API 与核心算法验证；Windows 原生文件夹选择器、WebView2、DPI 和本机大硬盘性能仍需 Windows 真机测试
 
 ## Windows 第一次使用
 
