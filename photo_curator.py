@@ -1674,22 +1674,50 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   @media (prefers-reduced-motion: reduce){
     *,*::before,*::after{scroll-behavior:auto!important;transition:none!important;animation:none!important}
   }
+
+  /* v1.4.0 Aurora + iOS glass visual system */
+  :root{--thumb-size:190px;--glass:rgba(255,255,255,.66);--glass-strong:rgba(255,255,255,.82)}
+  body{background:
+      radial-gradient(circle at 12% 4%,rgba(77,208,255,.22),transparent 32%),
+      radial-gradient(circle at 88% 12%,rgba(170,118,255,.20),transparent 34%),
+      radial-gradient(circle at 60% 95%,rgba(255,142,213,.16),transparent 36%),
+      linear-gradient(145deg,#eef7ff 0%,#f7f5ff 46%,#fff5fb 100%);background-attachment:fixed}
+  .top{background:rgba(33,78,191,.72);backdrop-filter:blur(24px) saturate(150%);-webkit-backdrop-filter:blur(24px) saturate(150%);
+       border-bottom:1px solid rgba(255,255,255,.28);box-shadow:0 8px 28px rgba(52,72,140,.15)}
+  .sidebar{background:rgba(255,255,255,.58);backdrop-filter:blur(24px) saturate(145%);-webkit-backdrop-filter:blur(24px) saturate(145%);
+           border-right:1px solid rgba(255,255,255,.65)}
+  .panel-box,.shortcut,.folder-group,.dedup-group,.photo-card,.btn-ghost,.chip,input[type=text],input[type=number],.wgroup select{
+    backdrop-filter:blur(18px) saturate(135%);-webkit-backdrop-filter:blur(18px) saturate(135%)}
+  .folder-group,.dedup-group,.photo-card{background:var(--glass);border-color:rgba(255,255,255,.72);box-shadow:0 8px 26px rgba(66,84,132,.08)}
+  .folder-head{background:rgba(244,248,255,.72)}
+  .main{padding-right:12px}
+  .gallery,.folder-grid{grid-template-columns:repeat(auto-fill,minmax(var(--thumb-size),1fr))}
+  .photo-score{font-size:11px;font-weight:500;color:var(--muted)}
+  .photo-info{min-height:48px}
+  body.processing .photo-card,body.processing .remove-btn,body.processing .delete-btn,body.processing .status-toggle,
+  body.processing .badge-tier,body.processing .move-select,body.processing .move-bulk{pointer-events:auto;opacity:1;filter:none}
+  .window-controls{display:flex;gap:4px}
+  .window-controls button{border:0;background:rgba(255,255,255,.14);color:#fff;width:34px;height:30px;border-radius:8px;cursor:pointer}
+  .window-controls button:hover{background:rgba(255,255,255,.25)}
+  .lb-stage{position:absolute;left:0;top:0;right:clamp(280px,24vw,340px);bottom:0;overflow:hidden;display:flex;align-items:center;justify-content:center}
+  .lb-img{transition:transform .08s linear;will-change:transform;cursor:grab;max-width:calc(100% - 36px);max-height:calc(100% - 90px)}
+  .lb-img.dragging{cursor:grabbing}
+  .lb-zoom-indicator{position:absolute;left:20px;bottom:18px;z-index:25;padding:5px 9px;border-radius:8px;background:rgba(0,0,0,.4);color:#fff;font-size:11px;pointer-events:none}
 </style></head><body>
 <div class="top">
-  <div class="brand">🖼️ 照片筛选 <small>PhotoCurator 中文版 · v{{ app_version }}</small></div>
-  <div class="steps">
-    <div class="step active" data-step="cull">1 · 模糊筛选</div>
-    <div class="step" data-step="dedup">2 · 相似去重</div>
-    <div class="step" data-step="rank">3 · 智能优选</div>
+  <div class="brand">🖼️ PhotoCurator <small>照片整理工作区 · v{{ app_version }}</small></div>
+  <div class="steps" aria-label="结果视图">
+    <div class="step active" data-step="cull">清晰度结果</div>
+    <div class="step" data-step="dedup">相似组选优</div>
+    <div class="step" data-step="rank">精选推荐</div>
   </div>
   <div class="top-right">
-    <div class="zoomctl" title="界面缩放（Ctrl + / Ctrl - / Ctrl 0）">
-      <button id="zoomOut" type="button" aria-label="缩小界面">−</button>
-      <span class="zoomval" id="zoomVal">100%</span>
-      <button id="zoomIn" type="button" aria-label="放大界面">＋</button>
-      <button id="zoomReset" type="button" aria-label="恢复100%">↺</button>
-    </div>
     <button class="theme" id="themeToggle" title="切换浅色 / 深色主题" aria-label="切换浅色 / 深色主题">🌙</button>
+    <div class="window-controls">
+      <button id="winMin" title="最小化">—</button>
+      <button id="winMax" title="最大化/还原">□</button>
+      <button id="winClose" title="关闭到后台">×</button>
+    </div>
   </div>
 </div>
 <div class="viewport">
@@ -1722,8 +1750,8 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
       <button class="btn-ghost" id="exportPbgBtn" style="display:none">📱 导出手机壁纸…</button>
       <button class="btn-ghost" id="moveBlurryBtn" style="display:none">🗂️ 移动模糊照片 → Blurred（模糊照片）</button>
       <button class="btn cta" id="dedupApplyBtn" style="display:none">✓ 确认处理未保留照片</button>
-      <button class="btn" id="startBtn">🚀 开始筛选</button>
-      <button class="btn god" id="godBtn" title="自动执行：模糊筛选 → 相似去重 → 智能优选">⚡ 一键全流程</button>
+      <button class="btn" id="startBtn">▶ 开始分析</button>
+      <button class="btn god" id="godBtn" style="display:none" aria-hidden="true">内部全流程</button>
     </div>
   </div>
   <div class="main">
@@ -1743,7 +1771,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
         <button class="chip" data-view="list">列表</button>
       </div>
     </div>
-    <div class="pager" id="pager" style="display:none"></div>
+    <div class="pager" id="pager" style="display:none!important"></div>
     <div class="gallery" id="gallery"><div class="empty"><div class="icon">🎞️</div><div>先选择照片文件夹，然后点击“开始筛选”</div></div></div>
   </div>
 </div>
@@ -1757,12 +1785,12 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
       <button class="lb-btn toggle" id="lbToggle" style="display:none">→ 标记为模糊</button>
       <button class="lb-btn restore" id="lbRestore" style="display:none">↺ 全部恢复</button>
       <button class="lb-btn remove" id="lbRemove" style="display:none">✕ 移除</button>
-      <button class="lb-btn delete" id="lbDelete" style="display:none">🗑 删除原文件</button>
+      <button class="lb-btn delete" id="lbDelete" style="display:none">🗑 移入回收站</button>
       <button class="lb-close" id="lbClose" title="关闭大图" aria-label="关闭大图">✕</button>
     </div>
   </div>
   <button class="lb-nav lb-prev" id="lbPrev" title="上一张" aria-label="上一张">‹</button>
-  <img class="lb-img" id="lbImg" src="">
+  <div class="lb-stage" id="lbStage"><img class="lb-img" id="lbImg" src=""><div class="lb-zoom-indicator" id="lbZoom">适应窗口</div></div>
   <button class="lb-nav lb-next" id="lbNext" title="下一张" aria-label="下一张">›</button>
   <div class="lb-side" id="lbSide"></div>
   <div class="lb-shortcuts" style="position:absolute;left:16px;bottom:10px;color:rgba(255,255,255,.55);font-size:10px;z-index:21;pointer-events:none">大图快捷键：← → 切换 · Esc 关闭 · B 壁纸 · X 移除</div>
@@ -1893,30 +1921,17 @@ tt.onclick=()=>{const d=document.documentElement.getAttribute('data-theme')==='d
   document.documentElement.setAttribute('data-theme',d?'light':'dark');tt.textContent=d?'🌙':'☀️';
   if(exMap){exMapTheme=currentMapStyle();exMap.setStyle(MAP_STYLES[exMapTheme]);}};
 
-/* UI zoom: independent from Windows DPI scaling; persisted per user. */
-const ZOOM_MIN=0.80, ZOOM_MAX=1.40, ZOOM_STEP=0.10;
-let uiZoom=1;
-try{
-  const saved=parseFloat(localStorage.getItem('pc-ui-zoom')||'1');
-  if(Number.isFinite(saved))uiZoom=Math.min(ZOOM_MAX,Math.max(ZOOM_MIN,saved));
-}catch(_){}
-function applyUiZoom(v){
-  uiZoom=Math.round(Math.min(ZOOM_MAX,Math.max(ZOOM_MIN,v))*100)/100;
-  document.documentElement.style.zoom=String(uiZoom);
-  document.documentElement.classList.toggle('ui-zoom-large',uiZoom>=1.20);
-  const z=document.getElementById('zoomVal');if(z)z.textContent=Math.round(uiZoom*100)+'%';
-  try{localStorage.setItem('pc-ui-zoom',String(uiZoom));}catch(_){}
-}
-document.getElementById('zoomOut').onclick=()=>applyUiZoom(uiZoom-ZOOM_STEP);
-document.getElementById('zoomIn').onclick=()=>applyUiZoom(uiZoom+ZOOM_STEP);
-document.getElementById('zoomReset').onclick=()=>applyUiZoom(1);
-document.addEventListener('keydown',e=>{
-  if(!e.ctrlKey)return;
-  if(e.key==='+'||e.key==='='){e.preventDefault();applyUiZoom(uiZoom+ZOOM_STEP);}
-  else if(e.key==='-'){e.preventDefault();applyUiZoom(uiZoom-ZOOM_STEP);}
-  else if(e.key==='0'){e.preventDefault();applyUiZoom(1);}
-});
-applyUiZoom(uiZoom);
+/* Gallery thumbnail zoom: Ctrl + mouse wheel changes thumbnail density only. */
+let thumbSize=190;
+try{const saved=parseInt(localStorage.getItem('pc-thumb-size')||'190',10);if(Number.isFinite(saved))thumbSize=Math.min(340,Math.max(120,saved));}catch(_){}
+function applyThumbSize(v){thumbSize=Math.min(340,Math.max(120,Math.round(v/10)*10));document.documentElement.style.setProperty('--thumb-size',thumbSize+'px');try{localStorage.setItem('pc-thumb-size',String(thumbSize));}catch(_){}}
+applyThumbSize(thumbSize);
+document.querySelector('.main').addEventListener('wheel',e=>{if(!e.ctrlKey||document.getElementById('lightbox').classList.contains('open'))return;e.preventDefault();applyThumbSize(thumbSize+(e.deltaY<0?20:-20));},{passive:false});
+function nativeWindow(action){if(window.pywebview&&window.pywebview.api&&window.pywebview.api.window_action){window.pywebview.api.window_action(action).catch(()=>{});}}
+document.getElementById('winMin').onclick=()=>nativeWindow('minimize');
+document.getElementById('winMax').onclick=()=>nativeWindow('toggle_maximize');
+document.getElementById('winClose').onclick=()=>nativeWindow('close');
+setTimeout(()=>{if(!(window.pywebview&&window.pywebview.api))document.querySelector('.window-controls').style.display='none';},900);
 
 /* settings panels per step */
 function settingsHTML(step){
@@ -2005,8 +2020,15 @@ function activateStep(step){
 }
 /* step tabs (blocked while a step is running) */
 document.querySelectorAll('.step').forEach(t=>t.onclick=()=>{
-  if(isRunning){toast('请先停止当前正在执行的任务。','bad');return;}
   activateStep(t.dataset.step);
+  fetch('/api/progress/'+currentStep).then(r=>r.json()).then(d=>{
+    if(currentStep==='cull')renderCullStep(d.photos||[]);
+    else if(currentStep==='dedup')renderDedupGroups(d.photos||[]);
+    else renderRank(d.photos||[]);
+    document.getElementById('progressWrap').style.display='block';
+    document.getElementById('progressFill').style.width=(d.progress||0)+'%';
+    document.getElementById('progressText').textContent=d.status||'';
+  }).catch(()=>{});
 });
 renderSettings();
 
@@ -2143,8 +2165,7 @@ document.getElementById('browseBtn').onclick=async()=>{
 function setStartBtn(running){
   isRunning=running;
   document.body.classList.toggle('processing',running);
-  const idleLabel=currentStep==='rank'?'🏆 开始智能筛选':(currentStep==='dedup'?'🪢 开始相似筛选':'✂️ 开始模糊筛选');
-  startBtn.textContent=running?'■ 停止':idleLabel;
+  startBtn.textContent=godMode?(running?'■ 停止分析':'分析处理中…'):(running?'■ 停止当前分析':'▶ 开始分析');
   startBtn.classList.toggle('stopping',running);
   const fi=document.getElementById('folderInput');
   const bb=document.getElementById('browseBtn');
@@ -2220,30 +2241,27 @@ function doStop(){
   startBtn.textContent='正在停止…';startBtn.disabled=true;
   fetch('/api/stop/'+runningStep,{method:'POST'}).finally(()=>{startBtn.disabled=false;});
 }
-startBtn.onclick=()=>{ isRunning?doStop():doStart(); };
-
-/* ---- God mode: run Cull → Dedup → Rank back-to-back ---- */
+/* ---- Unified analysis: Cull → Dedup → Rank as one workspace task ---- */
 const godBtn=document.getElementById('godBtn');
-function setGodBtn(on){ godBtn.textContent=on?'■ 停止一键全流程':'⚡ 一键全流程'; godBtn.classList.toggle('stopping',on); }
+function setGodBtn(on){godBtn.textContent=on?'■ 停止分析':'▶ 开始分析';startBtn.textContent=on?'■ 停止分析':'▶ 开始分析';startBtn.classList.toggle('stopping',on);}
 async function godRun(){
   if(!folder){toast('请先选择照片文件夹','bad');return;}
   if(isRunning){toast('请先停止当前正在执行的任务。','bad');return;}
-  godMode=true;godAbort=false;setGodBtn(true);startBtn.disabled=true;
+  godMode=true;godAbort=false;setGodBtn(true);startBtn.disabled=false;
   try{
+    let first=true;
     for(const step of ['cull','dedup','rank']){
       if(godAbort)break;
-      activateStep(step);
+      if(first){activateStep('cull');first=false;}
       await new Promise(res=>{ godResolve=res; startStep(step); });
     }
-    if(!godAbort)toast('✨ 一键全流程完成，优选照片已排序','good');
+    if(!godAbort)toast('✨ 分析完成：清晰度、相似组和精选结果均已生成','good');
   } finally {
     godMode=false;setGodBtn(false);startBtn.disabled=false;
   }
 }
-godBtn.onclick=()=>{
-  if(godMode){ godAbort=true; doStop(); toast('正在停止一键全流程…','bad'); }
-  else godRun();
-};
+godBtn.onclick=()=>{};
+startBtn.onclick=()=>{if(godMode||isRunning){godAbort=true;doStop();toast('正在停止当前分析…','info');}else godRun();};
 function poll(step){
   fetch('/api/progress/'+step)
     .then(r=>{if(!r.ok)throw new Error('HTTP '+r.status);return r.json();})
@@ -2258,9 +2276,11 @@ function poll(step){
       if('soft'in st)document.getElementById('sSoft').textContent=st.soft;
       if('duplicate_groups'in st)document.getElementById('sGroups').textContent=st.duplicate_groups;
       else if('groups'in st)document.getElementById('sGroups').textContent=st.groups;
-      if(step==='rank')renderRank(d.photos||[]);
-      else if(step==='cull')renderCullStep(d.photos||[]);
-      else renderDedupGroups(d.photos||[]);
+      if(step===currentStep){
+        if(step==='rank')renderRank(d.photos||[]);
+        else if(step==='cull')renderCullStep(d.photos||[]);
+        else renderDedupGroups(d.photos||[]);
+      }
 
       if(d.running){
         setTimeout(()=>poll(step),350);
@@ -2304,6 +2324,16 @@ function poll(step){
     });
 }
 
+/* Large-photo viewer: wheel zoom, drag pan, double-click fit/2x. */
+let lbScale=1,lbX=0,lbY=0,lbDragging=false,lbDragX=0,lbDragY=0;
+function applyLbTransform(){const img=document.getElementById('lbImg');img.style.transform=`translate(${lbX}px,${lbY}px) scale(${lbScale})`;document.getElementById('lbZoom').textContent=lbScale===1?'适应窗口':Math.round(lbScale*100)+'%';}
+function resetLbZoom(){lbScale=1;lbX=0;lbY=0;applyLbTransform();}
+document.getElementById('lbStage').addEventListener('wheel',e=>{e.preventDefault();lbScale=Math.min(8,Math.max(.5,lbScale*(e.deltaY<0?1.12:.89)));if(Math.abs(lbScale-1)<.04)lbScale=1;applyLbTransform();},{passive:false});
+document.getElementById('lbImg').addEventListener('dblclick',()=>{if(lbScale===1)lbScale=2;else{lbScale=1;lbX=0;lbY=0;}applyLbTransform();});
+document.getElementById('lbImg').addEventListener('mousedown',e=>{if(lbScale<=1)return;lbDragging=true;lbDragX=e.clientX-lbX;lbDragY=e.clientY-lbY;e.currentTarget.classList.add('dragging');e.preventDefault();});
+window.addEventListener('mousemove',e=>{if(!lbDragging)return;lbX=e.clientX-lbDragX;lbY=e.clientY-lbDragY;applyLbTransform();});
+window.addEventListener('mouseup',()=>{lbDragging=false;document.getElementById('lbImg').classList.remove('dragging');});
+
 /* ---- radar ---- */
 function radarSVG(metrics,size=210){
   const cx=size/2,cy=size/2,R=size/2-30,n=metrics.length;
@@ -2327,15 +2357,15 @@ function radarSVG(metrics,size=210){
 const EMPTY='<div class="empty"><div class="icon">🎞️</div><div>暂无结果</div></div>';
 function emptyHTML(step){
   const C={
-    cull:['✂️','步骤 1 · 模糊筛选','先识别并筛出失焦、明显模糊的照片。',
+    cull:['✂️','清晰度结果','先识别并筛出失焦、明显模糊的照片。',
       ['🔍 评估真实清晰度，雾气和夜空不会被简单误判为模糊',
        '🟢 清晰 &nbsp;·&nbsp; 🟠 轻微软（可保留） &nbsp;·&nbsp; 🔴 模糊',
        '📁 默认扫描当前文件夹及所有子文件夹；结果按来源文件夹分组显示']],
-    dedup:['🪢','步骤 2 · 相似去重','将连拍或高度相似照片归组，保留其中最佳的一张。',
+    dedup:['🪢','相似组选优','将连拍或高度相似照片归组，保留其中最佳的一张。',
       ['📸 自动识别并归组近似照片',
        '⭐ 每组优先保留最清晰的一张',
        '🪢 可选择“各子文件夹独立对比”或“整个范围全局对比”，最后再统一处理未保留项']],
-    rank:['🏆','步骤 3 · 智能优选','综合画质、构图与色彩，找出更值得保留的照片。',
+    rank:['🏆','精选推荐','综合画质、构图与色彩，找出更值得保留的照片。',
       ['🎯 综合评估构图、光线、清晰度、色彩与对比度',
        '🥇 先完成智能评分并展示候选照片，提供单张评分雷达图',
        '☑️ 大目录结果按来源文件夹分组；筛选后可继续移除、删除或导出优选照片']]
@@ -2362,7 +2392,7 @@ function cullCard(p){
     : `<div class="photo-score">${p.score}</div>`;
   return `<div class="photo-card ${cls}" data-i="${i}" data-path="${path}">${badge}${toggle}
     <img class="photo-img" src="${p.thumb}" loading="lazy" decoding="async">
-    <div class="photo-info"><div class="pi-row"><span class="photo-name">${escHtml(p.name)}</span><button class="delete-btn" data-step="${currentStep}" data-path="${path}" title="直接删除原文件">🗑 删除</button></div>${info}</div></div>`;
+    <div class="photo-info"><div class="pi-row"><span class="photo-name">${escHtml(p.name)}</span><button class="delete-btn" data-step="${currentStep}" data-path="${path}" title="移入 Windows 回收站">🗑 删除</button></div>${info}</div></div>`;
 }
 let lastGallerySig='', gPage=0, gItems=[];
 const PAGE_SIZE=200;
@@ -2435,7 +2465,7 @@ function renderDedupGroups(groups){
         html+='<img src="'+p.thumb+'" loading="lazy" decoding="async">';
         html+='<div class="dedup-choice-meta"><div class="dedup-choice-name">'+escHtml(p.name)+'</div>';
         html+='<div class="source-path">'+escHtml(p.rel_dir||'当前文件夹')+'</div>';
-        html+='<button class="delete-btn" data-step="dedup" data-path="'+escHtml(p.path)+'" style="margin-top:6px" title="直接删除原文件">🗑 删除</button></div></div>';
+        html+='<button class="delete-btn" data-step="dedup" data-path="'+escHtml(p.path)+'" style="margin-top:6px" title="移入 Windows 回收站">🗑 删除</button></div></div>';
       });
       html+='</div></div>';
     });
@@ -2497,6 +2527,7 @@ function renderFolderPage(slice,cardBuilder,startIndex){
 
 function updatePager(){
   const pager=document.getElementById('pager');if(!pager)return;
+  pager.style.display='none';return;
   const total=gItems.length,pages=Math.max(1,Math.ceil(total/PAGE_SIZE));
   if(!['cull','dedup','rank'].includes(currentStep)||total<=PAGE_SIZE){
     pager.style.display='none';return;
@@ -2523,8 +2554,8 @@ function rankCard(p,idx){const path=escHtml(p.path);
     <img class="photo-img" src="${p.thumb}" loading="lazy" decoding="async">
     <div class="photo-info"><div class="pi-row"><span class="photo-name">${escHtml(p.name)}</span>
       <button class="remove-btn" data-path="${path}" title="从优选结果中移除（不会删除原文件）">✕ 移除</button>
-      <button class="delete-btn" data-step="rank" data-path="${path}" title="直接删除原文件">🗑 删除</button></div>
-      <div class="photo-score">${p.score}</div><div class="source-path">${escHtml(p.rel_dir||'当前文件夹')}</div></div></div>`;}
+      <button class="delete-btn" data-step="rank" data-path="${path}" title="移入 Windows 回收站">🗑 删除</button></div>
+      <div class="photo-score">清晰度技术值 ${p.score}</div><div class="source-path">${escHtml(p.rel_dir||'当前文件夹')}</div></div></div>`;}
 function renderRank(items){
   photos=items;const g=document.getElementById('gallery');
   if(lastStep!==currentStep){g.innerHTML='';lastRankSig='';lastStep=currentStep;gPage=0;}
@@ -2546,11 +2577,10 @@ function renderRank(items){
     lastRankSig='';updatePager();return;
   }
 
-  const pages=Math.max(1,Math.ceil(rankView.length/PAGE_SIZE));
-  if(gPage>=pages)gPage=pages-1;if(gPage<0)gPage=0;
-  const start=gPage*PAGE_SIZE,end=Math.min(rankView.length,start+PAGE_SIZE);
-  const slice=rankView.slice(start,end);
-  const sig=rankFilter+'#'+gPage+'|'+slice.map(p=>p.rank+':'+p.path+':'+(p.phonebg?1:0)).join('|');
+  gPage=0;
+  const start=0,end=rankView.length;
+  const slice=rankView;
+  const sig=rankFilter+'#'+slice.map(p=>p.rank+':'+p.path+':'+(p.phonebg?1:0)).join('|');
   if(sig===lastRankSig){updatePager();return;}
   lastRankSig=sig;
 
@@ -2610,7 +2640,7 @@ function cullCardHtml(p,idx){const path=escHtml(p.path);
     ${moveSel}
     <button class="badge ${p.badgeType} badge-tier" data-path="${path}" data-tier="${p.tier}" title="点击切换：清晰 → 轻微软 → 模糊">⇄ ${p.badge}</button>
     <img class="photo-img" src="${p.thumb}" loading="lazy" decoding="async">
-    <div class="photo-info"><div class="pi-row"><span class="photo-name">${escHtml(p.name)}</span><span class="ftype${p.raw?'':(p.heic?' heic':' jpg')}">${p.fmt||(p.raw?'RAW':p.heic?'HEIC':'JPG')}</span><button class="delete-btn" data-step="cull" data-path="${path}" title="直接删除原文件">🗑 删除</button></div><div class="photo-score">${p.score}</div><div class="source-path">${escHtml(p.rel_dir||'当前文件夹')}</div></div></div>`;}
+    <div class="photo-info"><div class="pi-row"><span class="photo-name">${escHtml(p.name)}</span><span class="ftype${p.raw?'':(p.heic?' heic':' jpg')}">${p.fmt||(p.raw?'RAW':p.heic?'HEIC':'JPG')}</span><button class="delete-btn" data-step="cull" data-path="${path}" title="移入 Windows 回收站">🗑 删除</button></div><div class="photo-score">清晰度技术值 ${p.score}</div><div class="source-path">${escHtml(p.rel_dir||'当前文件夹')}</div></div></div>`;}
 
 function syncCullCardNode(node,p,idx){
   const moveOn=p.move_selected!==false;
@@ -2651,11 +2681,8 @@ function renderCullStep(items){
       :('ext:'+String(p.fmt||'').toLowerCase())===cullType)));
 
   gItems=filtered;
-  const pages=Math.max(1,Math.ceil(filtered.length/PAGE_SIZE));
-  if(gPage>=pages)gPage=pages-1;
-  if(gPage<0)gPage=0;
-  const start=gPage*PAGE_SIZE,end=Math.min(filtered.length,start+PAGE_SIZE);
-  cullView=filtered.slice(start,end);
+  gPage=0;
+  cullView=filtered;
 
   const g=document.getElementById('gallery');
   if(!filtered.length){
@@ -2773,11 +2800,11 @@ function cullSetTier(path,tier){
 function deletePhoto(step,path,fromLightbox=false){
   const p=(photos||[]).find(x=>x.path===path)||((lbList||[]).find(x=>x.path===path));
   const name=p&&p.name?p.name:path.split(/[\\/]/).pop();
-  if(!confirm('确认直接删除原文件？\n\n'+name+'\n\n此操作不可撤销。'))return;
+  if(!confirm('确认将这张照片移入 Windows 回收站？\n\n'+name+'\n\n之后仍可从系统回收站恢复。'))return;
   fetch('/api/delete-photo',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({step,path})})
     .then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;})
     .then(d=>{
-      toast('已删除原文件：'+name,'good');
+      toast('已移入回收站：'+name,'good');
       if(step==='cull'){
         photos=d.photos||[];
         document.getElementById('sSharp').textContent=d.sharp||0;
@@ -2798,7 +2825,7 @@ function deletePhoto(step,path,fromLightbox=false){
         if(lbIndex>=lbList.length)lbIndex=lbList.length-1;
         showLb();
       }
-    }).catch(err=>toast('删除失败：'+(err.message||'未知错误'),'bad'));
+    }).catch(err=>toast('移入回收站失败：'+(err.message||'未知错误'),'bad'));
 }
 function lbDeleteCurrent(){
   const p=lbList[lbIndex];if(p)deletePhoto(currentStep,p.path,true);
@@ -2855,6 +2882,7 @@ function barRow(label,v,info,cat,color){const t=(info||'').replace(/"/g,'&quot;'
   return `<div class="bar${cat?' cat':''}" title="${label}: ${t}"><span class="lab"${labStyle}>${label}</span><span class="track"><span class="fill" style="width:${v}%;background:${fillBg}"></span></span><span class="num">${v}</span></div>`;}
 function showLb(){
   const p=lbList[lbIndex];if(!p)return;
+  resetLbZoom();
   document.getElementById('lbImg').src='/api/image?path='+encodeURIComponent(p.path);
   document.getElementById('lbName').textContent=(p.rank!=null?'#'+p.rank+'  ':'')+p.name;
   const extra=(currentStep==='dedup')
@@ -2884,7 +2912,11 @@ function showLb(){
     const d=p.detail||{};GROUPS.forEach(([k,lab,keys])=>{const cv=(p.scores&&p.scores[k]);html+=`<h3>${lab}<span>${cv!=null?cv:''}</span></h3>`;keys.forEach(key=>{if(key in d)html+=barRow(key,d[key],SUBINFO[key]);});});
     html+=`<div style="font-size:10px;opacity:.5;margin-top:14px">将鼠标停留在任意评分项上，可查看该指标的含义。</div>`;
     side.style.display='block';side.innerHTML=html;
-  }else{side.style.display='block';side.innerHTML=`<h3>${currentStep==='cull'?'清晰度':'照片'}</h3><div style="font-size:13px;opacity:.85">${escHtml(p.name)}</div><div style="font-size:26px;font-weight:700;margin-top:8px">${p.score!=null?p.score:''}</div>`;}
+  }else{
+    const label=currentStep==='cull'?(p.badge||TIER_NAME[p.tier]||'清晰度结果'):'照片';
+    side.style.display='block';
+    side.innerHTML=`<h3>${currentStep==='cull'?'清晰度':'照片'}</h3><div style="font-size:13px;opacity:.9">${escHtml(p.name)}</div><div style="font-size:18px;font-weight:700;margin-top:8px">${escHtml(label)}</div>${p.score!=null?`<div style="font-size:11px;opacity:.5;margin-top:3px">技术值 ${p.score}</div>`:''}`;
+  }
   loadExif(p.path,side);
 }
 function exifRow(label,val,allowHtml=false){
@@ -2901,7 +2933,7 @@ function loadExif(path,side){
     if(e.lens)rows+=exifRow('镜头',e.lens);
     const settings=[e.focal,e.aperture,e.shutter,e.iso].filter(Boolean)
       .map(v=>`<span style="white-space:nowrap">${escHtml(v)}</span>`).join(' · ');
-    if(settings)rows+=exifRow('拍摄参数',settings);
+    if(settings)rows+=exifRow('拍摄参数',settings,true);
     if(e.lat!=null&&e.lon!=null){
       const c=e.lat.toFixed(5)+',&nbsp;'+e.lon.toFixed(5);
       rows+=exifRow('位置',`<a href="https://www.google.com/maps?q=${e.lat},${e.lon}" target="_blank" rel="noopener" style="white-space:nowrap">${c}</a>`,true);
@@ -2909,11 +2941,15 @@ function loadExif(path,side){
         +`<span class="cred"><a href="https://openfreemap.org/" target="_blank" rel="noopener">OpenFreeMap</a> © `
         +`<a href="https://www.openmaptiles.org/" target="_blank" rel="noopener">OpenMapTiles</a> · 地图数据 © `
         +`<a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a></span></div>`;
+      rows+=`<div class="exrow"><span class="lab">具体地点</span><span class="val" id="geoLabel">正在解析…</span></div>`;
       wantMap={lat:e.lat,lon:e.lon};
     }
     if(!rows)rows=`<div style="font-size:12px;opacity:.5">没有可读取的 EXIF 信息。</div>`;
     side.insertAdjacentHTML('beforeend',`<h3>照片信息</h3>${rows}`);
-    if(wantMap)mountExifMap(wantMap.lat,wantMap.lon);
+    if(wantMap){
+      mountExifMap(wantMap.lat,wantMap.lon);
+      fetch('/api/reverse-geocode?lat='+wantMap.lat+'&lon='+wantMap.lon).then(r=>r.json()).then(g=>{const el=document.getElementById('geoLabel');if(el)el.textContent=g.label||'未解析到具体地点';}).catch(()=>{const el=document.getElementById('geoLabel');if(el)el.textContent='地点解析失败';});
+    }
   }).catch(()=>{});
 }
 
