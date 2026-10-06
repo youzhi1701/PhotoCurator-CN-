@@ -88,11 +88,14 @@ for y in range(SIZE):
     else: col=stops[-1][1]
     for x in range(SIZE): gp[x,y]=(*col,255)
 letter=Image.composite(grad,letter,mask)
-# glass rim and highlight
-ld=ImageDraw.Draw(letter)
-ld.text(pos,"C",font=font,fill=(0,0,0,0),stroke_width=12,stroke_fill=(255,255,255,180))
-ld.text((pos[0]-5,pos[1]-10),"C",font=font,fill=(255,255,255,28),stroke_width=4,stroke_fill=(255,255,255,125))
 img=Image.alpha_composite(img,letter)
+# glass rim and highlight drawn separately so the gradient body remains intact
+rim=Image.new("RGBA",img.size,(0,0,0,0)); rd=ImageDraw.Draw(rim)
+rd.text(pos,"C",font=font,fill=(0,0,0,0),stroke_width=12,stroke_fill=(255,255,255,170))
+highlight=Image.new("RGBA",img.size,(0,0,0,0)); hd=ImageDraw.Draw(highlight)
+hd.text((pos[0]-5,pos[1]-10),"C",font=font,fill=(255,255,255,24),stroke_width=4,stroke_fill=(255,255,255,120))
+img=Image.alpha_composite(img,rim)
+img=Image.alpha_composite(img,highlight)
 
 # Soft edge vignette/highlight
 overlay=Image.new("RGBA",img.size,(0,0,0,0)); od=ImageDraw.Draw(overlay)
