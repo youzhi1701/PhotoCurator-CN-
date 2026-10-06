@@ -101,6 +101,7 @@ class FastBatchDeduplicator:
         # passing disk_cache=None.
         self._disk_cache_path = None
         self._disk_cache = {}
+        self._active_cache_keys = set()
 
     def enable_disk_cache(self, cache_path):
         """Load (and later persist) signatures from a JSON file on disk."""
@@ -118,8 +119,19 @@ class FastBatchDeduplicator:
         if self._disk_cache_path is None:
             return
         try:
-            with open(self._disk_cache_path, 'w') as f:
-                json.dump(self._disk_cache, f)
+            # Each cache file represents one current source batch. Remove keys
+            # for files that disappeared or changed so long-lived libraries do
+            # not accumulate stale signatures forever.
+            if self._active_cache_keys:
+                self._disk_cache = {
+                    k: v for k, v in self._disk_cache.items()
+                    if k in self._active_cache_keys
+                }
+            self._disk_cache_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self._disk_cache_path.with_suffix(self._disk_cache_path.suffix + '.tmp')
+            with open(tmp, 'w', encoding='utf-8') as f:
+                json.dump(self._disk_cache, f, separators=(',', ':'))
+            os.replace(tmp, self._disk_cache_path)
         except Exception as e:
             logger.warning(f"无法保存去重特征缓存：{e}")
 
@@ -138,14 +150,17 @@ class FastBatchDeduplicator:
             return self._sig_cache[image_path]
         # On-disk cache hit (survives across runs).
         ckey = self._cache_key(image_path)
+        if ckey is not None:
+            self._active_cache_keys.add(ckey)
         if ckey is not None and ckey in self._disk_cache:
             try:
                 v = self._disk_cache[ckey]
-                if isinstance(v, str):     # compact hex format (48 chars)
+                raw = v.get('sig') if isinstance(v, dict) else v
+                if isinstance(raw, str):   # compact hex format (48 chars)
                     sig = np.unpackbits(
-                        np.frombuffer(bytes.fromhex(v), np.uint8)).astype(bool)
+                        np.frombuffer(bytes.fromhex(raw), np.uint8)).astype(bool)
                 else:                      # legacy list-of-ints format
-                    sig = np.array(v, dtype=bool)
+                    sig = np.array(raw, dtype=bool)
                 self._sig_cache[image_path] = sig
                 return sig
             except Exception:
@@ -169,9 +184,12 @@ class FastBatchDeduplicator:
             sig = None
         self._sig_cache[image_path] = sig
         if ckey is not None and sig is not None:
-            # Hex-packed (24 bytes → 48 chars) — ~13x smaller than the old
-            # list-of-ints JSON and much faster to load/save.
-            self._disk_cache[ckey] = np.packbits(sig).tobytes().hex()
+            # Store signature + capture-time metadata together. Existing string
+            # entries are upgraded lazily, preserving old v1.4.x caches.
+            existing = self._disk_cache.get(ckey)
+            row = dict(existing) if isinstance(existing, dict) else {}
+            row['sig'] = np.packbits(sig).tobytes().hex()
+            self._disk_cache[ckey] = row
         return sig
 
     @staticmethod
@@ -190,6 +208,15 @@ class FastBatchDeduplicator:
         rely only on genuine capture time."""
         if image_path in self._ts_cache:
             return self._ts_cache[image_path]
+        ckey = self._cache_key(image_path)
+        if ckey is not None:
+            self._active_cache_keys.add(ckey)
+            cached = self._disk_cache.get(ckey)
+            if isinstance(cached, dict) and cached.get('ts_known') is True:
+                result = cached.get('ts')
+                result = float(result) if result is not None else None
+                self._ts_cache[image_path] = result
+                return result
         result = None
         try:
             from raw_loader import open_image_pil
@@ -205,6 +232,22 @@ class FastBatchDeduplicator:
         except Exception:
             result = None
         self._ts_cache[image_path] = result
+        if ckey is not None:
+            existing = self._disk_cache.get(ckey)
+            if isinstance(existing, dict):
+                row = dict(existing)
+            elif isinstance(existing, str):
+                row = {'sig': existing}
+            elif existing is not None:
+                try:
+                    row = {'sig': np.packbits(np.array(existing, dtype=bool)).tobytes().hex()}
+                except Exception:
+                    row = {}
+            else:
+                row = {}
+            row['ts_known'] = True
+            row['ts'] = result
+            self._disk_cache[ckey] = row
         return result
 
     def _sort_key_time(self, image_path: str) -> float:
@@ -269,6 +312,7 @@ class FastBatchDeduplicator:
     def reset(self):
         """Clear incremental clustering state before a new run."""
         self.clusters = []
+        self._active_cache_keys = set()
         self._rep_bits = None
         self._rep_ts = None
         self._rep_valid = None
