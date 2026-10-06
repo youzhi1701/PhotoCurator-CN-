@@ -89,6 +89,23 @@ def main():
         assert_true(source_dest.parent == nested / "PhotoCurator_Result" / "Blurred",
                     f"默认输出位置错误：{source_dest}")
 
+        # A custom result directory inside the selected tree must also be
+        # excluded from later recursive scans.
+        custom_inside = root / "我的筛选结果"
+        custom_inside.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (40, 30), "white").save(custom_inside / "不应扫描_自定义.jpg")
+        photo_curator.state["scan"].update({
+            "output_mode": "custom",
+            "custom_output": str(custom_inside),
+        })
+        recursive_custom = photo_curator.list_images(root, recursive=True)
+        assert_true(all(custom_inside not in p.parents for p in recursive_custom),
+                    f"递归扫描错误包含自定义结果目录：{recursive_custom}")
+        photo_curator.state["scan"].update({
+            "output_mode": "source",
+            "custom_output": "",
+        })
+
         photo_curator.state["folder"] = str(root)
         for p in found:
             safe = photo_curator._safe_image_path(str(p))
