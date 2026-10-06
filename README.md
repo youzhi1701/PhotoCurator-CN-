@@ -2,7 +2,7 @@
 
 基于开源项目 **Photo Curator v7.0** 二次开发的 Windows 中文桌面照片筛选工具。
 
-当前中文桌面版：**v1.2.6-cn.1**
+当前中文桌面版：**v1.3.0**
 
 ## 主要能力
 
@@ -84,55 +84,19 @@ bash 在线预览.sh
 - 点击移动后，只移动已勾选的模糊照片；默认存入原目录下的 `PhotoCurator_Result（照片筛选结果）/Blurred（模糊照片）`
 - 未勾选照片保持原位置
 
-## Windows 第一次使用
+## Windows 正式版
 
-先把 GitHub 下载的 ZIP **完整解压到普通文件夹**，不要直接在压缩包预览窗口里运行 `.bat/.cmd`。
+正式版对普通用户只保留三件事：
 
-推荐直接双击：
+1. **安装**：运行 `PhotoCurator-Setup-v1.3.0.exe`，安装目录可自由选择
+2. **打开**：安装后从桌面或开始菜单打开 `PhotoCurator`
+3. **卸载**：从 Windows“设置 → 应用”卸载 PhotoCurator
 
-`一键安装并启动.bat`
+程序、运行环境、缓存、日志和配置都放在用户选择的安装盘内。安装目录结构由安装器管理；用户不需要安装 Python，也不需要运行 BAT/CMD。
 
-中文 `.bat` 文件现在只是极简入口，真正的启动逻辑统一放在 ASCII-only 的英文 `.cmd` 文件中，避免 Windows CMD 因中文编码、括号或代码页差异把提示文字误当成命令执行。
+卸载默认不会删除任何原照片、筛选结果或自定义输出目录。缓存和日志会清理，设置会在卸载时单独询问是否删除。
 
-如果中文入口被安全软件或系统环境影响，也可以直接双击：
-
-`PhotoCurator-Install.cmd`
-
-安装器会：
-
-1. 自动寻找兼容 Python，优先 Python 3.11
-2. 支持 Python 3.9–3.12
-3. 创建项目独立的 `.venv`
-4. 安装和修复依赖
-5. 验证 Flask / OpenCV / NumPy / Pillow / pywebview / RAW / HEIC 支持
-6. 启动独立桌面窗口
-
-如果电脑只有 Python 3.13/3.14，安装器会直接提示安装 Python 3.11，而不是安装到中途再失败。
-
-## 日常使用
-
-正常使用双击：
-
-`启动照片筛选.bat`
-
-它会调用稳定的：
-
-`PhotoCurator-Start.cmd`
-
-正常情况下不会出现需要长期保留的命令行窗口。若桌面 WebView 启动失败，会自动进入浏览器兼容模式。
-
-## 其他入口
-
-中文入口仍保留，内部全部转发到稳定的 ASCII `.cmd`：
-
-- `环境自检.bat` → `PhotoCurator-Check.cmd`
-- `调试运行.bat` → `PhotoCurator-Debug.cmd`
-- `浏览器兼容模式.bat` → `PhotoCurator-Browser.cmd`
-- `打开日志文件夹.bat` → `PhotoCurator-Logs.cmd`
-
-桌面启动失败时会生成 `startup-error.log`。运行期日志仍保存在用户目录下的 `.photo_curator/logs`。
-
-桌面版和浏览器兼容模式都会优先使用本地端口 5014；如果该端口被占用，会自动选择其他空闲的本地端口。浏览器兼容模式会在服务启动后自动打开正确地址。
+开发仓库中的 BAT/CMD 仅作为维护和源码运行工具，不属于正式版用户入口。
 
 ## 窗口与缩放
 
