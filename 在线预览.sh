@@ -83,17 +83,31 @@ fi
 
 DEMO_DIR="$ROOT/.codespaces_demo"
 mkdir -p "$DEMO_DIR"
-if ! compgen -G "$DEMO_DIR/*.jpg" >/dev/null; then
-  echo "[3/4] 生成在线样例照片..."
-  DEMO_DIR="$DEMO_DIR" "$PY" - <<'PY'
+echo "[3/4] 检查在线样例照片..."
+DEMO_DIR="$DEMO_DIR" "$PY" - <<'PY'
 import os
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFilter
 
 out = Path(os.environ["DEMO_DIR"])
 out.mkdir(parents=True, exist_ok=True)
+created = 0
 
+# Keep the test dataset persistent. Never clear or overwrite anything already
+# present in .codespaces_demo. If a canonical sample was moved away during a
+# file-operation test, only recreate that missing root sample on the next start.
 for i in range(12):
+    if i >= 8:
+        kind = "blurry"
+    elif i >= 4:
+        kind = "soft"
+    else:
+        kind = "sharp"
+
+    target = out / f"sample_{i+1:02d}_{kind}.jpg"
+    if target.exists():
+        continue
+
     w, h = 960, 640
     img = Image.new("RGB", (w, h), (235, 238, 244))
     d = ImageDraw.Draw(img)
@@ -110,18 +124,16 @@ for i in range(12):
     d.rectangle((620, 120 + i * 7, 860, 420 + i * 4),
                 outline=(20, 110, 80), width=8)
 
-    if i >= 8:
+    if kind == "blurry":
         img = img.filter(ImageFilter.GaussianBlur(radius=5.0))
-        kind = "blurry"
-    elif i >= 4:
+    elif kind == "soft":
         img = img.filter(ImageFilter.GaussianBlur(radius=1.4))
-        kind = "soft"
-    else:
-        kind = "sharp"
 
-    img.save(out / f"sample_{i+1:02d}_{kind}.jpg", quality=92)
+    img.save(target, quality=92)
+    created += 1
+
+print(f"在线样例：保留现有数据，补齐 {created} 张；基准样例共 12 张。")
 PY
-fi
 
 export PHOTOCURATOR_PORT="${PHOTOCURATOR_PORT:-5014}"
 export PHOTOCURATOR_DEMO_DIR="$DEMO_DIR"
