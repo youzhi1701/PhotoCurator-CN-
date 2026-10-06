@@ -567,6 +567,27 @@ VENDOR_FILES = {'maplibre-gl-csp.js': 'text/javascript',
 RECENTS_FILE = DATA_ROOT / 'config' / 'recents.json'
 THUMB_DIR = DATA_ROOT / 'cache' / 'thumbnails'
 THUMB_DIR.mkdir(parents=True, exist_ok=True)
+DEDUP_SIGNATURE_VERSION = 1
+DEDUP_CACHE_DIR = DATA_ROOT / 'config' / 'dedup_features'
+DEDUP_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+def _migrate_legacy_dedup_cache():
+    """Move old signature JSON files out of the 30-day thumbnail cache."""
+    try:
+        for old in THUMB_DIR.glob('dedup_*.json'):
+            suffix = old.name[len('dedup_'):]
+            target = DEDUP_CACHE_DIR / f'dedup_v{DEDUP_SIGNATURE_VERSION}_{suffix}'
+            try:
+                if target.exists():
+                    old.unlink()
+                else:
+                    os.replace(old, target)
+            except OSError:
+                continue
+    except Exception:
+        logger.debug("legacy dedup cache migration skipped", exc_info=True)
+
+_migrate_legacy_dedup_cache()
 
 CACHE_MAX_BYTES = int(os.environ.get('PHOTOCURATOR_CACHE_MAX_BYTES',
                                      str(2 * 1024 * 1024 * 1024)))
@@ -1623,7 +1644,7 @@ def run_dedup(folder, threshold, ftype='all', pair='both',
             try:
                 cache_seed = os.path.realpath(folder) + '|' + compare_scope + '|' + batch_label
                 cache_key = hashlib.md5(cache_seed.encode('utf-8')).hexdigest()
-                dd.enable_disk_cache(THUMB_DIR / f'dedup_{cache_key}.json')
+                dd.enable_disk_cache(DEDUP_CACHE_DIR / f'dedup_v{DEDUP_SIGNATURE_VERSION}_{cache_key}.json')
             except Exception:
                 pass
             dd.reset()
