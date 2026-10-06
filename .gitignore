@@ -26,6 +26,9 @@ Duplicates/
 TOP_*/
 PhoneBG/
 
+# Built-in runtime test data (generated automatically, never committed)
+内置测试数据/
+
 # GitHub Codespaces local preview artifacts
 .codespaces-venv/
 .codespaces_demo/
