@@ -29,6 +29,7 @@ Uninstallable=yes
 ShowLanguageDialog=no
 AppMutex=Local\\PhotoCurator_CN_youzh1701
 VersionInfoVersion=1.4.0.0
+SetupIconFile=PhotoCurator.ico
 CloseApplications=yes
 RestartApplications=no
 
