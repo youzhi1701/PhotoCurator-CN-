@@ -192,6 +192,8 @@ jobs:
               "api_dedup_results_chunk",
               "all_singleton_paths",
               "CULL_METRICS_VERSION",
+              "st_mtime_ns",
+              ":v3",
               "late_pending",
               "'ready': True",
               "[InstallDelete]",
