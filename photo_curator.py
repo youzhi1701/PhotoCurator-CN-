@@ -72,7 +72,7 @@ except Exception:
 
 app = Flask(__name__)
 
-APP_VERSION = "1.2.3-cn.2"
+APP_VERSION = "1.2.3-cn.3"
 IS_CODESPACES = os.environ.get('CODESPACES', '').strip().lower() == 'true'
 CODESPACE_NAME = os.environ.get('CODESPACE_NAME', '').strip()
 _CODESPACES_DOMAIN_RAW = os.environ.get(
@@ -1419,7 +1419,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
       <button class="btn-ghost" id="exportPbgBtn" style="display:none">📱 导出手机壁纸…</button>
       <button class="btn-ghost" id="moveBlurryBtn" style="display:none">🗂️ 移动模糊照片 → 模糊照片（Blurred）</button>
       <button class="btn cta" id="dedupApplyBtn" style="display:none">✓ 确认处理未保留照片</button>
-      <button class="btn" id="startBtn">🚀 开始处理</button>
+      <button class="btn" id="startBtn">🚀 开始筛选</button>
       <button class="btn god" id="godBtn" title="自动执行：模糊筛选 → 相似去重 → 智能优选">⚡ 一键全流程</button>
     </div>
   </div>
@@ -1430,7 +1430,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
     </div>
     <div class="filter-bar" id="filterBar" style="display:none"></div>
     <div class="pager" id="pager" style="display:none"></div>
-    <div class="gallery" id="gallery"><div class="empty"><div class="icon">🎞️</div><div>先选择照片文件夹，然后点击“开始处理”</div></div></div>
+    <div class="gallery" id="gallery"><div class="empty"><div class="icon">🎞️</div><div>先选择照片文件夹，然后点击“开始筛选”</div></div></div>
   </div>
 </div>
 
@@ -1531,7 +1531,8 @@ function settingsHTML(step){
   return `<div class="sidebar-title" style="margin-bottom:4px">⚖️ 评分权重</div>
     <div class="panel-box" id="weightPanel"></div>
     <button class="btn-ghost" id="resetWeights" style="margin-top:8px">↺ 恢复推荐权重</button>
-    <div class="wgroup" style="margin-top:10px"><label>保留前 N 张</label><input type="number" id="topn" min="1" max="500" value="50"></div>`;
+    <div class="wgroup" style="margin-top:10px"><label>候选展示数量</label><input type="number" id="topn" min="1" max="500" value="50">
+      <div class="slider-value">仅决定筛选完成后首轮展示多少张候选照片，不会直接移动、删除或导出文件。筛选后可继续手动移除 / 恢复，再确认导出。</div></div>`;
 }
 function renderWeights(){
   const wp=document.getElementById('weightPanel'); if(!wp)return;
@@ -1711,7 +1712,8 @@ const startBtn=document.getElementById('startBtn');
 function setStartBtn(running){
   isRunning=running;
   document.body.classList.toggle('processing',running);
-  startBtn.textContent=running?'■ 停止':'🚀 开始处理';
+  const idleLabel=currentStep==='rank'?'🏆 开始智能筛选':(currentStep==='dedup'?'🪢 开始相似筛选':'✂️ 开始模糊筛选');
+  startBtn.textContent=running?'■ 停止':idleLabel;
   startBtn.classList.toggle('stopping',running);
   const fi=document.getElementById('folderInput');
   const bb=document.getElementById('browseBtn');
@@ -1897,15 +1899,15 @@ function emptyHTML(step){
     cull:['✂️','步骤 1 · 模糊筛选','先识别并筛出失焦、明显模糊的照片。',
       ['🔍 评估真实清晰度，雾气和夜空不会被简单误判为模糊',
        '🟢 清晰 &nbsp;·&nbsp; 🟠 轻微软（可保留） &nbsp;·&nbsp; 🔴 模糊',
-       '📁 选择照片文件夹，然后点击 <b>开始处理</b>']],
+       '📁 选择照片文件夹，然后点击 <b>开始模糊筛选</b>；完成后再确认是否移动模糊照片']],
     dedup:['🪢','步骤 2 · 相似去重','将连拍或高度相似照片归组，保留其中最佳的一张。',
       ['📸 自动识别并归组近似照片',
        '⭐ 每组优先保留最清晰的一张',
-       '🚀 点击 <b>开始处理</b>，优先使用上一阶段保留照片，也可直接处理整个文件夹']],
+       '🪢 点击 <b>开始相似筛选</b>；完成后逐组对比并确认保留照片，再统一处理未保留项']],
     rank:['🏆','步骤 3 · 智能优选','综合画质、构图与色彩，找出更值得保留的照片。',
       ['🎯 综合评估构图、光线、清晰度、色彩与对比度',
-       '🥇 展示前 N 张优选照片，并提供单张评分雷达图',
-       '⬇️ 点击 <b>开始处理</b>，完成后可导出优选照片']]
+       '🥇 先完成智能评分并展示候选照片，提供单张评分雷达图',
+       '☑️ 筛选后可手动移除 / 恢复候选；确认无误后再导出优选照片']]
   };
   const c=C[step]||C.cull;
   return `<div class="empty"><div class="icon">${c[0]}</div>
