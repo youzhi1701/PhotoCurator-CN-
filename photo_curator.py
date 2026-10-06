@@ -72,7 +72,7 @@ except Exception:
 
 app = Flask(__name__)
 
-APP_VERSION = "1.2.3-cn.1"
+APP_VERSION = "1.2.3-cn.2"
 IS_CODESPACES = os.environ.get('CODESPACES', '').strip().lower() == 'true'
 CODESPACE_NAME = os.environ.get('CODESPACE_NAME', '').strip()
 _CODESPACES_DOMAIN_RAW = os.environ.get(
@@ -339,7 +339,7 @@ state = {
     'phone_bg': set(),   # paths flagged "suitable as phone wallpaper"
     'auto': {'cull': False, 'dedup': False},
     'cull':  {**_blank(), 'sharp': 0, 'soft': 0, 'blurry': 0, 'sharp_paths': []},
-    'dedup': {**_blank(), 'groups': 0, 'kept_paths': []},
+    'dedup': {**_blank(), 'groups': 0, 'kept_paths': [], 'groups_data': [], 'applied': False},
     'rank':  {**_blank(), 'scores': [], 'total': 0, 'analyzed': 0, 'preview': [], 'preview_at': 0.0},
 }
 
@@ -869,8 +869,8 @@ def _relocate_for_status(path, now_kept):
 def run_dedup(folder, threshold, ftype='all', pair='both'):
     s = state['dedup']
     s.update({'running': True, 'cancel': False, 'progress': 0, 'status': '正在准备…',
-              'photos': [], 'groups': 0, 'kept_paths': [],
-              'complete': False, 'src_folder': str(folder)})
+              'photos': [], 'groups': 0, 'kept_paths': [], 'groups_data': [],
+              'applied': False, 'complete': False, 'src_folder': str(folder)})
     try:
         # Chain off Cull's survivors ONLY if Cull finished a full pass on THIS
         # folder. A stopped/partial cull (or a cull of a different folder) must
@@ -922,22 +922,38 @@ def run_dedup(folder, threshold, ftype='all', pair='both'):
         last_refresh = [0.0]
 
         def refresh(final=False):
-            # During the live run, cap to the most-recent GRID_CAP so the browser
-            # stays responsive. When finished, show ALL survivors so every kept
-            # photo can be reviewed (rendered once, with lazy-loading images).
-            # Iterate clusters (not just reps) so each card knows how many frames
-            # collapsed into it → "同组最佳" / "N similar hidden".
+            # Dedup review is group-first: scan first, then let the user compare
+            # every member in a similar set and choose which frame to keep.
             clusters = dd.clusters
-            shown = clusters if final else clusters[-GRID_CAP:]
-            photos = []
-            for c in reversed(shown):   # most-recently-kept first
-                sc = c.rep
-                photos.append({'name': sc.filename, 'path': sc.path,
-                               'thumb': thumb_url(sc.path), 'score': f"{sc.overall_score:.0f}",
-                               'group': len(c.members),
-                               'badge': '保留', 'badgeType': 'good', 'kept': True})
-            s['photos'] = photos
-            s['groups'] = len(dd.clusters)
+            first = 0 if final else max(0, len(clusters) - GRID_CAP)
+            groups_data = []
+            for gi in range(len(clusters)):
+                c = clusters[gi]
+                members = sorted(
+                    c.members,
+                    key=lambda x: float(getattr(x, 'overall_score', 0.0) or 0.0),
+                    reverse=True,
+                )
+                selected_path = c.rep.path
+                group = {
+                    'group_id': gi,
+                    'count': len(members),
+                    'selected_path': selected_path,
+                    'members': [{
+                        'name': getattr(m, 'filename', Path(m.path).name),
+                        'path': m.path,
+                        'thumb': thumb_url(m.path),
+                        'score': round(float(getattr(m, 'overall_score', 0.0) or 0.0), 1),
+                        'selected': m.path == selected_path,
+                    } for m in members],
+                }
+                groups_data.append(group)
+            s['groups_data'] = groups_data
+            visible = groups_data if final else groups_data[first:]
+            # Only duplicate groups need human review; singleton groups are kept
+            # automatically and still remain in kept_paths for the next stage.
+            s['photos'] = [g for g in visible if g['count'] > 1]
+            s['groups'] = len(clusters)
             last_refresh[0] = time.time()
 
         t0 = time.time()
@@ -978,21 +994,12 @@ def run_dedup(folder, threshold, ftype='all', pair='both'):
         removed = total - len(kept)
         took = _fmt(time.time() - t0)
         pct_uniq = (len(kept) / total * 100) if total else 0
-        if state['auto']['dedup'] and removed:
-            try:
-                org = PhotoOrganizer(folder)
-                kept_set = set(kept)
-                dups = [str(p) for p in paths if str(p) not in kept_set]
-                r = org.move_duplicate_photos(dups)
-                s['status'] = (f"完成 · 用时 {took} · {total} 张中保留 {len(kept)} 张 "
-                               f"（{pct_uniq:.0f}%）· 已移动 {r.get('moved', 0)} 张到重复照片（Duplicates）文件夹")
-            except Exception as e:
-                logger.warning(f"dedup auto-move failed: {e}")
-                s['status'] = (f"完成 · 用时 {took} · {total} 张中保留 {len(kept)} 张 "
-                               f"（{pct_uniq:.0f}%）· 识别 {removed} 张相似照片")
+        duplicate_groups = sum(1 for g in s.get('groups_data', []) if g.get('count', 0) > 1)
+        if duplicate_groups:
+            s['status'] = (f"筛选完成 · 用时 {took} · 发现 {duplicate_groups} 组相似照片 · "
+                           f"已默认推荐每组最佳照片，请对比后确认处理")
         else:
-            s['status'] = (f"完成 · 用时 {took} · {total} 张中保留 {len(kept)} 张 "
-                           f"（{pct_uniq:.0f}%）· 识别 {removed} 张相似照片")
+            s['status'] = (f"筛选完成 · 用时 {took} · {total} 张照片未发现需要处理的相似组")
         s['progress'] = 100
     except Exception as e:
         logger.error(f"dedup failed: {e}", exc_info=True)
@@ -1262,7 +1269,22 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   body.processing #restoreAll,
   body.processing #exportBtn,
   body.processing #exportPbgBtn,
-  body.processing #moveBlurryBtn{pointer-events:none;opacity:.45;filter:grayscale(.25)}
+  body.processing #moveBlurryBtn,
+  body.processing #dedupApplyBtn{pointer-events:none;opacity:.45;filter:grayscale(.25)}
+  .dedup-review{display:flex;flex-direction:column;gap:14px;width:100%;grid-column:1/-1}
+  .dedup-group{border:1px solid var(--border);border-radius:12px;background:var(--panel);padding:12px}
+  .dedup-group-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px;font-size:12px}
+  .dedup-group-head b{font-size:13px}
+  .dedup-choices{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+  .dedup-choice{position:relative;border:2px solid transparent;border-radius:10px;overflow:hidden;background:var(--panel2);cursor:pointer;transition:border-color .15s,box-shadow .15s,transform .15s}
+  .dedup-choice:hover{transform:translateY(-1px);border-color:rgba(37,99,235,.45)}
+  .dedup-choice.selected{border-color:var(--good);box-shadow:0 0 0 2px color-mix(in srgb,var(--good) 18%,transparent)}
+  .dedup-choice img{width:100%;aspect-ratio:3/2;object-fit:cover;display:block}
+  .dedup-choice-meta{padding:7px 8px;font-size:11px}
+  .dedup-choice-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--muted)}
+  .dedup-choice-state{margin-top:4px;font-weight:700;color:var(--muted)}
+  .dedup-choice.selected .dedup-choice-state{color:var(--good)}
+  .dedup-recommend{position:absolute;top:6px;left:6px;background:var(--good);color:#fff;border-radius:5px;padding:3px 7px;font-size:10px;font-weight:700;z-index:2}
   body.processing .photo-card{cursor:default}
 
   .zoomctl{display:flex;align-items:center;gap:4px;background:rgba(255,255,255,.14);padding:3px;border-radius:8px;flex:0 0 auto}
@@ -1396,6 +1418,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
       <button class="btn-ghost" id="exportBtn" style="display:none">⬇ 导出优选照片…</button>
       <button class="btn-ghost" id="exportPbgBtn" style="display:none">📱 导出手机壁纸…</button>
       <button class="btn-ghost" id="moveBlurryBtn" style="display:none">🗂️ 移动模糊照片 → 模糊照片（Blurred）</button>
+      <button class="btn cta" id="dedupApplyBtn" style="display:none">✓ 确认处理未保留照片</button>
       <button class="btn" id="startBtn">🚀 开始处理</button>
       <button class="btn god" id="godBtn" title="自动执行：模糊筛选 → 相似去重 → 智能优选">⚡ 一键全流程</button>
     </div>
@@ -1503,7 +1526,7 @@ function settingsHTML(step){
         <option value="jpg">仅保留 JPG 图片</option>
       </select>
       <div class="slider-value">同名 RAW/JPG（如 IMG_0001.CR2 + .JPG）会在去重前合并为一张</div></div>
-      <label class="check"><input type="checkbox" id="autoOrg"> 自动将重复照片移动到重复照片（Duplicates）文件夹</label>`;
+      <div class="slider-value" style="margin-top:10px;line-height:1.55">先完成筛选和分组，不会立即移动文件。筛选后可逐组对比并切换“保留”照片，最后再统一确认处理。</div>`;
   // rank
   return `<div class="sidebar-title" style="margin-bottom:4px">⚖️ 评分权重</div>
     <div class="panel-box" id="weightPanel"></div>
@@ -1535,21 +1558,6 @@ function renderSettings(){
   if(opt&&val)opt.oninput=()=>{val.textContent=(currentStep==='dedup'||currentStep==='cull')?parseFloat(opt.value).toFixed(2):opt.value;};
   const pm=document.getElementById('pairMode');
   if(pm){pm.value=pairMode;pm.onchange=()=>{pairMode=pm.value;};}
-  const ao=document.getElementById('autoOrg');
-  if(ao){
-    ao.checked=autoDedup;
-    ao.onchange=()=>{
-      autoDedup=ao.checked;
-      fetch('/api/set-auto',{
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({step:'dedup',enabled:autoDedup})
-      }).catch(()=>{
-        autoDedup=false;ao.checked=false;
-        toast('无法保存自动移动设置，已恢复为关闭。','bad');
-      });
-    };
-  }
   if(currentStep==='rank'){renderWeights();
     const rw=document.getElementById('resetWeights');if(rw)rw.onclick=()=>{weights={...DEFAULTS};renderWeights();scheduleReweight();};}
 }
@@ -1562,6 +1570,7 @@ function activateStep(step){
   document.getElementById('exportBtn').style.display='none';
   document.getElementById('exportPbgBtn').style.display='none';
   {const mb=document.getElementById('moveBlurryBtn');mb.style.display='none';mb.classList.add('btn-ghost');mb.classList.remove('btn','cta');startBtn.classList.remove('secondary');}
+  document.getElementById('dedupApplyBtn').style.display='none';
   document.getElementById('progressWrap').style.display='none';  // clear stale summary
   document.getElementById('gallery').innerHTML=emptyHTML(currentStep);
   lastRankSig='';renderedCount=0;photoIdx=0;lastStep=null;
@@ -1818,7 +1827,7 @@ function poll(step){
       if('groups'in st)document.getElementById('sGroups').textContent=st.groups;
       if(step==='rank')renderRank(d.photos||[]);
       else if(step==='cull')renderCullStep(d.photos||[]);
-      else renderGallery(d.photos||[]);
+      else renderDedupGroups(d.photos||[]);
 
       if(d.running){
         setTimeout(()=>poll(step),350);
@@ -1836,6 +1845,11 @@ function poll(step){
       if(step==='cull'){
         cullReady=true;
         updateCullMoveButton();
+      }
+      if(step==='dedup'){
+        const dg=Number((d.stats||{}).duplicate_groups||0);
+        const ab=document.getElementById('dedupApplyBtn');
+        ab.style.display=(!godMode&&dg>0)?'block':'none';
       }
       if(godResolve){const r=godResolve;godResolve=null;r();}
     })
@@ -1953,6 +1967,49 @@ function renderGallery(items){   /* dedup: paginated + reconciling (order-stable
   renderedCount=slice.length;updatePager();
   document.getElementById('sShowing').textContent=items.length;
 }
+function renderDedupGroups(groups){
+  photos=groups||[];
+  const g=document.getElementById('gallery');
+  document.getElementById('sShowing').textContent=groups.length;
+  if(!groups.length){
+    g.innerHTML='<div class="empty"><div class="icon">✓</div><div class="title">没有需要人工处理的相似组</div><p>单独照片会自动保留；只有检测到 2 张及以上相似照片时才会出现在这里。</p></div>';
+    return;
+  }
+  g.innerHTML='<div class="dedup-review">'+groups.map((group,idx)=>{
+    const members=(group.members||[]);
+    return '<div class="dedup-group" data-group="'+group.group_id+'">'
+      +'<div class="dedup-group-head"><b>相似组 '+(idx+1)+' · '+members.length+' 张</b><span>点击任意照片切换保留项</span></div>'
+      +'<div class="dedup-choices">'+members.map((p,mi)=>{
+        const sel=!!p.selected;
+        return '<div class="dedup-choice '+(sel?'selected':'')+'" data-group="'+group.group_id+'" data-path="'+escHtml(p.path)+'">'
+          +(sel?'<div class="dedup-recommend">✓ 当前保留</div>':'')
+          +'<img src="'+p.thumb+'" loading="lazy" decoding="async">'
+          +'<div class="dedup-choice-meta"><div class="dedup-choice-name">'+escHtml(p.name)+'</div>'
+          +'<div class="dedup-choice-state">'+(sel?'系统推荐 / 当前选择':'点击改为保留')+'</div></div></div>';
+      }).join('')+'</div></div>';
+  }).join('')+'</div>';
+}
+function selectDedupPhoto(groupId,path){
+  fetch('/api/dedup-select',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({group_id:Number(groupId),path})})
+    .then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;})
+    .then(d=>{renderDedupGroups(d.photos||[]);toast('已切换本组保留照片','good');})
+    .catch(err=>toast('切换失败：'+(err.message||'未知错误'),'bad'));
+}
+function applyDedupSelection(){
+  const btn=document.getElementById('dedupApplyBtn');
+  btn.disabled=true;btn.textContent='正在处理…';
+  fetch('/api/dedup-apply',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})
+    .then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;})
+    .then(d=>{
+      btn.style.display='none';
+      toast('已按当前选择处理 '+(d.moved||0)+' 张相似照片','good');
+      document.getElementById('progressText').textContent='处理完成 · 已移动 '+(d.moved||0)+' 张未保留照片到 Duplicates 文件夹';
+    })
+    .catch(err=>toast('处理失败：'+(err.message||'未知错误'),'bad'))
+    .finally(()=>{btn.disabled=false;btn.textContent='✓ 确认处理未保留照片';});
+}
+document.getElementById('dedupApplyBtn').onclick=applyDedupSelection;
+
 function updatePager(){
   const pager=document.getElementById('pager');if(!pager)return;
   const total=gItems.length,pages=Math.max(1,Math.ceil(total/PAGE_SIZE));
@@ -2197,6 +2254,7 @@ function toggleStatus(path,btn,cb){
 
 /* ---- gallery clicks ---- */
 document.getElementById('gallery').addEventListener('click',e=>{
+  const dc=e.target.closest('.dedup-choice');if(dc&&currentStep==='dedup'){e.stopPropagation();selectDedupPhoto(dc.dataset.group,dc.dataset.path);return;}
   const rm=e.target.closest('.remove-btn');if(rm){e.stopPropagation();removePhoto(rm.dataset.path);return;}
   const pb=e.target.closest('.pbg-toggle');
   if(pb){e.stopPropagation();togglePhoneBg(pb.dataset.path);return;}
@@ -2742,11 +2800,14 @@ def api_progress(step):
         s = state['dedup']
         all_photos = s['photos']
         photos = all_photos[:UI_RESULT_CAP]
+        duplicate_photos = sum(g.get('count', 0) for g in s.get('groups_data', []) if g.get('count', 0) > 1)
         return jsonify({'running': s['running'], 'progress': s['progress'], 'status': s['status'],
                         'photos': photos,
                         'truncated': (not s['running'] and len(all_photos) > len(photos)),
                         'result_total': len(all_photos),
-                        'stats': {'groups': s['groups']}})
+                        'stats': {'groups': s['groups'],
+                                  'duplicate_groups': len(all_photos),
+                                  'duplicate_photos': duplicate_photos}})
     if step == 'rank':
         s = state['rank']
         now = time.time()
@@ -2757,6 +2818,74 @@ def api_progress(step):
                         'photos': s.get('preview', []),
                         'stats': {'images': s['total']}})
     abort(404)
+
+
+@app.route('/api/dedup-select', methods=['POST'])
+def api_dedup_select():
+    """Switch the kept photo inside one completed similarity group."""
+    blocked = _reject_mutation_while_running()
+    if blocked:
+        return blocked
+    s = state['dedup']
+    if not s.get('complete'):
+        return jsonify({'error': '请先完成相似照片筛选'}), 409
+    data = request.get_json() or {}
+    try:
+        gid = int(data.get('group_id'))
+    except (TypeError, ValueError):
+        return jsonify({'error': '相似组编号无效'}), 400
+    path = str(data.get('path') or '')
+    group = next((g for g in s.get('groups_data', []) if g.get('group_id') == gid), None)
+    if not group:
+        return jsonify({'error': '未找到这个相似组'}), 404
+    if path not in {m.get('path') for m in group.get('members', [])}:
+        return jsonify({'error': '这张照片不属于当前相似组'}), 400
+    group['selected_path'] = path
+    for member in group.get('members', []):
+        member['selected'] = member.get('path') == path
+    s['kept_paths'] = [g.get('selected_path') for g in s.get('groups_data', [])
+                       if g.get('selected_path')]
+    s['photos'] = [g for g in s.get('groups_data', []) if g.get('count', 0) > 1]
+    return jsonify({'ok': True, 'photos': s['photos'], 'kept': len(s['kept_paths'])})
+
+
+@app.route('/api/dedup-apply', methods=['POST'])
+def api_dedup_apply():
+    """Move non-selected members only after the user explicitly confirms."""
+    blocked = _reject_mutation_while_running()
+    if blocked:
+        return blocked
+    folder = state.get('folder')
+    s = state['dedup']
+    if not folder or not Path(folder).is_dir():
+        return jsonify({'error': '未选择有效的照片文件夹'}), 400
+    if not s.get('complete'):
+        return jsonify({'error': '请先完成相似照片筛选'}), 409
+    if s.get('applied'):
+        return jsonify({'ok': True, 'moved': 0, 'already_applied': True})
+    dups = []
+    for group in s.get('groups_data', []):
+        if group.get('count', 0) <= 1:
+            continue
+        selected = group.get('selected_path')
+        dups.extend(m.get('path') for m in group.get('members', [])
+                    if m.get('path') and m.get('path') != selected)
+    if not dups:
+        s['applied'] = True
+        return jsonify({'ok': True, 'moved': 0, 'dest': str(Path(folder) / 'Duplicates')})
+    try:
+        org = PhotoOrganizer(folder)
+        result = org.move_duplicate_photos(dups)
+        moved = int(result.get('moved', 0) or 0)
+        failed = int(result.get('failed', 0) or 0)
+        s['applied'] = failed == 0
+        s['status'] = (f"处理完成 · 已移动 {moved} 张未保留照片到重复照片（Duplicates）文件夹"
+                       + (f" · {failed} 张失败" if failed else ''))
+        return jsonify({'ok': failed == 0, 'moved': moved, 'failed': failed,
+                        'dest': str(Path(folder) / 'Duplicates')})
+    except Exception as e:
+        logger.warning(f"dedup apply failed: {e}")
+        return jsonify({'error': f'处理相似照片失败：{e}'}), 500
 
 
 @app.route('/api/weights', methods=['POST'])
