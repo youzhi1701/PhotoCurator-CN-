@@ -2453,11 +2453,14 @@ try{
   if(Number.isFinite(Number(saved.dedupThreshold)))dedupThreshold=Math.min(.95,Math.max(.5,Number(saved.dedupThreshold)));
   if(['both','raw','jpg'].includes(saved.pairMode))pairMode=saved.pairMode;
   if(Number.isFinite(Number(saved.rankTopN)))rankTopN=Math.min(500,Math.max(1,Number(saved.rankTopN)));
+  if(saved.weights&&typeof saved.weights==='object'){
+    CATS.forEach(([k])=>{const v=Number(saved.weights[k]);if(Number.isFinite(v))weights[k]=Math.min(100,Math.max(0,v));});
+  }
 }catch(_){}
 function saveLibrarySettings(){
   try{localStorage.setItem('pc-library-settings',JSON.stringify({
     recursive:recursiveScan,compareScope,outputMode,customOutput,
-    cullStrictness,cullAdaptive,cullRescue,dedupThreshold,pairMode,rankTopN
+    cullStrictness,cullAdaptive,cullRescue,dedupThreshold,pairMode,rankTopN,weights
   }));}catch(_){}
 }
 function librarySettingsHTML(step){
@@ -2625,12 +2628,12 @@ function renderWeights(){
   wp.innerHTML=CATS.map(([k,lab])=>`<div class="wgroup"><label>${lab} <b id="wv_${k}">${weights[k]}</b></label>
      <input type="range" min="0" max="50" value="${weights[k]}" id="w_${k}"></div>`).join('');
   CATS.forEach(([k])=>{const el=document.getElementById('w_'+k);
-    el.oninput=()=>{weights[k]=parseInt(el.value);document.getElementById('wv_'+k).textContent=el.value;scheduleReweight();};});
+    el.oninput=()=>{weights[k]=parseInt(el.value);document.getElementById('wv_'+k).textContent=el.value;saveLibrarySettings();scheduleReweight();};});
 }
 function scheduleReweight(){clearTimeout(weightTimer);weightTimer=setTimeout(()=>{
   fetch('/api/weights',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({weights,topn:parseInt((document.getElementById('topn')||{}).value)||50})})
-    .then(r=>r.json()).then(d=>renderRank(d.photos||[]));},140);}
+    body:JSON.stringify({weights,topn:rankTopN})})
+    .then(r=>r.json()).then(d=>{if(currentStep==='rank')renderRank(d.photos||[]);});},140);}
 function applyStepStats(){
   // Show only the stat rows relevant to the current step so irrelevant zeros
   // (e.g. Sharp/Blurry/Unique while Ranking) don't look like errors.
@@ -2688,7 +2691,7 @@ function renderSettings(){
     renderWeights();
     const tn=document.getElementById('topn');
     if(tn){tn.value=rankTopN;tn.onchange=()=>{rankTopN=Math.min(500,Math.max(1,parseInt(tn.value)||50));tn.value=rankTopN;saveLibrarySettings();scheduleReweight();};}
-    const rw=document.getElementById('resetWeights');if(rw)rw.onclick=()=>{weights={...DEFAULTS};renderWeights();scheduleReweight();};
+    const rw=document.getElementById('resetWeights');if(rw)rw.onclick=()=>{weights={...DEFAULTS};saveLibrarySettings();renderWeights();scheduleReweight();};
   }
 }
 
@@ -2903,7 +2906,7 @@ function setStartBtn(running){
 }
 function snapshotPipelineConfig(){
   return {
-    cullStrictness,cullAdaptive,cullRescue,dedupThreshold,rankTopN,
+    cullStrictness,cullAdaptive,cullRescue,dedupThreshold,rankTopN,weights:{...weights},
     recursiveScan,compareScope,outputMode,customOutput,pairMode
   };
 }
@@ -2940,7 +2943,8 @@ async function startStep(step,config=null){
         compare_scope:cfg.compareScope,
         output_mode:cfg.outputMode,
         custom_output:cfg.customOutput,
-        topn:cfg.rankTopN
+        topn:cfg.rankTopN,
+        weights:cfg.weights
       })
     });
     let data={};
@@ -4216,6 +4220,14 @@ def api_run(step):
             )
         else:
             state['topn'] = min(500, max(1, int(data.get('topn', 50))))
+            raw_weights = data.get('weights') or state['weights']
+            clean_weights = {}
+            for k in CATEGORIES:
+                v = float(raw_weights.get(k, DEFAULT_WEIGHTS[k]))
+                if not np.isfinite(v):
+                    v = DEFAULT_WEIGHTS[k]
+                clean_weights[k] = min(100.0, max(0.0, v))
+            state['weights'] = clean_weights
             target, args = run_rank, (
                 folder, data.get('ftype', 'all'), data.get('pair', 'both'), recursive
             )
@@ -4319,6 +4331,7 @@ def api_dedup_results_chunk():
 @app.route('/api/dedup-select', methods=['POST'])
 def api_dedup_select():
     """Toggle one photo's kept state; each similarity group must keep >= 1."""
+    _sync_dedup_with_cull()
     s = state['dedup']
     data = request.get_json() or {}
     try:
@@ -4373,6 +4386,7 @@ def api_dedup_select():
 @app.route('/api/dedup-group-action', methods=['POST'])
 def api_dedup_group_action():
     """Fast keeper presets for one similarity group."""
+    _sync_dedup_with_cull()
     data = request.get_json() or {}
     try:
         gid = int(data.get('group_id'))
