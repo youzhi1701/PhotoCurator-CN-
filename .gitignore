@@ -29,3 +29,5 @@ PhoneBG/
 # GitHub Codespaces local preview artifacts
 .codespaces-venv/
 .codespaces_demo/
+
+.codespaces_preview.pid
