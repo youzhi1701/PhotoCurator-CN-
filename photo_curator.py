@@ -682,7 +682,7 @@ state = {
              'output_mode': 'source', 'custom_output': ''},
     'cull':  {**_blank(), 'sharp': 0, 'soft': 0, 'blurry': 0, 'sharp_paths': [], 'overrides': {}, 'removed_paths': set(), 'cache_hits': 0},
     'dedup': {**_blank(), 'groups': 0, 'kept_paths': [], 'groups_data': [],
-              'singleton_paths': [], 'seen_paths': set(), 'applied': False},
+              'singleton_paths': [], 'all_singleton_paths': [], 'seen_paths': set(), 'applied': False},
     'rank':  {**_blank(), 'scores': [], 'total': 0, 'analyzed': 0, 'preview': [], 'preview_at': 0.0},
 }
 
@@ -1508,8 +1508,11 @@ def _sync_dedup_with_cull():
     # polluting the duplicate-review count.
     dedup['photos'] = [g for g in new_groups if g.get('active_count', g.get('count', 0)) > 1]
     dedup['groups'] = len(dedup['photos'])
+    source_singletons = dedup.get('all_singleton_paths')
+    if source_singletons is None:
+        source_singletons = dedup.get('singleton_paths') or []
     dedup['singleton_paths'] = [
-        p for p in (dedup.get('singleton_paths') or [])
+        p for p in source_singletons
         if p in allowed and Path(p).is_file()
     ]
     dedup['kept_paths'] = list(dedup['singleton_paths']) + [
@@ -1526,7 +1529,7 @@ def run_dedup(folder, threshold, ftype='all', pair='both',
     s = state['dedup']
     s.update({'running': True, 'cancel': False, 'progress': 0, 'status': '正在准备…',
               'photos': [], 'groups': 0, 'kept_paths': [], 'groups_data': [],
-              'singleton_paths': [], 'seen_paths': set(),
+              'singleton_paths': [], 'all_singleton_paths': [], 'seen_paths': set(),
               'applied': False, 'complete': False, 'src_folder': str(folder),
               'recursive': bool(recursive), 'compare_scope': compare_scope})
     try:
@@ -1534,11 +1537,15 @@ def run_dedup(folder, threshold, ftype='all', pair='both',
         chain_ok = (cull.get('complete')
                     and cull.get('src_folder') == str(folder)
                     and bool(cull.get('recursive', False)) == bool(recursive))
+        # Build similarity metadata for the whole source set, but Cull remains
+        # the eligibility gate for what the user can keep/process. This lets a
+        # photo manually rescued from Blurry later enter an already-built
+        # duplicate group without forcing a complete re-scan.
+        paths = list_images(folder, recursive=recursive)
         if chain_ok:
-            paths = [Path(p) for p in cull['sharp_paths'] if Path(p).is_file()]
-            logger.info(f"Dedup: chaining {len(paths)} Cull survivors")
+            logger.info(f"Dedup: indexing {len(paths)} source photos; "
+                        f"{len(cull.get('sharp_paths') or [])} currently eligible after Cull")
         else:
-            paths = list_images(folder, recursive=recursive)
             logger.info(f"Dedup: scanning {'recursive tree' if recursive else 'folder'} "
                         f"({len(paths)} images)")
 
@@ -1559,9 +1566,10 @@ def run_dedup(folder, threshold, ftype='all', pair='both',
             s['groups_data'] = []
             s['photos'] = []
             s['singleton_paths'] = []
+            s['all_singleton_paths'] = []
             s['seen_paths'] = set()
-            s['status'] = ('清晰度复核后没有需要继续处理的照片' if ftype == 'all'
-                           else f'没有可去重的 {ftype_label(ftype)} 照片')
+            s['status'] = ('当前范围没有可建立相似索引的照片' if ftype == 'all'
+                           else f'没有可建立相似索引的 {ftype_label(ftype)} 照片')
             return
 
         # Local mode compares only within each leaf/source folder. Global mode
@@ -1653,6 +1661,7 @@ def run_dedup(folder, threshold, ftype='all', pair='both',
             s['groups_data'] = list(all_groups)
             s['photos'] = [g for g in all_groups if g.get('count', 0) > 1]
             s['groups'] = len(s['photos'])
+            s['all_singleton_paths'] = list(singleton_paths)
             allowed_now = _cull_allowed_for_dedup()
             s['singleton_paths'] = [
                 p for p in singleton_paths
@@ -1666,6 +1675,7 @@ def run_dedup(folder, threshold, ftype='all', pair='both',
         s['groups_data'] = all_groups
         s['photos'] = all_groups
         s['groups'] = len(all_groups)
+        s['all_singleton_paths'] = list(singleton_paths)
         allowed_now = _cull_allowed_for_dedup()
         s['singleton_paths'] = [
             p for p in singleton_paths
@@ -4576,6 +4586,7 @@ def api_delete_photo():
     dedup['photos'] = [g for g in new_groups if g.get('count', 0) > 1]
     dedup['groups'] = len(dedup['photos'])
     dedup['singleton_paths'] = [p for p in dedup.get('singleton_paths', []) if p != deleted]
+    dedup['all_singleton_paths'] = [p for p in dedup.get('all_singleton_paths', []) if p != deleted]
     if isinstance(dedup.get('seen_paths'), set):
         dedup['seen_paths'].discard(deleted)
     dedup['kept_paths'] = list(dedup.get('singleton_paths') or []) + [
