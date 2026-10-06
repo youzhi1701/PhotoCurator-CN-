@@ -1414,7 +1414,7 @@ def run_dedup(folder, threshold, ftype='all', pair='both',
               'recursive': bool(recursive), 'compare_scope': compare_scope})
     try:
         cull = state['cull']
-        chain_ok = (cull.get('complete') and cull.get('sharp_paths')
+        chain_ok = (cull.get('complete')
                     and cull.get('src_folder') == str(folder)
                     and bool(cull.get('recursive', False)) == bool(recursive))
         if chain_ok:
@@ -1638,7 +1638,7 @@ def run_rank(folder, ftype='all', pair='both', recursive=True):
         # Rank every Cull survivor so later manual changes inside similarity
         # groups can update recommendations instantly without recomputing scores.
         cull = state['cull']
-        if (cull.get('complete') and cull.get('sharp_paths') and cull.get('src_folder') == str(folder)
+        if (cull.get('complete') and cull.get('src_folder') == str(folder)
                 and bool(cull.get('recursive', False)) == bool(recursive)):
             paths = [Path(p) for p in cull['sharp_paths'] if Path(p).is_file()]
             chain = '清晰度复核后照片'
@@ -2775,7 +2775,7 @@ async function godRun(){
   godMode=true;godAbort=false;setGodBtn(true);startBtn.disabled=false;
   const pipelineConfig=snapshotPipelineConfig();
   try{
-    let first=true;
+    let first=true,completedAll=true;
     for(const step of ['cull','dedup','rank']){
       if(godAbort)break;
       if(first){activateStep('cull');first=false;}
@@ -2794,6 +2794,7 @@ async function godRun(){
         const st=(result&&result.stats)||{};
         const survivors=Number(st.sharp||0)+Number(st.soft||0);
         if(survivors<=0){
+          completedAll=false;
           toast(Number(st.images||0)>0
             ?'清晰度复核后没有需要继续处理的照片，已跳过相似分析和精选评分。'
             :'所选范围没有可分析的照片，请检查文件夹或格式支持。','info');
@@ -2801,7 +2802,7 @@ async function godRun(){
         }
       }
     }
-    if(!godAbort)toast('✨ 分析完成：清晰度、相似组和精选结果均已生成','good');
+    if(!godAbort&&completedAll)toast('✨ 分析完成：清晰度、相似组和精选结果均已生成','good');
   } finally {
     godMode=false;setGodBtn(false);setStartBtn(false);startBtn.disabled=false;
   }
