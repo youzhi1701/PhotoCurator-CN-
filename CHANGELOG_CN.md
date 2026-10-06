@@ -1,5 +1,23 @@
 # 更新记录
 
+## v1.2.2-cn.1
+
+本版本新增安全的 GitHub Codespaces 在线预览能力，同时保持 Windows 本地模式的安全边界不变。
+
+### Codespaces 在线预览
+
+- 自动识别 GitHub Codespaces 环境
+- 仅在能推导出当前 Codespace 专属转发域名时绑定 `0.0.0.0`
+- Host / Origin / Referer 只允许当前 Codespace 的精确转发域名
+- Windows 桌面版与浏览器兼容模式继续保持本机 loopback 访问
+- 新增 `.devcontainer/devcontainer.json`，固定 Codespaces 使用 Python 3.11
+- 新增 `在线预览.sh`，自动准备依赖、样例照片并启动 5014 端口
+- 在线界面会明确提示“云端路径模式”，避免误以为可以直接访问本机硬盘
+- 自动提供“在线样例”文件夹，可直接跑模糊筛选 / 去重 / 智能优选
+- 新增 Codespaces 代理安全冒烟测试
+- 路径安全校验改为 `commonpath + normcase`，进一步避免 Windows 大小写与前缀路径绕过
+- 界面角落与顶部统一显示完整构建号 `v1.2.2-cn.1`
+
 ## v1.2.1-cn.1
 
 本版本重点完成 Windows 桌面化、完整汉化与稳定性加固。
