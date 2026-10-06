@@ -1282,8 +1282,12 @@ def run_dedup(folder, threshold, ftype='all', pair='both',
                 scope_txt = '全局对比' if compare_scope == 'global' else f'文件夹：{batch_label}'
                 s['status'] = (f"相似去重 · {scope_txt} · {p.name}（{processed}/{total}）· "
                                f"已用时 {_fmt(elapsed)} · 预计剩余 {_fmt(eta)}")
-                gray = imread_gray(str(p))
-                sharp = sharpness_score(gray) if gray is not None else 0.0
+                cached_metrics = _cached_cull_metrics(p)
+                if cached_metrics is not None:
+                    sharp = float(cached_metrics[0])
+                else:
+                    gray = imread_gray(str(p))
+                    sharp = sharpness_score(gray) if gray is not None else 0.0
                 dd.add_photo(_LiteScore(str(p), p.name, sharp, sharp))
 
             dd.save_disk_cache()
