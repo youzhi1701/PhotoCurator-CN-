@@ -86,6 +86,7 @@ app = Flask(__name__)
 
 INDEX_DB = DATA_ROOT / 'config' / 'library_index.sqlite3'
 _DB_LOCK = threading.Lock()
+CULL_METRICS_VERSION = 1
 
 def _db_init():
     with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=15) as db:
@@ -93,6 +94,18 @@ def _db_init():
             path TEXT PRIMARY KEY, size INTEGER NOT NULL, mtime_ns INTEGER NOT NULL,
             region_s REAL NOT NULL, quality REAL NOT NULL, updated_at REAL NOT NULL
         )""")
+        db.execute("""CREATE TABLE IF NOT EXISTS cache_meta (
+            key TEXT PRIMARY KEY, value TEXT NOT NULL
+        )""")
+        row = db.execute("SELECT value FROM cache_meta WHERE key='cull_metrics_version'").fetchone()
+        if row is None:
+            # Existing v1.4.x cache entries use the current v1 metric formula.
+            db.execute("INSERT INTO cache_meta(key,value) VALUES('cull_metrics_version',?)",
+                       (str(CULL_METRICS_VERSION),))
+        elif str(row[0]) != str(CULL_METRICS_VERSION):
+            db.execute("DELETE FROM cull_cache")
+            db.execute("UPDATE cache_meta SET value=? WHERE key='cull_metrics_version'",
+                       (str(CULL_METRICS_VERSION),))
         db.execute("""CREATE TABLE IF NOT EXISTS rank_cache (
             path TEXT PRIMARY KEY, size INTEGER NOT NULL, mtime_ns INTEGER NOT NULL,
             score_json TEXT NOT NULL, updated_at REAL NOT NULL
