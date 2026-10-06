@@ -72,6 +72,14 @@ except Exception:
 
 app = Flask(__name__)
 
+APP_VERSION = "1.2.2-cn.1"
+IS_CODESPACES = os.environ.get('CODESPACES', '').strip().lower() == 'true'
+CODESPACE_NAME = os.environ.get('CODESPACE_NAME', '').strip()
+_CODESPACES_DOMAIN_RAW = os.environ.get(
+    'GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN', 'app.github.dev'
+).strip().lower()
+CODESPACES_FORWARDING_DOMAIN = _CODESPACES_DOMAIN_RAW.split('://')[-1].strip('/.')
+
 # macOS reserves port 5000 for the AirPlay Receiver (returns HTTP 403).
 # Prefer 5014 ('50mm f/1.4'). Desktop mode supplies PHOTOCURATOR_PORT before
 # importing this module. Browser compatibility mode automatically falls back
@@ -107,29 +115,55 @@ def _resolve_local_port():
 
 PORT = _resolve_local_port()
 
-# Host headers we accept. A DNS-rebinding attacker's page reaches us with the
-# attacker's domain in the Host header, not one of these, so it's rejected.
-_ALLOWED_HOSTS = {f'127.0.0.1:{PORT}', f'localhost:{PORT}',
-                  '127.0.0.1', 'localhost'}
+# Codespaces is opt-in and fail-closed: only expose the Flask listener beyond
+# loopback when GitHub supplied enough metadata to derive the one exact
+# authenticated forwarded-host name for this Codespace/port.
+CODESPACES_PUBLIC_HOST = None
+if IS_CODESPACES and CODESPACE_NAME and CODESPACES_FORWARDING_DOMAIN:
+    CODESPACES_PUBLIC_HOST = (
+        f'{CODESPACE_NAME}-{PORT}.{CODESPACES_FORWARDING_DOMAIN}'.lower()
+    )
+SERVER_HOST = '0.0.0.0' if CODESPACES_PUBLIC_HOST else '127.0.0.1'
+
+# Host headers we accept. Local desktop/browser mode stays loopback-only.
+# Codespaces additionally accepts only its exact GitHub forwarded hostname.
+_ALLOWED_HOSTS = {
+    f'127.0.0.1:{PORT}', f'localhost:{PORT}', '127.0.0.1', 'localhost'
+}
+_ALLOWED_ORIGIN_HOSTS = {'127.0.0.1', 'localhost'}
+if CODESPACES_PUBLIC_HOST:
+    _ALLOWED_HOSTS.add(CODESPACES_PUBLIC_HOST)
+    _ALLOWED_HOSTS.add(f'{CODESPACES_PUBLIC_HOST}:443')
+    _ALLOWED_ORIGIN_HOSTS.add(CODESPACES_PUBLIC_HOST)
 
 
 @app.before_request
 def _guard_request():
-    """Block requests forged by a malicious web page (DNS rebinding / CSRF).
+    """Block forged local/cloud requests while allowing the exact Codespaces proxy.
 
-    A page on some other site can make the browser fire requests at
-    127.0.0.1, but it cannot forge the Host header (the browser sets it from
-    the rebound hostname) nor send a same-origin Origin. We reject anything
-    whose Host isn't our loopback address, or whose Origin/Referer points at
-    a different site."""
-    host = (request.host or '').lower()
+    Desktop/browser mode accepts loopback only. In Codespaces the server binds
+    to 0.0.0.0 so GitHub's authenticated port proxy can reach it, but Host and
+    Origin/Referer are still restricted to the single derived forwarding host.
+    """
+    host = (request.host or '').lower().rstrip('.')
     if host not in _ALLOWED_HOSTS:
         abort(403)
+
+    from urllib.parse import urlparse
+
     origin = request.headers.get('Origin')
     if origin:
-        from urllib.parse import urlparse
-        if urlparse(origin).hostname not in ('127.0.0.1', 'localhost'):
+        origin_host = (urlparse(origin).hostname or '').lower().rstrip('.')
+        if origin_host not in _ALLOWED_ORIGIN_HOSTS:
             abort(403)
+    else:
+        # Normal top-level navigation may not carry Origin. If a Referer is
+        # present, constrain it too; absence of both is valid for direct GETs.
+        referer = request.headers.get('Referer')
+        if referer:
+            referer_host = (urlparse(referer).hostname or '').lower().rstrip('.')
+            if referer_host not in _ALLOWED_ORIGIN_HOSTS:
+                abort(403)
 
 
 @app.after_request
@@ -284,11 +318,16 @@ def _safe_image_path(raw):
     roots = _allowed_roots()
     if not roots:
         return None
+    real_cmp = os.path.normcase(real)
     for root in roots:
-        # Match the resolved file against each allowed root. The os.sep guard
-        # prevents '/photos-evil' from matching an allowed '/photos'.
-        if real == root or real.startswith(root + os.sep):
-            return p
+        try:
+            root_cmp = os.path.normcase(os.path.realpath(root))
+            # commonpath avoids prefix tricks (Photos vs Photos2), handles
+            # Windows case-insensitivity, and safely rejects different drives.
+            if os.path.commonpath([real_cmp, root_cmp]) == root_cmp:
+                return p
+        except (ValueError, OSError):
+            continue
     return None
 
 
@@ -1302,7 +1341,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   }
 </style></head><body>
 <div class="top">
-  <div class="brand">🖼️ 照片筛选 <small>PhotoCurator 中文版 · v1.2.1</small></div>
+  <div class="brand">🖼️ 照片筛选 <small>PhotoCurator 中文版 · v{{ app_version }}</small></div>
   <div class="steps">
     <div class="step active" data-step="cull">1 · 模糊筛选</div>
     <div class="step" data-step="dedup">2 · 相似去重</div>
@@ -1381,7 +1420,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
 </div>
 
 <div class="toast-wrap" id="toastWrap"></div>
-<div id="cn-build-badge" style="position:fixed;right:10px;bottom:8px;z-index:50;font-size:10px;color:var(--muted);opacity:.55;pointer-events:none">照片筛选 · 中文桌面版 v1.2.1</div>
+<div id="cn-build-badge" style="position:fixed;right:10px;bottom:8px;z-index:50;font-size:10px;color:var(--muted);opacity:.55;pointer-events:none">照片筛选 · 中文桌面版 v{{ app_version }}</div>
 
 <script>
 function toast(msg,type){
@@ -1396,7 +1435,7 @@ function escHtml(v){
   })[ch]);
 }
 let folder=null, photos=[], lbList=[], lbIndex=0, currentStep='cull';
-let isRunning=false, runningStep=null;
+let isRunning=false, runningStep=null, codespacesMode=false;
 let lastRankSig='', renderedCount=0, photoIdx=0, lastStep=null, weightTimer=null, removedCount=0, pollFailures=0, largeResultWarned=false;
 const CATS=[['aesthetic','综合观感'],['composition','构图'],['technical','技术质量'],['sharpness','清晰度'],['color','色彩']];
 const catColor=(i,n)=>`hsl(${Math.round(i*360/(n||CATS.length))},80%,62%)`;
@@ -1570,21 +1609,42 @@ function sdLabel(p){const parts=p.split(/[\\/]/).filter(Boolean);
   const tail=parts.slice(-2).join('/');
   const m=/^([A-Za-z]:)/.exec(p);return m?m[1]+' '+tail:tail;}
 function loadShortcuts(){fetch('/api/shortcuts').then(r=>r.json()).then(d=>{
-  let h='';(d.sd||[]).forEach(o=>{const p=(typeof o==='string')?o:o.path;
+  let h='';
+  codespacesMode=!!d.codespaces;
+  const fi=document.getElementById('folderInput');
+  const bb=document.getElementById('browseBtn');
+
+  if(codespacesMode){
+    bb.disabled=true;bb.textContent='云端路径模式';
+    fi.placeholder='输入 Codespaces 中的云端文件夹路径';
+    h+=`<div style="background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:9px 10px;font-size:11px;line-height:1.55;margin-bottom:7px">☁️ <b>Codespaces 在线预览</b><br>当前只能访问云端工作区文件，不能直接读取你电脑的 C:/F: 等本地硬盘。</div>`;
+    if(d.demo_folder){
+      const p=d.demo_folder;
+      h+=`<button class="shortcut" data-p="${escHtml(p)}"><span class="tag recent">在线样例</span>${escHtml(sdLabel(p))}</button>`;
+      if(!folder){folder=p;fi.value=p;}
+    }
+  }else{
+    bb.disabled=isRunning;bb.textContent='选择文件夹…';
+    fi.placeholder='请选择或粘贴照片文件夹路径';
+  }
+
+  (d.sd||[]).forEach(o=>{const p=(typeof o==='string')?o:o.path;
     const br=(o&&o.brand)?(' · '+o.brand):'';
     h+=`<button class="shortcut" data-p="${escHtml(p)}"><span class="tag sd">SD${escHtml(br)}</span>${escHtml(sdLabel(p))}</button>`;});
   (d.recent||[]).slice(0,4).forEach(p=>h+=`<button class="shortcut" data-p="${escHtml(p)}"><span class="tag recent">最近</span>${escHtml(sdLabel(p))}</button>`);
   if(d.rawpy===false)h=`<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:8px;`
     +`padding:8px 10px;font-size:11px;line-height:1.5;margin-bottom:6px">⚠️ <b>RAW 支持未启用</b> — `
     +`未安装 rawpy，CR2/NEF/ARW/DNG 等 RAW 文件会被跳过。<br>`
-    +`请重新运行“一键安装并启动.bat”修复依赖。</div>`+h;
+    +`请重新运行依赖安装后再试。</div>`+h;
   if(d.heif===false)h=`<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:8px;`
     +`padding:8px 10px;font-size:11px;line-height:1.5;margin-bottom:6px">⚠️ <b>HEIC 支持未启用</b> — `
     +`未安装 pillow-heif，iPhone 的 HEIC/HEIF 文件会被跳过。<br>`
-    +`请重新运行“一键安装并启动.bat”修复依赖。</div>`+h;
-  if(!(d.sd||[]).length)h+=`<div style="font-size:11px;color:var(--muted);margin-top:6px">未检测到相机存储卡；插入后会自动出现在这里，也可以直接选择文件夹。</div>`;
+    +`请重新运行依赖安装后再试。</div>`+h;
+  if(!(d.sd||[]).length&&!codespacesMode)h+=`<div style="font-size:11px;color:var(--muted);margin-top:6px">未检测到相机存储卡；插入后会自动出现在这里，也可以直接选择文件夹。</div>`;
   document.getElementById('shortcuts').innerHTML=h;
-  document.querySelectorAll('.shortcut').forEach(b=>{b.disabled=isRunning;b.onclick=()=>{if(isRunning)return;folder=b.dataset.p;document.getElementById('folderInput').value=folder;};});});}
+  document.querySelectorAll('.shortcut').forEach(b=>{b.disabled=isRunning;b.onclick=()=>{if(isRunning)return;folder=b.dataset.p;fi.value=folder;};});
+}).catch(()=>{});
+}
 loadShortcuts();
 setInterval(()=>{if(!document.hidden&&!isRunning)loadShortcuts();},30000);  // pick up a card inserted later
 document.getElementById('folderInput').oninput=e=>folder=e.target.value.trim();
@@ -1628,7 +1688,7 @@ function setStartBtn(running){
   const fi=document.getElementById('folderInput');
   const bb=document.getElementById('browseBtn');
   if(fi)fi.disabled=running;
-  if(bb)bb.disabled=running;
+  if(bb)bb.disabled=running||codespacesMode;
   document.querySelectorAll('.shortcut').forEach(x=>x.disabled=running);
 }
 async function startStep(step){
@@ -2293,14 +2353,33 @@ document.getElementById('moveBlurryBtn').onclick=async function(){
 # --------------------------------------------------------------------------- #
 @app.route('/')
 def index():
-    return render_template_string(HTML, map_style_light=MAP_STYLE_LIGHT,
-                                  map_style_dark=MAP_STYLE_DARK)
+    return render_template_string(
+        HTML,
+        map_style_light=MAP_STYLE_LIGHT,
+        map_style_dark=MAP_STYLE_DARK,
+        app_version=APP_VERSION,
+    )
 
 
 @app.route('/api/shortcuts')
 def api_shortcuts():
-    return jsonify({'sd': detect_sd_cards(), 'recent': load_recents(),
-                    'rawpy': HAS_RAWPY, 'heif': HAS_HEIF})
+    demo_folder = None
+    if CODESPACES_PUBLIC_HOST:
+        raw_demo = (
+            os.environ.get('PHOTOCURATOR_DEMO_DIR')
+            or str(Path(__file__).resolve().parent / '.codespaces_demo')
+        )
+        if Path(raw_demo).is_dir():
+            demo_folder = os.path.realpath(raw_demo)
+
+    return jsonify({
+        'sd': [] if CODESPACES_PUBLIC_HOST else detect_sd_cards(),
+        'recent': load_recents(),
+        'rawpy': HAS_RAWPY,
+        'heif': HAS_HEIF,
+        'codespaces': bool(CODESPACES_PUBLIC_HOST),
+        'demo_folder': demo_folder,
+    })
 
 
 @app.route('/api/browse', methods=['POST'])
@@ -2916,5 +2995,10 @@ if __name__ == '__main__':
         threading.Timer(
             0.8, lambda: webbrowser.open(f'http://127.0.0.1:{PORT}')
         ).start()
-    # Bind to loopback only — never reachable from the local network.
-    app.run(host='127.0.0.1', port=PORT, debug=False, threaded=True)
+    if CODESPACES_PUBLIC_HOST:
+        logger.info(
+            "Codespaces 在线预览已启动：https://%s", CODESPACES_PUBLIC_HOST
+        )
+    # Local mode binds loopback only. Codespaces binds all interfaces solely
+    # so GitHub's authenticated forwarding proxy can reach this container.
+    app.run(host=SERVER_HOST, port=PORT, debug=False, threaded=True)
