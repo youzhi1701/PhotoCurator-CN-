@@ -159,6 +159,67 @@ def main():
         assert_true(payload["selected"] == 0 and payload["total"] == 2,
                     f"全不选计数错误：{payload}")
 
+        # Similarity groups now allow multiple kept photos, but never zero.
+        p0, p1, p2 = map(str, found[:3])
+        photo_curator.state["dedup"].update({
+            "complete": True,
+            "running": False,
+            "groups_data": [{
+                "group_id": 0,
+                "count": 3,
+                "selected_paths": [p0],
+                "folder_rel": "当前文件夹",
+                "members": [
+                    {"path": p0, "selected": True},
+                    {"path": p1, "selected": False},
+                    {"path": p2, "selected": False},
+                ],
+            }],
+        })
+        photo_curator.state["dedup"]["photos"] = photo_curator.state["dedup"]["groups_data"]
+
+        keep_more = client.post(
+            "/api/dedup-select",
+            json={"group_id": 0, "path": p1},
+            headers={"Host": f"127.0.0.1:{photo_curator.PORT}"},
+        )
+        assert_true(keep_more.status_code == 200,
+                    f"相似组多选保留失败：HTTP {keep_more.status_code}")
+        payload = keep_more.get_json()
+        assert_true(payload.get("selected") is True,
+                    f"第二张照片未加入保留：{payload}")
+        assert_true(set(photo_curator.state["dedup"]["groups_data"][0]["selected_paths"]) == {p0, p1},
+                    "相似组多选保留状态错误")
+
+        unkeep_first = client.post(
+            "/api/dedup-select",
+            json={"group_id": 0, "path": p0},
+            headers={"Host": f"127.0.0.1:{photo_curator.PORT}"},
+        )
+        assert_true(unkeep_first.status_code == 200,
+                    f"取消其中一张保留失败：HTTP {unkeep_first.status_code}")
+
+        refuse_zero = client.post(
+            "/api/dedup-select",
+            json={"group_id": 0, "path": p1},
+            headers={"Host": f"127.0.0.1:{photo_curator.PORT}"},
+        )
+        assert_true(refuse_zero.status_code == 409,
+                    "相似组不应允许取消最后一张保留照片")
+
+        # Custom output is an explicit user-selected root and must remain
+        # accessible to thumbnails / previews after a reviewed file is moved.
+        custom_root = Path(td) / "自定义筛选结果"
+        custom_root.mkdir(parents=True, exist_ok=True)
+        custom_img = custom_root / "已移动照片.jpg"
+        Image.new("RGB", (30, 20), "white").save(custom_img)
+        photo_curator.state["scan"].update({
+            "output_mode": "custom",
+            "custom_output": str(custom_root),
+        })
+        assert_true(photo_curator._safe_image_path(str(custom_img)) is not None,
+                    "自定义输出目录中的已移动照片无法通过安全路径校验")
+
         outside = Path(td) / "目录外照片.jpg"
         Image.new("RGB", (20, 20), "white").save(outside)
         assert_true(photo_curator._safe_image_path(str(outside)) is None,
