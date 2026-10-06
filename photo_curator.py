@@ -72,7 +72,7 @@ except Exception:
 
 app = Flask(__name__)
 
-APP_VERSION = "1.2.3-cn.3"
+APP_VERSION = "1.2.3-cn.4"
 IS_CODESPACES = os.environ.get('CODESPACES', '').strip().lower() == 'true'
 CODESPACE_NAME = os.environ.get('CODESPACE_NAME', '').strip()
 _CODESPACES_DOMAIN_RAW = os.environ.get(
@@ -1471,6 +1471,11 @@ function escHtml(v){
 let folder=null, photos=[], lbList=[], lbIndex=0, currentStep='cull';
 let isRunning=false, runningStep=null, codespacesMode=false;
 let lastRankSig='', renderedCount=0, photoIdx=0, lastStep=null, weightTimer=null, removedCount=0, pollFailures=0, largeResultWarned=false;
+// These controls are needed by setupFilterBar() during initial page boot.
+// Define them before the first setupFilterBar() call to avoid TDZ failures
+// that would stop Codespaces shortcut/sample initialization.
+const startBtn=document.getElementById('startBtn');
+let godMode=false, godAbort=false, godResolve=null;
 const CATS=[['aesthetic','综合观感'],['composition','构图'],['technical','技术质量'],['sharpness','清晰度'],['color','色彩']];
 const catColor=(i,n)=>`hsl(${Math.round(i*360/(n||CATS.length))},80%,62%)`;
 const CATCOLORS=CATS.map((_,i)=>catColor(i,CATS.length));
@@ -1708,7 +1713,6 @@ document.getElementById('browseBtn').onclick=async()=>{
 };
 
 /* start / stop (the same button toggles) */
-const startBtn=document.getElementById('startBtn');
 function setStartBtn(running){
   isRunning=running;
   document.body.classList.toggle('processing',running);
@@ -1788,7 +1792,6 @@ function doStop(){
 startBtn.onclick=()=>{ isRunning?doStop():doStart(); };
 
 /* ---- God mode: run Cull → Dedup → Rank back-to-back ---- */
-let godMode=false, godAbort=false, godResolve=null;
 const godBtn=document.getElementById('godBtn');
 function setGodBtn(on){ godBtn.textContent=on?'■ 停止一键全流程':'⚡ 一键全流程'; godBtn.classList.toggle('stopping',on); }
 async function godRun(){
