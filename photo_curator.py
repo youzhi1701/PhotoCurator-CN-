@@ -998,7 +998,8 @@ def run_cull(folder, strictness, adaptive, rescue_on, recursive=True):
     s = state['cull']
     s.update({'running': True, 'cancel': False, 'progress': 0, 'status': '正在扫描照片…',
               'photos': [], 'sharp': 0, 'soft': 0, 'blurry': 0, 'sharp_paths': [],
-              'cache_hits': 0, 'overrides': s.get('overrides', {}),
+              'cache_hits': 0, 'folder_status': {}, 'current_folder': '',
+              'overrides': s.get('overrides', {}),
               'removed_paths': s.get('removed_paths', set()),
               # complete=True only when cull runs to the end; a stopped cull must
               # not feed its partial survivor list into Dedup/Rank.
@@ -1078,7 +1079,15 @@ def run_cull(folder, strictness, adaptive, rescue_on, recursive=True):
                     f"轻微软 {s['soft']} ({s['soft']/k*100:.0f}%) / "
                     f"模糊 {s['blurry']} ({s['blurry']/k*100:.0f}%)")
 
+        last_rel = None
         for idx, p in enumerate(images):
+            rel = relative_folder(str(p), folder)
+            if rel != last_rel:
+                if last_rel is not None:
+                    s['folder_status'][last_rel] = '已完成'
+                s['folder_status'][rel] = '扫描中'
+                s['current_folder'] = rel
+                last_rel = rel
             if s.get('cancel'):
                 classify_all()
                 s['status'] = (f"已停止：{idx}/{total} · {_tiers(idx)} · "
@@ -1114,6 +1123,9 @@ def run_cull(folder, strictness, adaptive, rescue_on, recursive=True):
                 classify_all()
                 s['_last_classify_at'] = now
         classify_all()
+        if last_rel is not None:
+            s['folder_status'][last_rel] = '已完成'
+        s['current_folder'] = ''
         s.pop('_last_classify_at', None)
 
         # Blurry photos are NOT moved automatically — they stay in place so you
@@ -1122,7 +1134,9 @@ def run_cull(folder, strictness, adaptive, rescue_on, recursive=True):
         s['progress'] = 100
         s['complete'] = True   # full pass finished — survivors are safe to chain
         s['status'] = (f"完成 · 用时 {_fmt(time.time()-t0)} · {_tiers(total)}"
+                       + (f" · 已复用 {s.get('cache_hits',0)} 张历史分析" if s.get('cache_hits') else "")
                        + (" · 请确认后再移动模糊照片" if s['blurry'] else ""))
+        _activity('完成清晰度分析', folder, f"照片 {len(s['photos'])} · 复用 {s.get('cache_hits',0)}")
     except Exception as e:
         logger.error(f"cull failed: {e}", exc_info=True)
         s['status'] = f"发生错误：{e}"
@@ -1811,7 +1825,7 @@ function escHtml(v){
     '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
   })[ch]);
 }
-let folder=null, photos=[], lbList=[], lbIndex=0, currentStep='cull';
+let folder=null, photos=[], lbList=[], lbIndex=0, currentStep='cull', folderStatus={};
 let isRunning=false, runningStep=null, codespacesMode=false;
 let lastRankSig='', renderedCount=0, photoIdx=0, lastStep=null, weightTimer=null, removedCount=0, pollFailures=0, largeResultWarned=false;
 // These controls are needed by setupFilterBar() during initial page boot.
@@ -2178,12 +2192,14 @@ async function startStep(step){
   if(step==='cull')cullReady=false;
   pollFailures=0;largeResultWarned=false;
   document.getElementById('progressWrap').style.display='block';
-  document.getElementById('gallery').innerHTML='';
-  lastRankSig='';renderedCount=0;photoIdx=0;lastStep=step;
-  gPage=0;lastGallerySig='';document.getElementById('pager').style.display='none';
-  document.getElementById('exportBtn').style.display='none';
-  document.getElementById('exportPbgBtn').style.display='none';
-  {const mb=document.getElementById('moveBlurryBtn');mb.style.display='none';mb.classList.add('btn-ghost');mb.classList.remove('btn','cta');startBtn.classList.remove('secondary');}
+  if(step===currentStep){
+    document.getElementById('gallery').innerHTML='';
+    lastRankSig='';renderedCount=0;photoIdx=0;lastStep=step;
+    gPage=0;lastGallerySig='';document.getElementById('pager').style.display='none';
+    document.getElementById('exportBtn').style.display='none';
+    document.getElementById('exportPbgBtn').style.display='none';
+    {const mb=document.getElementById('moveBlurryBtn');mb.style.display='none';mb.classList.add('btn-ghost');mb.classList.remove('btn','cta');startBtn.classList.remove('secondary');}
+  }
   setRemoved(0);
   setStartBtn(true);
 
@@ -2274,6 +2290,7 @@ function poll(step){
       if('sharp'in st)document.getElementById('sSharp').textContent=st.sharp;
       if('blurry'in st)document.getElementById('sBlurry').textContent=st.blurry;
       if('soft'in st)document.getElementById('sSoft').textContent=st.soft;
+      if(st.folder_status)folderStatus=st.folder_status;
       if('duplicate_groups'in st)document.getElementById('sGroups').textContent=st.duplicate_groups;
       else if('groups'in st)document.getElementById('sGroups').textContent=st.groups;
       if(step===currentStep){
@@ -2516,7 +2533,8 @@ function renderFolderPage(slice,cardBuilder,startIndex){
   keys.forEach(key=>{
     const rows=buckets[key];
     const folded=isFolderCollapsed(key);
-    html+='<section class="folder-group '+(folded?'collapsed':'')+'" data-folder="'+encodeURIComponent(key)+'"><div class="folder-head"><b>📁 '+escHtml(key)+'</b><span>'+rows.length+' 张 · <button class="fold-btn">'+(folded?'展开':'收起')+'</button></span></div>';
+    const fs=folderStatus[key]||'';
+    html+='<section class="folder-group '+(folded?'collapsed':'')+'" data-folder="'+encodeURIComponent(key)+'"><div class="folder-head"><b>📁 '+escHtml(key)+'</b><span>'+rows.length+' 张'+(fs?' · '+escHtml(fs):'')+' · <button class="fold-btn">'+(folded?'展开':'收起')+'</button></span></div>';
     html+='<div class="folder-grid folder-body">';
     rows.forEach(x=>{html+=cardBuilder(x.p,x.idx);});
     html+='</div></section>';
@@ -3400,6 +3418,7 @@ def api_run(step):
 
     state['folder'] = folder
     save_recent(folder)
+    _activity('启动分析', folder, step)
     recursive = bool(data.get('recursive', True))
     compare_scope = str(data.get('compare_scope') or 'folder')
     if compare_scope not in ('folder', 'global'):
@@ -3465,7 +3484,9 @@ def api_progress(step):
                                   'move_selected': sum(
                                       1 for p in all_photos
                                       if p.get('tier') == 'blurry' and p.get('move_selected', True)
-                                  )}})
+                                  ),
+                                  'cache_hits': s.get('cache_hits',0),
+                                  'folder_status': s.get('folder_status',{})}})
     if step == 'dedup':
         s = state['dedup']
         all_photos = s['photos']
@@ -3627,12 +3648,12 @@ def _known_step_paths(step):
 @app.route('/api/delete-photo', methods=['POST'])
 def api_delete_photo():
     """Move one reviewed source photo to the operating-system recycle bin."""
-    blocked = _reject_mutation_while_running()
-    if blocked:
-        return blocked
-
     data = request.get_json() or {}
     step = str(data.get('step') or '')
+    if step != 'cull':
+        blocked = _reject_mutation_while_running()
+        if blocked:
+            return blocked
     path = str(data.get('path') or '')
     if step not in ('cull', 'dedup', 'rank'):
         return jsonify({'error': '无效板块'}), 400
@@ -3779,9 +3800,6 @@ def api_restore():
 @app.route('/api/toggle-status', methods=['POST'])
 def api_toggle_status():
     """Manually change review tier only; never move the underlying file."""
-    blocked = _reject_mutation_while_running()
-    if blocked:
-        return blocked
     data = request.get_json() or {}
     path = data.get('path', '')
     tier = data.get('tier', 'sharp')
@@ -3841,9 +3859,6 @@ def api_select_blurry():
     Classification and file movement are intentionally separate: unselecting a
     blurry photo keeps its Blurry badge but leaves the source file in place.
     """
-    blocked = _reject_mutation_while_running()
-    if blocked:
-        return blocked
 
     data = request.get_json() or {}
     photos = state['cull'].get('photos', [])
