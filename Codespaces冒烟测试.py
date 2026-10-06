@@ -33,6 +33,17 @@ assert r.status_code == 200, r.status_code
 payload = r.get_json()
 assert payload["codespaces"] is True
 
+# Opening the forwarded port from the Codespaces editor legitimately carries
+# a github.dev Referer on the top-level navigation and must not be blocked.
+r = client.get(
+    "/",
+    headers={
+        "Host": EXPECTED,
+        "Referer": "https://zany-eureka-wv7g997v79rg254jg.github.dev/",
+    },
+)
+assert r.status_code == 200, r.status_code
+
 # Unknown forwarded hosts are rejected.
 r = client.get("/", headers={"Host": "evil.example"})
 assert r.status_code == 403, r.status_code
