@@ -13,7 +13,7 @@ import urllib.request
 from pathlib import Path
 
 APP_TITLE = "照片筛选 · PhotoCurator 中文版"
-APP_VERSION = "1.2.3-cn.5"
+APP_VERSION = "1.2.3-cn.7"
 HOST = "127.0.0.1"
 DEFAULT_PORT = 5014
 
