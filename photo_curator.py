@@ -72,7 +72,7 @@ except Exception:
 
 app = Flask(__name__)
 
-APP_VERSION = "1.2.4-cn.4"
+APP_VERSION = "1.2.5-cn.1"
 IS_CODESPACES = os.environ.get('CODESPACES', '').strip().lower() == 'true'
 CODESPACE_NAME = os.environ.get('CODESPACE_NAME', '').strip()
 _CODESPACES_DOMAIN_RAW = os.environ.get(
@@ -283,6 +283,11 @@ def _allowed_roots():
     cur = state.get('folder')
     if cur:
         roots.append(cur)
+    scan = state.get('scan') or {}
+    if scan.get('output_mode') == 'custom' and scan.get('custom_output'):
+        # A custom output folder is user-selected app state too. Files moved
+        # there must remain viewable/deletable by the same safe media endpoints.
+        roots.append(scan.get('custom_output'))
     try:
         roots.extend(load_recents())
     except Exception:
@@ -1781,7 +1786,7 @@ function settingsHTML(step){
   if(step==='cull') return `<div class="wgroup"><label>筛选严格度 <b id="optVal">1.00</b></label>
       <input type="range" id="opt" min="0.6" max="1.6" step="0.05" value="1.0">
       <div class="slider-value">数值越低保留越多，越高筛选越严格</div></div>
-      <label class="check"><input type="checkbox" id="cAdaptive" checked> 根据当前文件夹自适应阈值</label>
+      <label class="check"><input type="checkbox" id="cAdaptive" checked> 根据本次照片自动适应阈值</label>
       <label class="check" style="margin-top:6px"><input type="checkbox" id="cRescue" checked> 质量保护：保留轻微软但构图优秀的照片</label>${librarySettingsHTML(step)}`;
   if(step==='dedup') return `<div class="wgroup"><label>相似度阈值</label>
       <input type="range" id="opt" min="0.5" max="0.95" step="0.05" value="0.8">
@@ -2263,6 +2268,7 @@ function renderDedupGroups(groups){
   document.getElementById('sShowing').textContent=groups.length;
   if(!groups.length){
     g.innerHTML='<div class="empty"><div class="icon">✓</div><div class="title">没有需要人工处理的相似组</div></div>';
+    document.getElementById('resultTools').style.display='none';
     return;
   }
   const buckets={};
@@ -2406,6 +2412,7 @@ function renderRank(items){
     document.getElementById('sShowing').textContent=rankView.length;
     updateResultTools();updatePager();return;
   }
+  document.getElementById('resultTools').style.display='none';
 
   const emp=g.querySelector('.empty');if(emp)emp.remove();
   const existing={};g.querySelectorAll('.photo-card').forEach(n=>existing[n.dataset.path]=n);
@@ -2517,6 +2524,7 @@ function renderCullStep(items){
     document.getElementById('sShowing').textContent=filtered.length;
     updateResultTools();updatePager();return;
   }
+  document.getElementById('resultTools').style.display='none';
 
   const moveSig=items.filter(p=>p.tier==='blurry')
     .map(p=>p.path+':'+(p.move_selected===false?'0':'1')).join('|');
