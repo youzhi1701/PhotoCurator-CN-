@@ -13,14 +13,28 @@ import urllib.request
 from pathlib import Path
 
 APP_TITLE = "照片筛选 · PhotoCurator 中文版"
-APP_VERSION = "1.2.6-cn.1"
+APP_VERSION = "1.3.0"
 HOST = "127.0.0.1"
 DEFAULT_PORT = 5014
+
+IS_FROZEN = bool(getattr(sys, "frozen", False))
+if IS_FROZEN:
+    INSTALL_ROOT = Path(sys.executable).resolve().parent.parent
+    DATA_ROOT = INSTALL_ROOT / "data"
+else:
+    INSTALL_ROOT = Path(__file__).resolve().parent
+    DATA_ROOT = Path(os.environ.get("PHOTOCURATOR_DATA_DIR", "")).expanduser() if os.environ.get("PHOTOCURATOR_DATA_DIR") else (Path.home() / ".photo_curator")
+LOG_DIR = DATA_ROOT / "logs"
+try:
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+except Exception:
+    pass
+os.environ.setdefault("PHOTOCURATOR_DATA_DIR", str(DATA_ROOT))
 
 
 def _write_early_error_log():
     try:
-        log = Path(__file__).with_name("startup-error.log")
+        log = LOG_DIR / "startup-error.log"
         log.write_text(
             "\n".join([
                 f"照片筛选 {APP_VERSION}",
@@ -232,7 +246,7 @@ def main():
 
 
 def write_error_log(exc):
-    log = Path(__file__).with_name("startup-error.log")
+    log = LOG_DIR / "startup-error.log"
     details = [
         f"照片筛选 {APP_VERSION}",
         f"Python: {sys.version}",
