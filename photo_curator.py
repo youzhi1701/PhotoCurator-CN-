@@ -72,7 +72,7 @@ except Exception:
 
 app = Flask(__name__)
 
-APP_VERSION = "1.2.4-cn.3"
+APP_VERSION = "1.2.4-cn.4"
 IS_CODESPACES = os.environ.get('CODESPACES', '').strip().lower() == 'true'
 CODESPACE_NAME = os.environ.get('CODESPACE_NAME', '').strip()
 _CODESPACES_DOMAIN_RAW = os.environ.get(
@@ -1438,6 +1438,22 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   .folder-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 12px;background:var(--panel2);font-size:12px}
   .folder-head b{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .folder-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:10px;padding:10px}
+  .folder-head{cursor:pointer}
+  .folder-head .fold-btn{border:0;background:transparent;color:var(--muted);font-size:12px;cursor:pointer;padding:2px 4px}
+  .folder-group.collapsed .folder-body{display:none}
+  .result-tools{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 0 10px;flex-wrap:wrap}
+  .result-tools-left,.result-tools-right{display:flex;align-items:center;gap:6px}
+  .result-tools .chip.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+  #gallery.view-large .folder-grid{grid-template-columns:repeat(auto-fill,minmax(260px,1fr))}
+  #gallery.view-large .dedup-choices{grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}
+  #gallery.view-list .folder-grid{grid-template-columns:1fr}
+  #gallery.view-list .photo-card{display:grid;grid-template-columns:150px 1fr;min-height:96px}
+  #gallery.view-list .photo-card .photo-img{width:150px;height:100%;min-height:96px;aspect-ratio:auto;object-fit:cover}
+  #gallery.view-list .photo-card .photo-info{align-self:center;padding:10px 12px}
+  #gallery.view-list .dedup-choices{grid-template-columns:1fr}
+  #gallery.view-list .dedup-choice{display:grid;grid-template-columns:180px 1fr;min-height:110px}
+  #gallery.view-list .dedup-choice img{width:180px;height:110px;aspect-ratio:auto;object-fit:cover}
+  #gallery.view-list .dedup-choice-meta{align-self:center;padding:10px 12px}
   .source-path{font-size:10px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:3px}
   .settings-subtitle{font-size:11px;font-weight:700;color:var(--muted);margin:11px 0 5px}
   body.processing .photo-card{cursor:default}
@@ -1584,6 +1600,17 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
       <div class="progress-text" id="progressText">…</div>
     </div>
     <div class="filter-bar" id="filterBar" style="display:none"></div>
+    <div class="result-tools" id="resultTools" style="display:none">
+      <div class="result-tools-left">
+        <button class="chip" id="expandAllBtn">全部展开</button>
+        <button class="chip" id="collapseAllBtn">全部收起</button>
+      </div>
+      <div class="result-tools-right">
+        <button class="chip" data-view="small">小图</button>
+        <button class="chip" data-view="large">大图</button>
+        <button class="chip" data-view="list">列表</button>
+      </div>
+    </div>
     <div class="pager" id="pager" style="display:none"></div>
     <div class="gallery" id="gallery"><div class="empty"><div class="icon">🎞️</div><div>先选择照片文件夹，然后点击“开始筛选”</div></div></div>
   </div>
@@ -1642,6 +1669,12 @@ let recursiveScan=true;
 let compareScope='folder';
 let outputMode='source';
 let customOutput='';
+let resultView='small';
+try{
+  const v=localStorage.getItem('pc-result-view');
+  if(['small','large','list'].includes(v))resultView=v;
+}catch(_){}
+const collapsedFolders=new Set();
 try{
   const saved=JSON.parse(localStorage.getItem('pc-library-settings')||'{}');
   if(typeof saved.recursive==='boolean')recursiveScan=saved.recursive;
@@ -1671,6 +1704,46 @@ function librarySettingsHTML(step){
     +'<input id="customOutput" type="text" placeholder="例如 D:\\照片筛选结果" style="margin-top:7px"></div></details>';
   return h;
 }
+
+function applyResultView(){
+  const g=document.getElementById('gallery');
+  if(!g)return;
+  g.classList.remove('view-small','view-large','view-list');
+  g.classList.add('view-'+resultView);
+  document.querySelectorAll('#resultTools [data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view===resultView));
+  try{localStorage.setItem('pc-result-view',resultView);}catch(_){}
+}
+function updateResultTools(){
+  const tools=document.getElementById('resultTools');
+  const g=document.getElementById('gallery');
+  const hasGroups=!!g.querySelector('.folder-group');
+  tools.style.display=hasGroups?'flex':'none';
+  applyResultView();
+}
+function setAllFolders(collapsed){
+  document.querySelectorAll('#gallery .folder-group').forEach(group=>{
+    group.classList.toggle('collapsed',collapsed);
+    const key=decodeURIComponent(group.dataset.folder||'');
+    if(collapsed)collapsedFolders.add(key);else collapsedFolders.delete(key);
+    const btn=group.querySelector('.fold-btn');if(btn)btn.textContent=collapsed?'展开':'收起';
+  });
+}
+document.getElementById('expandAllBtn').onclick=()=>setAllFolders(false);
+document.getElementById('collapseAllBtn').onclick=()=>setAllFolders(true);
+document.querySelectorAll('#resultTools [data-view]').forEach(btn=>btn.onclick=()=>{
+  resultView=btn.dataset.view;applyResultView();
+});
+document.getElementById('gallery').addEventListener('click',e=>{
+  const head=e.target.closest('.folder-head');
+  if(!head)return;
+  if(e.target.closest('button.delete-btn'))return;
+  const group=head.closest('.folder-group');if(!group)return;
+  const key=decodeURIComponent(group.dataset.folder||'');
+  const next=!group.classList.contains('collapsed');
+  group.classList.toggle('collapsed',next);
+  if(next)collapsedFolders.add(key);else collapsedFolders.delete(key);
+  const btn=group.querySelector('.fold-btn');if(btn)btn.textContent=next?'展开':'收起';
+});
 
 /* theme */
 const tt=document.getElementById('themeToggle');
@@ -1781,6 +1854,7 @@ function activateStep(step){
   {const mb=document.getElementById('moveBlurryBtn');mb.style.display='none';mb.classList.add('btn-ghost');mb.classList.remove('btn','cta');startBtn.classList.remove('secondary');}
   document.getElementById('dedupApplyBtn').style.display='none';
   document.getElementById('progressWrap').style.display='none';  // clear stale summary
+  document.getElementById('resultTools').style.display='none';
   document.getElementById('gallery').innerHTML=emptyHTML(currentStep);
   lastRankSig='';renderedCount=0;photoIdx=0;lastStep=null;
   gPage=0;lastGallerySig='';gItems=[];document.getElementById('pager').style.display='none';
@@ -2200,8 +2274,9 @@ function renderDedupGroups(groups){
   let seq=0,html='<div class="folder-results">';
   keys.forEach(key=>{
     const rows=buckets[key];
-    html+='<section class="folder-group"><div class="folder-head"><b>📁 '+escHtml(key)+'</b><span>'+rows.length+' 组</span></div>';
-    html+='<div style="padding:10px;display:flex;flex-direction:column;gap:10px">';
+    const folded=collapsedFolders.has(key);
+    html+='<section class="folder-group '+(folded?'collapsed':'')+'" data-folder="'+encodeURIComponent(key)+'"><div class="folder-head"><b>📁 '+escHtml(key)+'</b><span>'+rows.length+' 组 · <button class="fold-btn">'+(folded?'展开':'收起')+'</button></span></div>';
+    html+='<div class="folder-body" style="padding:10px;display:flex;flex-direction:column;gap:10px">';
     rows.forEach(group=>{
       seq++;
       const members=group.members||[];
@@ -2224,6 +2299,7 @@ function renderDedupGroups(groups){
   });
   html+='</div>';
   g.innerHTML=html;
+  updateResultTools();
 }
 function selectDedupPhoto(groupId,path){
   fetch('/api/dedup-select',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({group_id:Number(groupId),path})})
@@ -2256,8 +2332,9 @@ function renderFolderPage(slice,cardBuilder,startIndex){
   let html='<div class="folder-results">';
   keys.forEach(key=>{
     const rows=buckets[key];
-    html+='<section class="folder-group"><div class="folder-head"><b>📁 '+escHtml(key)+'</b><span>'+rows.length+' 张</span></div>';
-    html+='<div class="folder-grid">';
+    const folded=collapsedFolders.has(key);
+    html+='<section class="folder-group '+(folded?'collapsed':'')+'" data-folder="'+encodeURIComponent(key)+'"><div class="folder-head"><b>📁 '+escHtml(key)+'</b><span>'+rows.length+' 张 · <button class="fold-btn">'+(folded?'展开':'收起')+'</button></span></div>';
+    html+='<div class="folder-grid folder-body">';
     rows.forEach(x=>{html+=cardBuilder(x.p,x.idx);});
     html+='</div></section>';
   });
@@ -2312,6 +2389,7 @@ function renderRank(items){
     g.innerHTML=(items.length&&rankFilter==='pbg')
       ?'<div class="empty"><div class="icon">📱</div><div>还没有标记为手机壁纸的照片。<br>点击优选照片上的 📱 按钮即可标记。</div></div>'
       :EMPTY;
+    document.getElementById('resultTools').style.display='none';
     lastRankSig='';updatePager();return;
   }
 
@@ -2326,7 +2404,7 @@ function renderRank(items){
   if(recursiveScan){
     g.innerHTML=renderFolderPage(slice,rankCard,start);
     document.getElementById('sShowing').textContent=rankView.length;
-    updatePager();return;
+    updateResultTools();updatePager();return;
   }
 
   const emp=g.querySelector('.empty');if(emp)emp.remove();
@@ -2428,6 +2506,7 @@ function renderCullStep(items){
   const g=document.getElementById('gallery');
   if(!filtered.length){
     g.innerHTML=EMPTY;lastCullSig='';lastStep=currentStep;
+    document.getElementById('resultTools').style.display='none';
     document.getElementById('sShowing').textContent=0;
     updatePager();
     return;
@@ -2436,7 +2515,7 @@ function renderCullStep(items){
   if(recursiveScan){
     g.innerHTML=renderFolderPage(cullView,cullCardHtml,0);
     document.getElementById('sShowing').textContent=filtered.length;
-    updatePager();return;
+    updateResultTools();updatePager();return;
   }
 
   const moveSig=items.filter(p=>p.tier==='blurry')
