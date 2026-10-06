@@ -47,7 +47,17 @@ jobs:
               raise SystemExit(f"Version mismatch: desktop={dv}, core={cv}")
           if f"v{dv}" not in readme:
               raise SystemExit(f"README missing current build v{dv}")
-          print("Codespaces helpers + version consistency OK:", dv)
+
+          installer = Path("packaging/PhotoCurator.iss").read_text(encoding="utf-8")
+          version_info = Path("packaging/version_info.txt").read_text(encoding="utf-8")
+          build_workflow = Path(".github/workflows/build-release.yml").read_text(encoding="utf-8")
+          if f'#define MyAppVersion "{dv}"' not in installer:
+              raise SystemExit("Installer version does not match APP_VERSION")
+          if f"StringStruct('ProductVersion', '{dv}')" not in version_info:
+              raise SystemExit("EXE version info does not match APP_VERSION")
+          if f"PhotoCurator-Setup-v{dv}.exe" not in build_workflow:
+              raise SystemExit("Build workflow artifact version does not match APP_VERSION")
+          print("Release packaging + version consistency OK:", dv)
           PY
 
       - name: Extract embedded UI JavaScript
