@@ -1884,7 +1884,7 @@ let customOutput='';
 let resultView='small';
 try{
   const v=localStorage.getItem('pc-result-view');
-  if(['small','large','list'].includes(v))resultView=v;
+  if(v==='list')resultView='list'; else resultView='small';
 }catch(_){}
 const collapsedFolders=new Set();
 const expandedFolders=new Set();
@@ -1941,10 +1941,9 @@ function setAllFolders(collapsed){
   defaultFoldersCollapsed=collapsed;
   collapsedFolders.clear();
   expandedFolders.clear();
-  document.querySelectorAll('#gallery .folder-group').forEach(group=>{
-    group.classList.toggle('collapsed',collapsed);
-    const btn=group.querySelector('.fold-btn');if(btn)btn.textContent=collapsed?'展开':'收起';
-  });
+  if(currentStep==='cull')renderCullStep(photos);
+  else if(currentStep==='dedup')renderDedupGroups(photos);
+  else renderRank(photos);
 }
 document.getElementById('expandAllBtn').onclick=()=>setAllFolders(false);
 document.getElementById('collapseAllBtn').onclick=()=>setAllFolders(true);
