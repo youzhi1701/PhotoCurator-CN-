@@ -423,11 +423,34 @@ def list_images(folder, recursive=False):
         return sorted(p for p in root.iterdir() if valid_file(p))
 
     out = []
+    custom_cmp = None
+    try:
+        scan = state.get('scan') or {}
+        custom = scan.get('custom_output') if scan.get('output_mode') == 'custom' else ''
+        if custom:
+            custom_cmp = os.path.normcase(os.path.realpath(os.path.expanduser(custom)))
+    except Exception:
+        custom_cmp = None
+
     for cur, dirs, files in os.walk(root):
         # Prune in-place so os.walk never descends into generated/hidden dirs.
-        dirs[:] = [d for d in dirs
-                   if not d.startswith('.') and not _is_output_dir_name(d)]
+        # If the user chose a custom result directory inside the selected tree,
+        # prune that exact directory too; otherwise next run would re-import
+        # files that PhotoCurator itself moved there.
         base = Path(cur)
+        kept_dirs = []
+        for d in dirs:
+            if d.startswith('.') or _is_output_dir_name(d):
+                continue
+            if custom_cmp:
+                try:
+                    child_cmp = os.path.normcase(os.path.realpath(base / d))
+                    if child_cmp == custom_cmp:
+                        continue
+                except Exception:
+                    pass
+            kept_dirs.append(d)
+        dirs[:] = kept_dirs
         for name in files:
             p = base / name
             if valid_file(p):
