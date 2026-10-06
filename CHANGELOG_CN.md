@@ -1,5 +1,12 @@
 # 更新记录
 
+## v1.2.2-cn.4
+
+- 修复从 GitHub Codespaces 编辑器打开私有 5014 转发端口时出现“禁止访问 / 403”的问题
+- 保留精确 Host 白名单与 Origin 同源校验，继续限制只能访问当前 Codespace 的专属转发域名
+- 不再把顶层页面请求携带的 GitHub 编辑器 Referer 当作拒绝条件
+- 新增 Codespaces 编辑器 Referer 回归测试，避免后续再次误拦截在线预览
+
 ## v1.2.2-cn.3
 
 - 修复 Codespaces 端口已经转发但 Flask 前台进程退出后出现 HTTP 502 的问题
