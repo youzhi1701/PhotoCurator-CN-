@@ -2,7 +2,7 @@
 
 基于开源项目 **Photo Curator v7.0** 二次开发的 Windows 中文桌面照片筛选工具。
 
-当前中文桌面版：**v1.2.5-cn.1**
+当前中文桌面版：**v1.2.6-cn.1**
 
 ## 主要能力
 
@@ -32,7 +32,7 @@
 - 手动修改“清晰 / 轻微软 / 模糊”只改变分类，不会擅自移动原文件
 - 只有明确点击移动 / 确认处理后才会改动原照片位置
 - 三个板块都支持人工确认后的直接删除原文件
-- 默认将处理结果放在原照片所在目录的 `PhotoCurator_Result` 中
+- 默认将处理结果放在原照片所在目录的 `PhotoCurator_Result（照片筛选结果）` 中
 - 高级设置可改为统一放到所选大文件夹或自定义输出目录
 - 重复导出不会覆盖上一次 TOP 结果
 - 动态本地端口，5014 被占用时桌面版自动寻找可用端口
@@ -81,14 +81,20 @@ bash 在线预览.sh
 - 手动将照片从“模糊”改为“清晰/轻微软”时会自动退出待移动列表
 - 手动将照片改为“模糊”时会默认加入待移动列表
 - 大图预览中也可以切换“本次移动 / 保留原位”
-- 点击移动后，只移动已勾选的模糊照片；默认存入原目录下的 `PhotoCurator_Result/Blurred`
+- 点击移动后，只移动已勾选的模糊照片；默认存入原目录下的 `PhotoCurator_Result（照片筛选结果）/Blurred（模糊照片）`
 - 未勾选照片保持原位置
 
 ## Windows 第一次使用
 
-双击：
+推荐直接双击：
 
 `一键安装并启动.bat`
+
+中文 `.bat` 文件现在只是极简入口，真正的启动逻辑统一放在 ASCII-only 的英文 `.cmd` 文件中，避免 Windows CMD 因中文编码、括号或代码页差异把提示文字误当成命令执行。
+
+如果中文入口被安全软件或系统环境影响，也可以直接双击：
+
+`PhotoCurator-Install.cmd`
 
 安装器会：
 
@@ -103,18 +109,26 @@ bash 在线预览.sh
 
 ## 日常使用
 
-双击：
+正常使用双击：
 
 `启动照片筛选.bat`
 
-正常情况下不会出现需要长期保留的命令行窗口。
+它会调用稳定的：
+
+`PhotoCurator-Start.cmd`
+
+正常情况下不会出现需要长期保留的命令行窗口。若桌面 WebView 启动失败，会自动进入浏览器兼容模式。
 
 ## 其他入口
 
-- `环境自检.bat`：检查 Python、代码语法、依赖和临时目录
-- `调试运行.bat`：出现问题时显示完整错误
-- `打开日志文件夹.bat`：打开运行期滚动日志目录；日志单文件最大约 2MB，最多保留 3 个历史文件
-- `浏览器兼容模式.bat`：桌面 WebView 异常时的备用启动方式
+中文入口仍保留，内部全部转发到稳定的 ASCII `.cmd`：
+
+- `环境自检.bat` → `PhotoCurator-Check.cmd`
+- `调试运行.bat` → `PhotoCurator-Debug.cmd`
+- `浏览器兼容模式.bat` → `PhotoCurator-Browser.cmd`
+- `打开日志文件夹.bat` → `PhotoCurator-Logs.cmd`
+
+桌面启动失败时会生成 `startup-error.log`。运行期日志仍保存在用户目录下的 `.photo_curator/logs`。
 
 桌面版和浏览器兼容模式都会优先使用本地端口 5014；如果该端口被占用，会自动选择其他空闲的本地端口。浏览器兼容模式会在服务启动后自动打开正确地址。
 
@@ -148,8 +162,8 @@ bash 在线预览.sh
 - “删除原文件”会再次弹出确认提示
 - TOP 导出使用复制，不移动原照片
 - 重复 TOP 导出会创建新目录，不覆盖上一批结果
-- 默认输出目录为各原照片目录下的 `PhotoCurator_Result/Blurred` 或 `PhotoCurator_Result/Duplicates`
-- 递归扫描会自动跳过 `Blurred`、`Duplicates`、`PhotoCurator_Result`、`TOP_*`、`PhoneBG*`，避免处理结果再次进入扫描
+- 默认输出目录为各原照片目录下的 `PhotoCurator_Result（照片筛选结果）/Blurred（模糊照片）` 或 `PhotoCurator_Result（照片筛选结果）/Duplicates（重复照片）`
+- 递归扫描会自动跳过新旧版结果目录，包括 `Blurred`、`Duplicates`、`PhotoCurator_Result`、带中文括号备注的新目录、`TOP_*`、`PhoneBG*`，并跳过 Windows 回收站/系统卷目录，避免处理结果再次进入扫描
 
 ## 大图库说明
 
