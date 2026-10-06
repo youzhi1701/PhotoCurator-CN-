@@ -99,6 +99,25 @@ jobs:
           print("UI boot initialization order OK")
           PY
 
+      - name: Check blurry move-selection UI synchronization
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          js = Path("/tmp/photocurator-ui.js").read_text(encoding="utf-8")
+          required = [
+              "function syncCullCardNode(node,p,idx)",
+              "ms.classList.toggle('off',!moveOn)",
+              "ms.textContent=moveOn?'✓':'□'",
+              "syncCullCardNode(node,p,idx);",
+              "data-move-selected=",
+          ]
+          missing = [x for x in required if x not in js]
+          if missing:
+              raise SystemExit("Cull move-selection UI sync regression: " + repr(missing))
+          print("Cull move-selection UI sync guard OK")
+          PY
+
       - name: Validate embedded HTML structure
         run: |
           python - <<'PY'
