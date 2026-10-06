@@ -72,7 +72,7 @@ except Exception:
 
 app = Flask(__name__)
 
-APP_VERSION = "1.2.4-cn.2"
+APP_VERSION = "1.2.4-cn.3"
 IS_CODESPACES = os.environ.get('CODESPACES', '').strip().lower() == 'true'
 CODESPACE_NAME = os.environ.get('CODESPACE_NAME', '').strip()
 _CODESPACES_DOMAIN_RAW = os.environ.get(
@@ -1116,7 +1116,7 @@ def run_dedup(folder, threshold, ftype='all', pair='both',
                 all_groups.append({
                     'group_id': len(all_groups),
                     'count': len(member_rows),
-                    'selected_path': selected,
+                    'selected_paths': [selected],
                     'folder_rel': (rels[0] if len(rels) == 1 else '跨文件夹重复'),
                     'members': member_rows,
                 })
@@ -1658,20 +1658,17 @@ function librarySettingsHTML(step){
   let h='<div class="settings-subtitle">📂 扫描范围</div>'
     +'<div class="wgroup"><select id="scanScope">'
     +'<option value="recursive">当前文件夹 + 所有子文件夹</option>'
-    +'<option value="current">仅当前文件夹</option></select>'
-    +'<div class="slider-value">递归扫描会自动跳过 Blurred、Duplicates、TOP_*、PhoneBG* 和 PhotoCurator_Result。</div></div>';
-  if(step==='dedup')h+='<div class="settings-subtitle">🔎 相似照片对比范围</div>'
+    +'<option value="current">仅当前文件夹</option></select></div>';
+  if(step==='dedup')h+='<div class="settings-subtitle">🔎 对比范围</div>'
     +'<div class="wgroup"><select id="compareScope">'
-    +'<option value="folder">各子文件夹独立对比（推荐）</option>'
-    +'<option value="global">整个所选范围全局对比</option></select>'
-    +'<div class="slider-value">全局对比可以发现分散在不同文件夹里的重复照片，但耗时会更长。</div></div>';
-  h+='<div class="settings-subtitle">📦 处理文件存放位置</div>'
-    +'<div class="wgroup"><select id="outputMode">'
-    +'<option value="source">跟随原照片所在文件夹（推荐）</option>'
-    +'<option value="root">统一放到当前所选大文件夹</option>'
+    +'<option value="folder">文件夹内对比</option>'
+    +'<option value="global">全局对比</option></select></div>';
+  h+='<details style="margin-top:10px"><summary style="cursor:pointer;font-size:11px;color:var(--muted)">高级设置</summary>'
+    +'<div class="wgroup" style="margin-top:8px"><label>处理文件存放位置</label><select id="outputMode">'
+    +'<option value="source">跟随原文件夹（推荐）</option>'
+    +'<option value="root">统一放到所选大文件夹</option>'
     +'<option value="custom">自定义输出目录</option></select>'
-    +'<input id="customOutput" type="text" placeholder="例如 D:\\照片筛选结果" style="margin-top:7px">'
-    +'<div class="slider-value">默认在每个原文件夹内建立 PhotoCurator_Result，再分别存放 Blurred / Duplicates。</div></div>';
+    +'<input id="customOutput" type="text" placeholder="例如 D:\\照片筛选结果" style="margin-top:7px"></div></details>';
   return h;
 }
 
@@ -2191,7 +2188,7 @@ function renderDedupGroups(groups){
   const g=document.getElementById('gallery');
   document.getElementById('sShowing').textContent=groups.length;
   if(!groups.length){
-    g.innerHTML='<div class="empty"><div class="icon">✓</div><div class="title">没有需要人工处理的相似组</div><p>单独照片会自动保留；只有检测到 2 张及以上相似照片时才会出现在这里。</p></div>';
+    g.innerHTML='<div class="empty"><div class="icon">✓</div><div class="title">没有需要人工处理的相似组</div></div>';
     return;
   }
   const buckets={};
@@ -2200,27 +2197,25 @@ function renderDedupGroups(groups){
     (buckets[key]||(buckets[key]=[])).push(group);
   });
   const keys=Object.keys(buckets).sort((a,b)=>a.localeCompare(b,'zh-CN'));
-  let seq=0;
-  let html='<div class="folder-results">';
+  let seq=0,html='<div class="folder-results">';
   keys.forEach(key=>{
     const rows=buckets[key];
-    const total=rows.reduce((n,x)=>n+(x.members||[]).length,0);
-    html+='<section class="folder-group"><div class="folder-head"><b>📁 '+escHtml(key)+'</b><span>'+rows.length+' 组 · '+total+' 张</span></div>';
+    html+='<section class="folder-group"><div class="folder-head"><b>📁 '+escHtml(key)+'</b><span>'+rows.length+' 组</span></div>';
     html+='<div style="padding:10px;display:flex;flex-direction:column;gap:10px">';
     rows.forEach(group=>{
       seq++;
       const members=group.members||[];
+      const kept=members.filter(p=>p.selected).length;
       html+='<div class="dedup-group" data-group="'+group.group_id+'">';
-      html+='<div class="dedup-group-head"><b>相似组 '+seq+' · '+members.length+' 张</b><span>点击照片切换保留项</span></div>';
+      html+='<div class="dedup-group-head"><b>相似组 '+seq+' · '+members.length+' 张</b><span>已选择 '+kept+' / '+members.length+' 张保留</span></div>';
       html+='<div class="dedup-choices">';
       members.forEach(p=>{
         const sel=!!p.selected;
         html+='<div class="dedup-choice '+(sel?'selected':'')+'" data-group="'+group.group_id+'" data-path="'+escHtml(p.path)+'">';
-        if(sel)html+='<div class="dedup-recommend">✓ 当前保留</div>';
+        html+='<div class="dedup-recommend">'+(sel?'☑ 保留':'☐ 保留')+'</div>';
         html+='<img src="'+p.thumb+'" loading="lazy" decoding="async">';
         html+='<div class="dedup-choice-meta"><div class="dedup-choice-name">'+escHtml(p.name)+'</div>';
         html+='<div class="source-path">'+escHtml(p.rel_dir||'当前文件夹')+'</div>';
-        html+='<div class="dedup-choice-state">'+(sel?'系统推荐 / 当前选择':'点击改为保留')+'</div>';
         html+='<button class="delete-btn" data-step="dedup" data-path="'+escHtml(p.path)+'" style="margin-top:6px" title="直接删除原文件">🗑 删除</button></div></div>';
       });
       html+='</div></div>';
@@ -2233,7 +2228,7 @@ function renderDedupGroups(groups){
 function selectDedupPhoto(groupId,path){
   fetch('/api/dedup-select',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({group_id:Number(groupId),path})})
     .then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;})
-    .then(d=>{renderDedupGroups(d.photos||[]);toast('已切换本组保留照片','good');})
+    .then(d=>{renderDedupGroups(d.photos||[]);toast(d.selected?'已加入保留':'已取消保留','good');})
     .catch(err=>toast('切换失败：'+(err.message||'未知错误'),'bad'));
 }
 function applyDedupSelection(){
@@ -3164,7 +3159,7 @@ def api_progress(step):
 
 @app.route('/api/dedup-select', methods=['POST'])
 def api_dedup_select():
-    """Switch the kept photo inside one completed similarity group."""
+    """Toggle one photo's kept state; each similarity group must keep >= 1."""
     blocked = _reject_mutation_while_running()
     if blocked:
         return blocked
@@ -3180,15 +3175,34 @@ def api_dedup_select():
     group = next((g for g in s.get('groups_data', []) if g.get('group_id') == gid), None)
     if not group:
         return jsonify({'error': '未找到这个相似组'}), 404
-    if path not in {m.get('path') for m in group.get('members', [])}:
+    member_paths = [m.get('path') for m in group.get('members', []) if m.get('path')]
+    if path not in member_paths:
         return jsonify({'error': '这张照片不属于当前相似组'}), 400
-    group['selected_path'] = path
+
+    selected = set(group.get('selected_paths') or [])
+    if not selected:
+        selected.add(member_paths[0])
+
+    if path in selected:
+        if len(selected) <= 1:
+            return jsonify({'error': '每个相似组至少保留 1 张照片'}), 409
+        selected.remove(path)
+        now_selected = False
+    else:
+        selected.add(path)
+        now_selected = True
+
+    group['selected_paths'] = [p for p in member_paths if p in selected]
     for member in group.get('members', []):
-        member['selected'] = member.get('path') == path
-    s['kept_paths'] = [g.get('selected_path') for g in s.get('groups_data', [])
-                       if g.get('selected_path')]
+        member['selected'] = member.get('path') in selected
+
+    s['kept_paths'] = [
+        p for g in s.get('groups_data', [])
+        for p in (g.get('selected_paths') or [])
+    ]
     s['photos'] = [g for g in s.get('groups_data', []) if g.get('count', 0) > 1]
-    return jsonify({'ok': True, 'photos': s['photos'], 'kept': len(s['kept_paths'])})
+    return jsonify({'ok': True, 'photos': s['photos'],
+                    'kept': len(s['kept_paths']), 'selected': now_selected})
 
 
 @app.route('/api/dedup-apply', methods=['POST'])
@@ -3209,9 +3223,9 @@ def api_dedup_apply():
     for group in s.get('groups_data', []):
         if group.get('count', 0) <= 1:
             continue
-        selected = group.get('selected_path')
+        selected = set(group.get('selected_paths') or [])
         dups.extend(m.get('path') for m in group.get('members', [])
-                    if m.get('path') and m.get('path') != selected)
+                    if m.get('path') and m.get('path') not in selected)
     if not dups:
         s['applied'] = True
         return jsonify({'ok': True, 'moved': 0,
@@ -3296,15 +3310,18 @@ def api_delete_photo():
             continue
         group['members'] = members
         group['count'] = len(members)
-        if group.get('selected_path') == deleted:
-            group['selected_path'] = members[0].get('path')
+        selected = [p for p in (group.get('selected_paths') or []) if p != deleted]
+        if not selected:
+            selected = [members[0].get('path')]
+        group['selected_paths'] = selected
+        selected_set = set(selected)
         for m in members:
-            m['selected'] = m.get('path') == group.get('selected_path')
+            m['selected'] = m.get('path') in selected_set
         new_groups.append(group)
     dedup['groups_data'] = new_groups
     dedup['photos'] = [g for g in new_groups if g.get('count', 0) > 1]
     dedup['groups'] = len(new_groups)
-    dedup['kept_paths'] = [g.get('selected_path') for g in new_groups if g.get('selected_path')]
+    dedup['kept_paths'] = [p for g in new_groups for p in (g.get('selected_paths') or [])]
 
     # Rank: remove score object so deleted files cannot reappear after reweighting.
     rank = state['rank']
