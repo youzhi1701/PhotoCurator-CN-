@@ -132,6 +132,7 @@ class DesktopApi:
 
     def __init__(self):
         self._maximized = True
+        self.allow_exit = False
 
     def window_action(self, action):
         window = webview.active_window()
@@ -141,6 +142,10 @@ class DesktopApi:
             # The custom close button is intentionally safe: it minimizes
             # instead of destroying the running analysis session.
             window.minimize()
+            return True
+        if action == 'exit':
+            self.allow_exit = True
+            window.destroy()
             return True
         if action == 'toggle_maximize':
             if self._maximized:
@@ -207,10 +212,11 @@ def main():
             "请运行“调试运行.bat”或查看“startup-error.log”。"
         )
 
+    desktop_api = DesktopApi()
     window = webview.create_window(
         APP_TITLE,
         URL,
-        js_api=DesktopApi(),
+        js_api=desktop_api,
         width=1180,
         height=760,
         min_size=(720, 520),
@@ -225,6 +231,8 @@ def main():
     )
 
     def on_closing():
+        if desktop_api.allow_exit:
+            return True
         active = [k for k in ('cull', 'dedup', 'rank')
                   if state.get(k, {}).get('running')]
         if active:
