@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Photo File Organizer - Moves photos to subfolders based on curator decisions
-Handles: Blurred (blurry), Duplicates, TOP_N folders
+Handles: localized Blurred/Duplicates result folders and TOP_N exports
 """
 
 import shutil
@@ -19,8 +19,8 @@ class PhotoOrganizer:
     
     def __init__(self, root_folder: str):
         self.root = Path(root_folder)
-        self.rozmazane_dir = self.root / "Blurred"
-        self.duplicates_dir = self.root / "Duplicates"
+        self.rozmazane_dir = self.root / "Blurred（模糊照片）"
+        self.duplicates_dir = self.root / "Duplicates（重复照片）"
         self.topn_dir = None  # Set when exporting
         self.dry_run = False
         
@@ -48,7 +48,7 @@ class PhotoOrganizer:
                 
                 # Don't move if already in Blurred (exact parent match — a
                 # substring test would wrongly skip e.g. .../Blurred_old/x.jpg)
-                if src.parent.name == 'Blurred':
+                if src.parent.name in {'Blurred', 'Blurred（模糊照片）'}:
                     results['skipped'] += 1
                     continue
 
@@ -71,7 +71,7 @@ class PhotoOrganizer:
                 results['failed'] += 1
                 results['errors'].append(str(e))
         
-        logger.info(f"已将 {results['moved']} 张模糊照片移动到 Blurred/")
+        logger.info(f"已将 {results['moved']} 张模糊照片移动到 Blurred（模糊照片）/")
         return results
     
     def move_duplicate_photos(self, duplicate_paths: List[str], 
@@ -92,7 +92,7 @@ class PhotoOrganizer:
                     continue
                 
                 # Don't move if already in Duplicates (exact parent match)
-                if src.parent.name == 'Duplicates':
+                if src.parent.name in {'Duplicates', 'Duplicates（重复照片）'}:
                     results['skipped'] += 1
                     continue
                 
@@ -115,7 +115,7 @@ class PhotoOrganizer:
                 results['failed'] += 1
                 results['errors'].append(str(e))
         
-        logger.info(f"已将 {results['moved']} 张重复照片移动到 Duplicates/")
+        logger.info(f"已将 {results['moved']} 张重复照片移动到 Duplicates（重复照片）/")
         return results
     
     def copy_top_photos(self, top_photo_paths: List[str], topn: int = 50,
