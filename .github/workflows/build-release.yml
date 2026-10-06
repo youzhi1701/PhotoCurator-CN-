@@ -40,6 +40,12 @@ jobs:
           Write-Host "Packaged EXE version: $v"
           if ($v -notlike "1.3.0*") { throw "Wrong EXE version: $v" }
 
+      - name: Smoke test packaged executable
+        shell: powershell
+        run: |
+          $p = Start-Process -FilePath "dist\PhotoCurator\PhotoCurator.exe" -ArgumentList "--self-test" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Packaged PhotoCurator self-test failed with exit code $($p.ExitCode)" }
+
       - name: Download WebView2 bootstrapper
         shell: powershell
         run: |
