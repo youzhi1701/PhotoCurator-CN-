@@ -949,33 +949,38 @@ def _move_to_software_trash(src, root, source_step):
     original = str(src.resolve())
     shutil.move(str(src), str(dst))
     trash_path = str(dst.resolve())
-    with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=15) as db:
-        db.execute(
-            """INSERT INTO software_trash(original_path,trash_path,source_step,deleted_at)
-               VALUES(?,?,?,?)""",
-            (original, trash_path, str(source_step or ''), time.time())
-        )
-        trash_id = int(db.execute("SELECT last_insert_rowid()").fetchone()[0])
-        db.commit()
+    try:
+        with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=15) as db:
+            db.execute(
+                """INSERT INTO software_trash(original_path,trash_path,source_step,deleted_at)
+                   VALUES(?,?,?,?)""",
+                (original, trash_path, str(source_step or ''), time.time())
+            )
+            trash_id = int(db.execute("SELECT last_insert_rowid()").fetchone()[0])
+            db.commit()
+    except Exception:
+        # Never strand a photo in an unindexed trash directory. If metadata
+        # persistence fails, best-effort roll back the file move immediately.
+        try:
+            Path(original).parent.mkdir(parents=True, exist_ok=True)
+            if not Path(original).exists() and Path(trash_path).is_file():
+                shutil.move(trash_path, original)
+        except Exception:
+            logger.error("software trash rollback failed", exc_info=True)
+        raise
     _activity('移入软件回收站', original, trash_path)
     return trash_id, trash_path
 
 
 def _trash_rows(root=None):
     """Return live software-trash rows, pruning records whose files disappeared."""
-    params = ()
-    where = ""
-    if root:
-        root_cmp = os.path.normcase(os.path.realpath(str(root)))
-        where = " WHERE original_path LIKE ?"
-        prefix = os.path.realpath(str(root)).rstrip("\\/") + os.sep + "%"
-        params = (prefix,)
+    root_cmp = os.path.normcase(os.path.realpath(str(root))) if root else None
     stale = []
     rows = []
     with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=15) as db:
         for row in db.execute(
             "SELECT id,original_path,trash_path,source_step,deleted_at "
-            "FROM software_trash" + where + " ORDER BY deleted_at DESC", params
+            "FROM software_trash ORDER BY deleted_at DESC"
         ).fetchall():
             tid, original, trash_path, source_step, deleted_at = row
             if not Path(trash_path).is_file():
@@ -4815,10 +4820,14 @@ def api_trash_restore():
     except (TypeError, ValueError):
         return jsonify({'error': '无效的回收站记录'}), 400
     try:
+        folder = state.get('folder')
+        current = _trash_rows(folder)
+        if trash_id not in {row['id'] for row in current}:
+            return jsonify({'error': '当前照片库的回收站中没有这条记录'}), 404
         restored = _restore_trash_item(trash_id)
+        rows = _trash_rows(folder)
         return jsonify({'ok': True, 'restored_path': restored,
-                        'photos': _trash_rows(state.get('folder')),
-                        'count': len(_trash_rows(state.get('folder')))})
+                        'photos': rows, 'count': len(rows)})
     except Exception as e:
         logger.warning(f"trash restore failed {trash_id}: {e}")
         return jsonify({'error': f'恢复失败：{e}'}), 500
@@ -4845,6 +4854,9 @@ def api_trash_purge():
             return jsonify({'ok': failed == 0, 'purged': len(rows) - failed,
                             'failed': failed, 'photos': left, 'count': len(left)})
         trash_id = int(data.get('id'))
+        current = _trash_rows(folder)
+        if trash_id not in {row['id'] for row in current}:
+            return jsonify({'error': '当前照片库的回收站中没有这条记录'}), 404
         _purge_trash_item(trash_id)
         rows = _trash_rows(folder)
         return jsonify({'ok': True, 'purged': 1, 'photos': rows, 'count': len(rows)})
