@@ -1491,6 +1491,7 @@ def _sync_dedup_with_cull():
         group['members'] = members
         group['count'] = len(members)
         eligible = [m.get('path') for m in members if m.get('path') in allowed]
+        group['active_count'] = len(eligible)
         selected = [p for p in (group.get('selected_paths') or [])
                     if p in eligible]
         if eligible and not selected:
@@ -1502,7 +1503,10 @@ def _sync_dedup_with_cull():
             m['selected'] = m.get('path') in selected_set
         new_groups.append(group)
     dedup['groups_data'] = new_groups
-    dedup['photos'] = [g for g in new_groups if g.get('count', 0) > 1]
+    # A group only needs user review when at least two currently eligible
+    # Cull survivors remain. Blurry members can stay in metadata without
+    # polluting the duplicate-review count.
+    dedup['photos'] = [g for g in new_groups if g.get('active_count', g.get('count', 0)) > 1]
     dedup['groups'] = len(dedup['photos'])
     dedup['singleton_paths'] = [
         p for p in (dedup.get('singleton_paths') or [])
@@ -1649,21 +1653,31 @@ def run_dedup(folder, threshold, ftype='all', pair='both',
             s['groups_data'] = list(all_groups)
             s['photos'] = [g for g in all_groups if g.get('count', 0) > 1]
             s['groups'] = len(s['photos'])
-            s['singleton_paths'] = list(singleton_paths)
-            s['kept_paths'] = list(singleton_paths) + [
+            allowed_now = _cull_allowed_for_dedup()
+            s['singleton_paths'] = [
+                p for p in singleton_paths
+                if allowed_now is None or p in allowed_now
+            ]
+            s['kept_paths'] = list(s['singleton_paths']) + [
                 p for g in all_groups for p in (g.get('selected_paths') or [])
             ]
+            _sync_dedup_with_cull()
 
         s['groups_data'] = all_groups
         s['photos'] = all_groups
         s['groups'] = len(all_groups)
-        s['singleton_paths'] = singleton_paths
+        allowed_now = _cull_allowed_for_dedup()
+        s['singleton_paths'] = [
+            p for p in singleton_paths
+            if allowed_now is None or p in allowed_now
+        ]
         s['seen_paths'] = seen_paths
         # Recompute from the live group objects so manual selections made while
         # later folders were still scanning are never overwritten by defaults.
-        s['kept_paths'] = list(singleton_paths) + [
+        s['kept_paths'] = list(s['singleton_paths']) + [
             p for g in all_groups for p in (g.get('selected_paths') or [])
         ]
+        _sync_dedup_with_cull()
 
         if s.get('cancel'):
             s['status'] = (f"已停止 · 已扫描 {processed}/{total} 张 · "
