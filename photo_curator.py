@@ -2946,7 +2946,7 @@ function resetWorkspaceForFolder(){
   photos=[];lbList=[];folderStatus={};
   lastRankSig='';lastCullSig='';lastCullMoveSig='';lastGallerySig='';
   gItems=[];gPage=0;
-  ['sImages','sSharp','sSoft','sBlurry','sGroups','sShowing'].forEach(id=>{
+  ['sImages','sSharp','sSoft','sBlurry','sGroups','sShowing','sTrash'].forEach(id=>{
     const el=document.getElementById(id);if(el)el.textContent='0';
   });
   document.getElementById('progressWrap').style.display='none';
@@ -3807,7 +3807,7 @@ function cullSetTier(path,tier){
     }).catch(err=>toast('分类修改失败：'+(err.message||'未知错误'),'bad'));
 }
 
-/* ---- direct delete (all three steps) ---- */
+/* ---- move to PhotoCurator software recycle bin (three review steps) ---- */
 function deletePhoto(step,path,fromLightbox=false){
   const p=(photos||[]).find(x=>x.path===path)||((lbList||[]).find(x=>x.path===path));
   const name=p&&p.name?p.name:path.split(/[\\/]/).pop();
@@ -3816,6 +3816,7 @@ function deletePhoto(step,path,fromLightbox=false){
     .then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;})
     .then(d=>{
       toast('已移入软件回收站：'+name,'good');
+      if(d.trash_count!=null){const tc=document.getElementById('sTrash');if(tc)tc.textContent=d.trash_count;}
       if(step==='cull'){
         cullChunkToken++;cullLiveStore.clear();
         const snap={photos:d.photos||[],running:false,result_total:Number(d.result_total||0)};
