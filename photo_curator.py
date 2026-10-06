@@ -107,6 +107,8 @@ def _activity(action, path='', detail=''):
         with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=10) as db:
             db.execute("INSERT INTO activity_log(ts,action,path,detail) VALUES(?,?,?,?)",
                        (time.time(), str(action), str(path or ''), str(detail or '')))
+            db.execute("""DELETE FROM activity_log
+                          WHERE id NOT IN (SELECT id FROM activity_log ORDER BY id DESC LIMIT 5000)""")
             db.commit()
     except Exception:
         logger.debug("activity log write failed", exc_info=True)
