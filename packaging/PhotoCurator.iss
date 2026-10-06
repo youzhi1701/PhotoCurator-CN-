@@ -4,7 +4,7 @@
 #define MyAppExeName "PhotoCurator.exe"
 
 [Languages]
-Name: "chinesesimp"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
+Name: "chinesesimp"; MessagesFile: "ChineseSimplified.isl"
 
 [Setup]
 AppId={{8B142F6F-E58F-4F7D-97B9-3DA5E82602A4}
