@@ -4029,7 +4029,8 @@ def api_progress(step):
         all_photos = s['photos']
         limit = UI_LIVE_RESULT_CAP if s['running'] else UI_RESULT_CHUNK
         photos = all_photos[:limit]
-        return jsonify({'running': s['running'], 'progress': s['progress'], 'status': s['status'],
+        return jsonify({'running': s['running'], 'complete': bool(s.get('complete')),
+                        'progress': s['progress'], 'status': s['status'],
                         'src_folder': s.get('src_folder'), 'photos': photos,
                         'truncated': (not s['running'] and len(all_photos) > len(photos)),
                         'result_total': len(all_photos),
@@ -4046,7 +4047,8 @@ def api_progress(step):
         all_photos = s['photos']
         photos = all_photos[:UI_RESULT_CAP]
         duplicate_photos = sum(g.get('count', 0) for g in s.get('groups_data', []) if g.get('count', 0) > 1)
-        return jsonify({'running': s['running'], 'progress': s['progress'], 'status': s['status'],
+        return jsonify({'running': s['running'], 'complete': bool(s.get('complete')),
+                        'progress': s['progress'], 'status': s['status'],
                         'src_folder': s.get('src_folder'), 'photos': photos,
                         'truncated': (not s['running'] and len(all_photos) > len(photos)),
                         'result_total': len(all_photos),
@@ -4059,7 +4061,8 @@ def api_progress(step):
         if (not s['running']) or now - float(s.get('preview_at', 0.0)) >= 1.0:
             s['preview'] = build_topn()
             s['preview_at'] = now
-        return jsonify({'running': s['running'], 'progress': s['progress'], 'status': s['status'],
+        return jsonify({'running': s['running'], 'complete': bool(s.get('complete')),
+                        'progress': s['progress'], 'status': s['status'],
                         'src_folder': s.get('src_folder'), 'photos': s.get('preview', []),
                         'stats': {'images': s['total'], 'cache_hits': s.get('cache_hits',0)}})
     abort(404)
