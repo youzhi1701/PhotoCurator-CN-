@@ -1491,7 +1491,16 @@ def build_topn(weights=None, topn=None):
     if (dedup.get('complete') and dedup.get('src_folder') == folder
             and bool(dedup.get('recursive', False)) == recursive):
         dedup_allowed = set(dedup.get('kept_paths') or [])
-        allowed = dedup_allowed if allowed is None else (allowed & dedup_allowed)
+        dedup_seen = {
+            str(m.get('path')) for g in dedup.get('groups_data', [])
+            for m in g.get('members', []) if m.get('path')
+        }
+        if allowed is None:
+            allowed = {getattr(sc, 'path', '') for sc in rank_state.get('scores', [])
+                       if getattr(sc, 'path', '') not in dedup_seen
+                       or getattr(sc, 'path', '') in dedup_allowed}
+        else:
+            allowed = {p for p in allowed if p not in dedup_seen or p in dedup_allowed}
 
     scores = []
     for score in rank_state.get('scores', []):
@@ -1972,6 +1981,8 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   .task-exit:hover{background:rgba(254,226,226,.8)}
   .top button,.top input,.top .theme,.top .window-controls{position:relative;z-index:2}
   .folder-grid .photo-card{content-visibility:auto;contain-intrinsic-size:190px 240px}
+  body.processing #settingsPanel input,
+  body.processing #settingsPanel select{opacity:.72}
 </style></head><body>
 <div class="top pywebview-drag-region">
   <div class="brand">🖼️ PhotoCurator <small>照片整理工作区 · v{{ app_version }}</small></div>
@@ -2110,6 +2121,11 @@ let recursiveScan=true;
 let compareScope='folder';
 let outputMode='source';
 let customOutput='';
+let cullStrictness=1.0;
+let cullAdaptive=true;
+let cullRescue=true;
+let dedupThreshold=0.80;
+let rankTopN=50;
 let resultView='small';
 try{
   const v=localStorage.getItem('pc-result-view');
@@ -2124,10 +2140,17 @@ try{
   if(['folder','global'].includes(saved.compareScope))compareScope=saved.compareScope;
   if(['source','root','custom'].includes(saved.outputMode))outputMode=saved.outputMode;
   if(typeof saved.customOutput==='string')customOutput=saved.customOutput;
+  if(Number.isFinite(Number(saved.cullStrictness)))cullStrictness=Math.min(1.6,Math.max(.6,Number(saved.cullStrictness)));
+  if(typeof saved.cullAdaptive==='boolean')cullAdaptive=saved.cullAdaptive;
+  if(typeof saved.cullRescue==='boolean')cullRescue=saved.cullRescue;
+  if(Number.isFinite(Number(saved.dedupThreshold)))dedupThreshold=Math.min(.95,Math.max(.5,Number(saved.dedupThreshold)));
+  if(['both','raw','jpg'].includes(saved.pairMode))pairMode=saved.pairMode;
+  if(Number.isFinite(Number(saved.rankTopN)))rankTopN=Math.min(500,Math.max(1,Number(saved.rankTopN)));
 }catch(_){}
 function saveLibrarySettings(){
   try{localStorage.setItem('pc-library-settings',JSON.stringify({
-    recursive:recursiveScan,compareScope,outputMode,customOutput
+    recursive:recursiveScan,compareScope,outputMode,customOutput,
+    cullStrictness,cullAdaptive,cullRescue,dedupThreshold,pairMode,rankTopN
   }));}catch(_){}
 }
 function librarySettingsHTML(step){
@@ -2325,9 +2348,20 @@ function renderSettings(){
   applyStepStats();
   document.getElementById('settingsPanel').innerHTML=settingsHTML(currentStep);
   const opt=document.getElementById('opt'),val=document.getElementById('optVal');
-  if(opt&&val)opt.oninput=()=>{val.textContent=(currentStep==='dedup'||currentStep==='cull')?parseFloat(opt.value).toFixed(2):opt.value;};
+  if(opt&&val){
+    opt.value=currentStep==='cull'?cullStrictness:dedupThreshold;
+    val.textContent=parseFloat(opt.value).toFixed(2);
+    opt.oninput=()=>{
+      const v=parseFloat(opt.value);
+      if(currentStep==='cull')cullStrictness=v; else if(currentStep==='dedup')dedupThreshold=v;
+      val.textContent=v.toFixed(2);saveLibrarySettings();
+    };
+  }
+  const ad=document.getElementById('cAdaptive'),rs=document.getElementById('cRescue');
+  if(ad){ad.checked=cullAdaptive;ad.onchange=()=>{cullAdaptive=ad.checked;saveLibrarySettings();};}
+  if(rs){rs.checked=cullRescue;rs.onchange=()=>{cullRescue=rs.checked;saveLibrarySettings();};}
   const pm=document.getElementById('pairMode');
-  if(pm){pm.value=pairMode;pm.onchange=()=>{pairMode=pm.value;};}
+  if(pm){pm.value=pairMode;pm.onchange=()=>{pairMode=pm.value;saveLibrarySettings();};}
   const ss=document.getElementById('scanScope');
   if(ss){ss.value=recursiveScan?'recursive':'current';ss.onchange=()=>{recursiveScan=ss.value==='recursive';saveLibrarySettings();};}
   const cs=document.getElementById('compareScope');
@@ -2342,8 +2376,12 @@ function renderSettings(){
     co.style.display=outputMode==='custom'?'block':'none';
     co.oninput=()=>{customOutput=co.value;saveLibrarySettings();};
   }
-  if(currentStep==='rank'){renderWeights();
-    const rw=document.getElementById('resetWeights');if(rw)rw.onclick=()=>{weights={...DEFAULTS};renderWeights();scheduleReweight();};}
+  if(currentStep==='rank'){
+    renderWeights();
+    const tn=document.getElementById('topn');
+    if(tn){tn.value=rankTopN;tn.onchange=()=>{rankTopN=Math.min(500,Math.max(1,parseInt(tn.value)||50));tn.value=rankTopN;saveLibrarySettings();scheduleReweight();};}
+    const rw=document.getElementById('resetWeights');if(rw)rw.onclick=()=>{weights={...DEFAULTS};renderWeights();scheduleReweight();};
+  }
 }
 
 /* Switch the visible step (used by tab clicks AND God mode). */
@@ -2517,7 +2555,14 @@ function setStartBtn(running){
   if(bb)bb.disabled=running||codespacesMode;
   document.querySelectorAll('.shortcut').forEach(x=>x.disabled=running);
 }
-async function startStep(step){
+function snapshotPipelineConfig(){
+  return {
+    cullStrictness,cullAdaptive,cullRescue,dedupThreshold,rankTopN,
+    recursiveScan,compareScope,outputMode,customOutput,pairMode
+  };
+}
+async function startStep(step,config=null){
+  const cfg=config||snapshotPipelineConfig();
   runningStep=step;
   if(step==='cull')cullReady=false;
   pollFailures=0;largeResultWarned=false;
@@ -2533,8 +2578,6 @@ async function startStep(step){
   setRemoved(0);
   setStartBtn(true);
 
-  const opt=document.getElementById('opt');
-  const ad=document.getElementById('cAdaptive'),rs=document.getElementById('cRescue');
   if(step!=='cull'&&cullType!=='all'){
     const tl=cullType.startsWith('ext:')?cullType.slice(4).toUpperCase():cullType.toUpperCase();
     toast('继续处理：仅 '+tl+' 格式。若要包含全部照片，请将“模糊筛选”的格式切换为“全部格式”。','info');
@@ -2546,16 +2589,16 @@ async function startStep(step){
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({
         folder,
-        opt:opt?parseFloat(opt.value):0,
-        adaptive:ad?ad.checked:true,
-        rescue:rs?rs.checked:true,
+        opt:step==='cull'?cfg.cullStrictness:cfg.dedupThreshold,
+        adaptive:cfg.cullAdaptive,
+        rescue:cfg.cullRescue,
         ftype:step==='cull'?'all':cullType,
-        pair:step==='cull'?'both':pairMode,
-        recursive:recursiveScan,
-        compare_scope:compareScope,
-        output_mode:outputMode,
-        custom_output:customOutput,
-        topn:parseInt((document.getElementById('topn')||{}).value)||50
+        pair:step==='cull'?'both':cfg.pairMode,
+        recursive:cfg.recursiveScan,
+        compare_scope:cfg.compareScope,
+        output_mode:cfg.outputMode,
+        custom_output:cfg.customOutput,
+        topn:cfg.rankTopN
       })
     });
     let data={};
@@ -2594,12 +2637,13 @@ async function godRun(){
   if(!folder){toast('请先选择照片文件夹','bad');return;}
   if(isRunning){toast('请先停止当前正在执行的任务。','bad');return;}
   godMode=true;godAbort=false;setGodBtn(true);startBtn.disabled=false;
+  const pipelineConfig=snapshotPipelineConfig();
   try{
     let first=true;
     for(const step of ['cull','dedup','rank']){
       if(godAbort)break;
       if(first){activateStep('cull');first=false;}
-      await new Promise(res=>{ godResolve=res; startStep(step); });
+      await new Promise(res=>{ godResolve=res; startStep(step,pipelineConfig); });
     }
     if(!godAbort)toast('✨ 分析完成：清晰度、相似组和精选结果均已生成','good');
   } finally {
@@ -4063,10 +4107,9 @@ def api_delete_photo():
     """Move one reviewed source photo to the operating-system recycle bin."""
     data = request.get_json() or {}
     step = str(data.get('step') or '')
-    if step != 'cull':
-        blocked = _reject_mutation_while_running()
-        if blocked:
-            return blocked
+    blocked = _reject_mutation_while_running()
+    if blocked:
+        return blocked
     path = str(data.get('path') or '')
     if step not in ('cull', 'dedup', 'rank'):
         return jsonify({'error': '无效板块'}), 400
