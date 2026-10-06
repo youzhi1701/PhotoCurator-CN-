@@ -2596,7 +2596,7 @@ function rankCard(p,idx){const path=escHtml(p.path);
     <div class="photo-info"><div class="pi-row"><span class="photo-name">${escHtml(p.name)}</span>
       <button class="remove-btn" data-path="${path}" title="从优选结果中移除（不会删除原文件）">✕ 移除</button>
       <button class="delete-btn" data-step="rank" data-path="${path}" title="移入 Windows 回收站">🗑 删除</button></div>
-      <div class="photo-score">清晰度技术值 ${p.score}</div><div class="source-path">${escHtml(p.rel_dir||'当前文件夹')}</div></div></div>`;}
+      <div class="source-path">${escHtml(p.rel_dir||'当前文件夹')}</div></div></div>`;}
 function renderRank(items){
   photos=items;const g=document.getElementById('gallery');
   if(lastStep!==currentStep){g.innerHTML='';lastRankSig='';lastStep=currentStep;gPage=0;}
