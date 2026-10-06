@@ -2344,6 +2344,7 @@ function escHtml(v){
 }
 let folder=null, photos=[], lbList=[], lbIndex=0, currentStep='cull', folderStatus={};
 const cullLiveStore=new Map();
+const dedupLiveStore=new Map();
 let isRunning=false, runningStep=null, codespacesMode=false;
 let lastRankSig='', renderedCount=0, photoIdx=0, lastStep=null, weightTimer=null, removedCount=0, pollFailures=0, largeResultWarned=false;
 // These controls are needed by setupFilterBar() during initial page boot.
@@ -2653,10 +2654,11 @@ document.querySelectorAll('.step').forEach(t=>t.onclick=()=>{
       return;
     }
     if(currentStep==='cull')renderCullStep(cullRowsForPayload(d));
-    else if(currentStep==='dedup')renderDedupGroups(d.photos||[]);
+    else if(currentStep==='dedup')renderDedupGroups(dedupRowsForPayload(d));
     else renderRank(d.photos||[]);
     updateVisibleStepStatus(currentStep,d);
     if(currentStep==='cull')maybeLoadAllCull(d);
+    if(currentStep==='dedup')maybeLoadAllDedup(d);
   }).catch(()=>{});
 });
 renderSettings();
@@ -2714,7 +2716,7 @@ function normalizedFolder(p){
 function sameFolder(a,b){return normalizedFolder(a)===normalizedFolder(b);}
 function resetWorkspaceForFolder(){
   cullChunkToken++;
-  cullLiveStore.clear();
+  cullLiveStore.clear();dedupLiveStore.clear();
   cullReady=false;
   photos=[];lbList=[];folderStatus={};
   lastRankSig='';lastCullSig='';lastCullMoveSig='';lastGallerySig='';
@@ -2844,6 +2846,7 @@ async function startStep(step,config=null){
   const cfg=config||snapshotPipelineConfig();
   runningStep=step;
   if(step==='cull'){cullReady=false;cullLiveStore.clear();}
+  if(step==='dedup')dedupLiveStore.clear();
   pollFailures=0;largeResultWarned=false;
   document.getElementById('progressWrap').style.display='block';
   if(step===currentStep){
@@ -2984,6 +2987,42 @@ function maybeLoadAllCull(d){
   const have=(d.photos||[]).length,total=Number(d.result_total||have);
   if(total>have)loadRemainingCull(total,have);
 }
+function dedupRowsForPayload(d){
+  const rows=d.photos||[];
+  if(!d.running)dedupLiveStore.clear();
+  rows.forEach(g=>{if(g&&g.group_id!=null)dedupLiveStore.set(String(g.group_id),g);});
+  return Array.from(dedupLiveStore.values());
+}
+let dedupChunkToken=0;
+async function loadRemainingDedup(total,offset){
+  const token=++dedupChunkToken;
+  const merged=new Map((photos||[]).map(g=>[String(g.group_id),g]));
+  let pos=offset||merged.size;
+  while(currentStep==='dedup' && token===dedupChunkToken && pos<total){
+    try{
+      const d=await fetch('/api/results/dedup?offset='+pos+'&limit=5000').then(r=>{
+        if(!r.ok)throw new Error('HTTP '+r.status);return r.json();
+      });
+      const rows=d.photos||[];
+      if(!rows.length)break;
+      rows.forEach(g=>merged.set(String(g.group_id),g));
+      pos=d.next_offset||pos+rows.length;
+      const combined=Array.from(merged.values());
+      dedupLiveStore.clear();combined.forEach(g=>dedupLiveStore.set(String(g.group_id),g));
+      renderDedupGroups(combined);
+      document.getElementById('progressText').textContent='相似组结果载入 '+combined.length+' / '+total+' · 可继续复核';
+      await new Promise(res=>setTimeout(res,0));
+    }catch(err){
+      toast('继续载入相似组失败，可切换视图后重试：'+(err.message||'未知错误'),'bad');
+      break;
+    }
+  }
+}
+function maybeLoadAllDedup(d){
+  if(currentStep!=='dedup'||d.running)return;
+  const have=(d.photos||[]).length,total=Number(d.result_total||have);
+  if(total>have)loadRemainingDedup(total,have);
+}
 
 function poll(step){
   fetch('/api/progress/'+step)
@@ -2998,7 +3037,7 @@ function poll(step){
       if(step===currentStep){
         if(step==='rank')renderRank(d.photos||[]);
         else if(step==='cull')renderCullStep(cullRowsForPayload(d));
-        else renderDedupGroups(d.photos||[]);
+        else renderDedupGroups(dedupRowsForPayload(d));
       }
 
       if(d.running){
@@ -3011,6 +3050,7 @@ function poll(step){
         toast('本次已完整分析 '+(d.result_total||0)+' 张照片，完整结果正在后台分批载入。','info');
       }
       if(step==='cull'&&step===currentStep)maybeLoadAllCull(d);
+      if(step==='dedup'&&step===currentStep)maybeLoadAllDedup(d);
 
       if(step===currentStep)document.getElementById('progressFill').style.width='100%';
       setStartBtn(false);runningStep=null;
@@ -3202,13 +3242,20 @@ document.getElementById('gallery').addEventListener('click',e=>{
   e.stopPropagation();
   fetch('/api/dedup-group-action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({group_id:Number(b.dataset.group),mode:b.dataset.dmode})})
     .then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;})
-    .then(d=>renderDedupGroups(d.photos||[]))
+    .then(d=>{
+      (d.photos||[]).forEach(g=>{if(g&&g.group_id!=null)dedupLiveStore.set(String(g.group_id),g);});
+      renderDedupGroups(Array.from(dedupLiveStore.values()));
+    })
     .catch(err=>toast('相似组选优失败：'+(err.message||'未知错误'),'bad'));
 });
 function selectDedupPhoto(groupId,path){
   fetch('/api/dedup-select',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({group_id:Number(groupId),path})})
     .then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;})
-    .then(d=>{renderDedupGroups(d.photos||[]);toast(d.selected?'已加入保留':'已取消保留','good');})
+    .then(d=>{
+      (d.photos||[]).forEach(g=>{if(g&&g.group_id!=null)dedupLiveStore.set(String(g.group_id),g);});
+      renderDedupGroups(Array.from(dedupLiveStore.values()));
+      toast(d.selected?'已加入保留':'已取消保留','good');
+    })
     .catch(err=>toast('切换失败：'+(err.message||'未知错误'),'bad'));
 }
 function applyDedupSelection(){
@@ -4240,6 +4287,21 @@ def api_cull_results_chunk():
     rows = all_photos[offset:offset + limit]
     return jsonify({'photos': rows, 'offset': offset, 'next_offset': offset + len(rows),
                     'total': len(all_photos), 'done': offset + len(rows) >= len(all_photos)})
+
+
+@app.route('/api/results/dedup')
+def api_dedup_results_chunk():
+    """Chunked duplicate-group transport for extreme libraries."""
+    s = state['dedup']
+    try:
+        offset = max(0, int(request.args.get('offset', 0)))
+        limit = min(UI_RESULT_CHUNK, max(1, int(request.args.get('limit', UI_RESULT_CHUNK))))
+    except (TypeError, ValueError):
+        return jsonify({'error': '结果范围无效'}), 400
+    all_groups = s.get('photos', [])
+    rows = all_groups[offset:offset + limit]
+    return jsonify({'photos': rows, 'offset': offset, 'next_offset': offset + len(rows),
+                    'total': len(all_groups), 'done': offset + len(rows) >= len(all_groups)})
 
 
 @app.route('/api/dedup-select', methods=['POST'])
