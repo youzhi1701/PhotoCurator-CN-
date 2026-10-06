@@ -6,6 +6,9 @@ set "PIP_DISABLE_PIP_VERSION_CHECK=1"
 set "PY_CMD="
 
 if "%PHOTOCURATOR_BATCH_PARSE_ONLY%"=="1" exit /b 0
+if not exist "requirements.txt" goto incomplete
+if not exist "desktop_app.py" goto incomplete
+if not exist "photo_curator.py" goto incomplete
 
 echo.
 echo ==========================================
@@ -92,3 +95,11 @@ echo Run PhotoCurator-Debug.cmd or inspect startup-error.log.
 echo.
 pause
 exit /b 1
+:incomplete
+echo.
+echo PhotoCurator project files are incomplete.
+echo Extract the entire ZIP/repository folder before running the launcher.
+echo Do not run a launcher directly from inside a compressed archive.
+echo.
+pause
+exit /b 2
