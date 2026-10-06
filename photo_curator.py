@@ -2390,7 +2390,7 @@ let folder=null, photos=[], lbList=[], lbIndex=0, currentStep='cull', folderStat
 const cullLiveStore=new Map();
 const dedupLiveStore=new Map();
 let isRunning=false, runningStep=null, codespacesMode=false;
-let lastRankSig='', renderedCount=0, photoIdx=0, lastStep=null, weightTimer=null, removedCount=0, pollFailures=0, largeResultWarned=false;
+let lastRankSig='', lastStep=null, weightTimer=null, removedCount=0, pollFailures=0, largeResultWarned=false;
 // These controls are needed by setupFilterBar() during initial page boot.
 // Define them before the first setupFilterBar() call to avoid TDZ failures
 // that would stop Codespaces shortcut/sample initialization.
@@ -2683,7 +2683,7 @@ function activateStep(step){
   document.getElementById('progressWrap').style.display='none';  // clear stale summary
   document.getElementById('resultTools').style.display='none';
   document.getElementById('gallery').innerHTML=emptyHTML(currentStep);
-  lastRankSig='';renderedCount=0;photoIdx=0;lastStep=null;
+  lastRankSig='';lastStep=null;
   gPage=0;lastGallerySig='';gItems=[];document.getElementById('pager').style.display='none';
   setupFilterBar();
   if(step==='cull')updateCullMoveButton();
@@ -2895,7 +2895,7 @@ async function startStep(step,config=null){
   document.getElementById('progressWrap').style.display='block';
   if(step===currentStep){
     document.getElementById('gallery').innerHTML='';
-    lastRankSig='';renderedCount=0;photoIdx=0;lastStep=step;
+    lastRankSig='';lastStep=step;
     gPage=0;lastGallerySig='';document.getElementById('pager').style.display='none';
     document.getElementById('exportBtn').style.display='none';
     document.getElementById('exportPbgBtn').style.display='none';
@@ -3179,61 +3179,7 @@ function emptyHTML(step){
     <div class="title">${c[1]}</div><p>${c[2]}</p>
     <div class="lines">${c[3].map(l=>`<div>${l}</div>`).join('')}</div></div>`;
 }
-function cullCard(p){
-  const i=photoIdx++;const path=escHtml(p.path);
-  const isDedup=currentStep==='dedup';
-  // Dedup: the badge tells you this frame won a burst ("同组最佳"); the info
-  // line says how many near-duplicates were set aside. The raw sharpness number
-  // (used only to pick the winner) is no longer shown — it wasn't meaningful.
-  const g=p.group||1;
-  const badge=isDedup
-    ? `<div class="badge good">${g>1?('★ 同组最佳 · 共 '+g+' 张'):'保留'}</div>`
-    : (p.badge?`<div class="badge ${p.badgeType}">${p.badge}</div>`:'');
-  const toggle=currentStep==='cull'?`<button class="status-toggle" data-path="${path}">${p.kept?'→ 模糊':'✓ 保留'}</button>`:'';
-  const cls=p.kept?'kept':(p.rejected?'rejected':'');
-  const info=isDedup
-    ? `<div class="photo-score" style="font-weight:500;opacity:.75">${g>1?((g-1)+' 张相似照片已归组'):'原始照片'}</div>`
-    : `<div class="photo-score">${p.score}</div>`;
-  return `<div class="photo-card ${cls}" data-i="${i}" data-path="${path}">${badge}${toggle}
-    <img class="photo-img" src="${p.thumb}" loading="lazy" decoding="async">
-    <div class="photo-info"><div class="pi-row"><span class="photo-name">${escHtml(p.name)}</span><button class="delete-btn" data-step="${currentStep}" data-path="${path}" title="移入 Windows 回收站">🗑 删除</button></div>${info}</div></div>`;
-}
 let lastGallerySig='', gPage=0, gItems=[];
-const PAGE_SIZE=200;
-function renderGallery(items){   /* dedup: paginated + reconciling (order-stable) */
-  gItems=items;photos=items;const g=document.getElementById('gallery');
-  if(lastStep!==currentStep){g.innerHTML='';lastGallerySig='';lastStep=currentStep;gPage=0;}
-  if(!items.length){g.innerHTML=EMPTY;lastGallerySig='';renderedCount=0;updatePager();document.getElementById('sShowing').textContent=0;return;}
-  const pages=Math.max(1,Math.ceil(items.length/PAGE_SIZE));
-  if(gPage>=pages)gPage=pages-1;if(gPage<0)gPage=0;
-  const start=gPage*PAGE_SIZE,end=Math.min(items.length,start+PAGE_SIZE);
-  const slice=items.slice(start,end);
-  // Signature includes the page + group size so paging and growing clusters
-  // ("同组最佳") always re-render; reconcile within.
-  const sig=gPage+'#'+slice.map(p=>p.path+':'+(p.group||1)).join('|');
-  if(sig===lastGallerySig){updatePager();document.getElementById('sShowing').textContent=items.length;return;}
-  lastGallerySig=sig;
-  const emp=g.querySelector('.empty');if(emp)emp.remove();
-  // Reuse existing card nodes by path so reordering/paging never duplicates
-  // thumbnails or reloads images. data-i keeps the GLOBAL index (lightbox).
-  const existing={};g.querySelectorAll('.photo-card').forEach(n=>existing[n.dataset.path]=n);
-  const frag=document.createDocumentFragment();
-  slice.forEach((p,k)=>{const i=start+k;const key=String(p.path);let node=existing[key];
-    if(node){
-      // Keep reused cards in sync. For Dedup show "同组最佳"/"无相似重复"
-      // (never the raw sharpness number); the badge updates as clusters grow.
-      const g=p.group||1;
-      const b=node.querySelector('.badge');
-      const sc=node.querySelector('.photo-score');
-      if(b)b.textContent=(g>1?('★ 同组最佳 · 共 '+g+' 张'):'保留');
-      if(sc)sc.textContent=(g>1?((g-1)+' 张相似照片已归组'):'原始照片');
-      node.dataset.i=i;delete existing[key];}
-    else{const w=document.createElement('div');w.innerHTML=cullCard(p);node=w.firstElementChild;node.dataset.i=i;}
-    frag.appendChild(node);});
-  Object.values(existing).forEach(n=>n.remove());g.appendChild(frag);
-  renderedCount=slice.length;updatePager();
-  document.getElementById('sShowing').textContent=items.length;
-}
 function renderDedupGroups(groups){
   photos=groups||[];
   const g=document.getElementById('gallery');
@@ -3353,26 +3299,8 @@ function renderFolderPage(slice,cardBuilder,startIndex){
 }
 
 function updatePager(){
-  const pager=document.getElementById('pager');if(!pager)return;
-  pager.style.display='none';return;
-  const total=gItems.length,pages=Math.max(1,Math.ceil(total/PAGE_SIZE));
-  if(!['cull','dedup','rank'].includes(currentStep)||total<=PAGE_SIZE){
-    pager.style.display='none';return;
-  }
-  const start=gPage*PAGE_SIZE+1,end=Math.min(total,(gPage+1)*PAGE_SIZE);
-  pager.style.display='flex';
-  pager.innerHTML=`<button id="pgPrev" ${gPage===0?'disabled':''}>← 上一页</button>`
-    +`<span>第 ${gPage+1} / ${pages} 页 · ${start}–${end} / 共 ${total}</span>`
-    +`<button id="pgNext" ${gPage>=pages-1?'disabled':''}>下一页 →</button>`;
-  const rerender=()=>{
-    lastGallerySig='';lastCullSig='';
-    if(currentStep==='cull')renderCullStep(photos);
-    else if(currentStep==='rank')renderRank(photos);
-    else renderGallery(gItems);
-    document.querySelector('.main')?.scrollTo({top:0,behavior:'auto'});
-  };
-  document.getElementById('pgPrev').onclick=()=>{if(gPage>0){gPage--;rerender();}};
-  document.getElementById('pgNext').onclick=()=>{if(gPage<pages-1){gPage++;rerender();}};
+  const pager=document.getElementById('pager');
+  if(pager)pager.style.display='none';
 }
 function rankCard(p,idx){const path=escHtml(p.path);
   const on=p.phonebg?' on':'';
