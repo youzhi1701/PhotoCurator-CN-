@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 """照片筛选基础冒烟测试：中文路径、特殊字符、图像读取和安全路径。"""
 
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -301,6 +302,18 @@ def main():
         invalidated = photo_curator._load_cull_metrics_map([cache_img])
         assert_true(str(cache_img) not in invalidated,
                     "照片内容变化后不应继续复用旧清晰度缓存")
+
+        # Persistent similarity signatures must use nanosecond-resolution file
+        # fingerprints too. A same-size file whose mtime changes within one
+        # second must not reuse the previous perceptual hash.
+        dedup_cache_img = root / "相似缓存精度测试.jpg"
+        Image.new("RGB", (48, 36), "white").save(dedup_cache_img)
+        key_before = photo_curator.FastBatchDeduplicator._cache_key(str(dedup_cache_img))
+        st = dedup_cache_img.stat()
+        os.utime(dedup_cache_img, ns=(st.st_atime_ns, st.st_mtime_ns + 1))
+        key_after = photo_curator.FastBatchDeduplicator._cache_key(str(dedup_cache_img))
+        assert_true(key_before != key_after,
+                    "相似特征缓存必须使用纳秒级修改时间，不能复用同秒旧特征")
 
         # Cross-stage consistency: when the currently selected duplicate keeper
         # is later marked blurry, promote the best still-kept Cull survivor.
