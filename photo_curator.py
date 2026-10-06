@@ -1717,6 +1717,11 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   .lb-img{transition:transform .08s linear;will-change:transform;cursor:grab;max-width:calc(100% - 36px);max-height:calc(100% - 90px)}
   .lb-img.dragging{cursor:grabbing}
   .lb-zoom-indicator{position:absolute;left:20px;bottom:18px;z-index:25;padding:5px 9px;border-radius:8px;background:rgba(0,0,0,.4);color:#fff;font-size:11px;pointer-events:none}
+  .activity-panel{margin-top:4px;border:1px solid rgba(255,255,255,.72);border-radius:10px;background:rgba(255,255,255,.48);overflow:hidden}
+  .activity-panel summary{cursor:pointer;padding:9px 10px;font-size:11px;font-weight:700;color:var(--muted)}
+  .activity-log{max-height:170px;overflow:auto;padding:0 10px 9px;font-size:10px;color:var(--muted);display:flex;flex-direction:column;gap:6px}
+  .activity-item{padding:6px 7px;border-radius:7px;background:rgba(255,255,255,.55)}
+  .activity-item b{color:var(--text)}
 </style></head><body>
 <div class="top">
   <div class="brand">🖼️ PhotoCurator <small>照片整理工作区 · v{{ app_version }}</small></div>
@@ -1756,6 +1761,10 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
         <div class="stat-row" data-steps="cull dedup rank"><span>当前显示</span><span class="v" id="sShowing">0</span></div>
         <div id="removedBox" style="display:none">已移除 <b id="removedN">0</b> 张 · <a id="restoreAll">全部恢复</a></div>
       </div>
+      <details class="activity-panel" id="activityPanel">
+        <summary>🕘 运行记录与操作日志</summary>
+        <div id="activityLog" class="activity-log">暂无记录</div>
+      </details>
     </div>
 
     <!-- Pinned action footer: always visible regardless of scroll / window height -->
@@ -1780,13 +1789,12 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
         <button class="chip" id="collapseAllBtn">全部收起</button>
       </div>
       <div class="result-tools-right">
-        <button class="chip" data-view="small">小图</button>
-        <button class="chip" data-view="large">大图</button>
+        <button class="chip" data-view="small">网格</button>
         <button class="chip" data-view="list">列表</button>
       </div>
     </div>
     <div class="pager" id="pager" style="display:none!important"></div>
-    <div class="gallery" id="gallery"><div class="empty"><div class="icon">🎞️</div><div>先选择照片文件夹，然后点击“开始筛选”</div></div></div>
+    <div class="gallery" id="gallery"><div class="empty"><div class="icon">🎞️</div><div>选择照片文件夹后点击“开始分析”</div></div></div>
   </div>
 </div>
 
@@ -1934,6 +1942,21 @@ const tt=document.getElementById('themeToggle');
 tt.onclick=()=>{const d=document.documentElement.getAttribute('data-theme')==='dark';
   document.documentElement.setAttribute('data-theme',d?'light':'dark');tt.textContent=d?'🌙':'☀️';
   if(exMap){exMapTheme=currentMapStyle();exMap.setStyle(MAP_STYLES[exMapTheme]);}};
+
+function loadActivity(){
+  fetch('/api/activity?limit=60').then(r=>r.json()).then(d=>{
+    const box=document.getElementById('activityLog'),items=d.items||[];
+    if(!items.length){box.textContent='暂无记录';return;}
+    box.innerHTML=items.map(x=>{
+      const dt=new Date((x.ts||0)*1000);
+      const t=dt.toLocaleString('zh-CN',{hour12:false});
+      const name=(x.path||'').split(/[\\/]/).pop();
+      return '<div class="activity-item"><b>'+escHtml(x.action||'记录')+'</b> · '+escHtml(t)
+        +(name?'<br>'+escHtml(name):'')+(x.detail?'<br>'+escHtml(x.detail):'')+'</div>';
+    }).join('');
+  }).catch(()=>{});
+}
+document.getElementById('activityPanel').addEventListener('toggle',e=>{if(e.currentTarget.open)loadActivity();});
 
 /* Gallery thumbnail zoom: Ctrl + mouse wheel changes thumbnail density only. */
 let thumbSize=190;
