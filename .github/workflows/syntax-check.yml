@@ -74,6 +74,26 @@ jobs:
       - name: Check embedded UI JavaScript
         run: node --check /tmp/photocurator-ui.js
 
+      - name: Check UI boot initialization order
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          js = Path("/tmp/photocurator-ui.js").read_text(encoding="utf-8")
+          first_setup = js.find("setupFilterBar();")
+          start_decl = js.find("const startBtn=document.getElementById('startBtn');")
+          god_decl = js.find("let godMode=false, godAbort=false, godResolve=null;")
+
+          if min(first_setup, start_decl, god_decl) < 0:
+              raise SystemExit("Required UI boot markers are missing")
+          if not (start_decl < first_setup and god_decl < first_setup):
+              raise SystemExit(
+                  "UI boot order regression: startBtn/godMode must be initialized "
+                  "before the first setupFilterBar() call"
+              )
+          print("UI boot initialization order OK")
+          PY
+
       - name: Validate embedded HTML structure
         run: |
           python - <<'PY'
