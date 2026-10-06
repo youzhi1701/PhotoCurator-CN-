@@ -58,6 +58,37 @@ def main():
         assert_true(len(found) == len(names),
                     f"照片枚举数量错误：期望 {len(names)}，实际 {len(found)}")
 
+        # Recursive library mode must include nested source folders but skip
+        # PhotoCurator output directories so prior results are never re-scanned.
+        nested = root / "2026" / "三亚" / "第一天"
+        nested.mkdir(parents=True, exist_ok=True)
+        nested_img = nested / "IMG_递归测试.jpg"
+        Image.new("RGB", (40, 30), "white").save(nested_img)
+
+        generated = root / "PhotoCurator_Result" / "Blurred"
+        generated.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (40, 30), "white").save(generated / "不应重新扫描.jpg")
+        dup_generated = root / "Duplicates"
+        dup_generated.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (40, 30), "white").save(dup_generated / "也不应扫描.jpg")
+
+        recursive = photo_curator.list_images(root, recursive=True)
+        assert_true(nested_img in recursive,
+                    "递归扫描没有包含子文件夹照片")
+        assert_true(all("PhotoCurator_Result" not in str(p) and "Duplicates" not in str(p)
+                        for p in recursive),
+                    f"递归扫描错误包含了程序输出目录：{recursive}")
+
+        rel = photo_curator.relative_folder(nested_img, root)
+        assert_true("2026" in rel and "三亚" in rel and "第一天" in rel,
+                    f"来源相对路径错误：{rel}")
+
+        source_dest = photo_curator._output_destination(
+            nested_img, "Blurred", root, "source", ""
+        )
+        assert_true(source_dest.parent == nested / "PhotoCurator_Result" / "Blurred",
+                    f"默认输出位置错误：{source_dest}")
+
         photo_curator.state["folder"] = str(root)
         for p in found:
             safe = photo_curator._safe_image_path(str(p))
