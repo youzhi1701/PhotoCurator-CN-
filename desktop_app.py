@@ -245,6 +245,21 @@ def main():
         server.stop()
 
 
+def self_test():
+    """Headless packaged-runtime smoke test used by release CI."""
+    server = LocalServer()
+    server.start()
+    try:
+        if not wait_until_ready(timeout=20.0):
+            raise RuntimeError("self-test local server did not become ready")
+        with urllib.request.urlopen(URL, timeout=3.0) as response:
+            if response.status != 200:
+                raise RuntimeError(f"self-test HTTP status: {response.status}")
+        return 0
+    finally:
+        server.stop()
+
+
 def write_error_log(exc):
     log = LOG_DIR / "startup-error.log"
     details = [
@@ -263,6 +278,8 @@ def write_error_log(exc):
 
 if __name__ == "__main__":
     try:
+        if "--self-test" in sys.argv:
+            raise SystemExit(self_test())
         main()
     except SystemExit:
         raise
