@@ -2125,6 +2125,7 @@ let cullStrictness=1.0;
 let cullAdaptive=true;
 let cullRescue=true;
 let dedupThreshold=0.80;
+let pairMode='both';
 let rankTopN=50;
 let resultView='small';
 try{
@@ -2415,7 +2416,7 @@ document.querySelectorAll('.step').forEach(t=>t.onclick=()=>{
 renderSettings();
 
 /* cull filter chips */
-let cullFilter='all', cullType='all', rankFilter='all', pairMode='both', lastFmtSig='';
+let cullFilter='all', cullType='all', rankFilter='all', lastFmtSig='';
 function setupFilterBar(){
   const bar=document.getElementById('filterBar');
   if(currentStep==='cull'){
