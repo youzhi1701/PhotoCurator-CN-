@@ -147,34 +147,95 @@ def _save_cull_metrics(path, region_s, quality):
     except Exception:
         logger.debug("cull cache write failed", exc_info=True)
 
-def _load_review_overrides(paths):
-    """Load only still-valid manual decisions for the current source files."""
+def _fingerprints(paths):
+    """Return path -> (size, mtime_ns) once for a batch of existing files."""
+    out = {}
+    for raw in paths:
+        try:
+            p = Path(raw)
+            st = p.stat()
+            out[str(p)] = (int(st.st_size), int(st.st_mtime_ns))
+        except OSError:
+            continue
+    return out
+
+
+def _query_cache_rows(table, columns, path_keys, chunk_size=400):
+    """Read path-keyed cache rows in bounded IN() queries using one DB connection."""
+    if not path_keys:
+        return []
+    rows = []
+    with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=30) as db:
+        keys = list(path_keys)
+        for i in range(0, len(keys), chunk_size):
+            chunk = keys[i:i + chunk_size]
+            marks = ','.join('?' for _ in chunk)
+            rows.extend(db.execute(
+                f"SELECT {columns} FROM {table} WHERE path IN ({marks})", chunk
+            ).fetchall())
+    return rows
+
+
+def _load_cull_metrics_map(paths):
+    """Bulk-load valid clear/quality metrics without opening SQLite per photo."""
+    fps = _fingerprints(paths)
+    out = {}
     try:
-        with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=15) as db:
-            rows = db.execute(
-                "SELECT path,size,mtime_ns,tier,move_selected FROM review_override"
-            ).fetchall()
-        saved = {str(r[0]): r for r in rows}
-        out = {}
-        for p in paths:
-            key = str(p)
-            row = saved.get(key)
-            if not row:
+        rows = _query_cache_rows(
+            'cull_cache', 'path,size,mtime_ns,region_s,quality', fps.keys()
+        )
+        for path, size, mtime_ns, region_s, quality in rows:
+            fp = fps.get(str(path))
+            if fp == (int(size), int(mtime_ns)):
+                out[str(path)] = (float(region_s), float(quality))
+    except Exception:
+        logger.debug("bulk cull cache load failed", exc_info=True)
+    return out
+
+
+def _load_rank_scores_map(paths):
+    """Bulk-load valid rank scores; stale file versions are ignored."""
+    fps = _fingerprints(paths)
+    out = {}
+    try:
+        rows = _query_cache_rows(
+            'rank_cache', 'path,size,mtime_ns,score_json', fps.keys()
+        )
+        for path, size, mtime_ns, score_json in rows:
+            fp = fps.get(str(path))
+            if fp != (int(size), int(mtime_ns)):
                 continue
             try:
-                st = Path(key).stat()
-            except OSError:
+                payload = json.loads(score_json)
+                if int(payload.pop('_cache_version', 0)) != RANK_CACHE_VERSION:
+                    continue
+                out[str(path)] = PhotoScoreV3(**payload)
+            except Exception:
                 continue
-            if int(st.st_size) != int(row[1]) or int(st.st_mtime_ns) != int(row[2]):
+    except Exception:
+        logger.debug("bulk rank cache load failed", exc_info=True)
+    return out
+
+
+def _load_review_overrides(paths):
+    """Load valid manual decisions only for this scan, never the whole table."""
+    fps = _fingerprints(paths)
+    out = {}
+    try:
+        rows = _query_cache_rows(
+            'review_override', 'path,size,mtime_ns,tier,move_selected', fps.keys()
+        )
+        for path, size, mtime_ns, tier, move_selected in rows:
+            key = str(path)
+            if fps.get(key) != (int(size), int(mtime_ns)):
                 continue
-            tier = str(row[3])
+            tier = str(tier)
             if tier not in ('sharp', 'soft', 'blurry'):
                 continue
-            out[key] = {'tier': tier, 'move_selected': bool(row[4])}
-        return out
+            out[key] = {'tier': tier, 'move_selected': bool(move_selected)}
     except Exception:
         logger.debug("review override load failed", exc_info=True)
-        return {}
+    return out
 
 
 def _save_review_overrides(rows):
@@ -309,23 +370,23 @@ except Exception:
     logger.warning("library index unavailable", exc_info=True)
 
 def _prune_index_db():
-    """Keep long-lived local indexes bounded without touching source photos."""
+    """Bound index growth without forcing unchanged photos to be rescanned."""
     try:
-        cutoff = time.time() - 180 * 86400
-        with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=20) as db:
-            db.execute("DELETE FROM cull_cache WHERE updated_at < ?", (cutoff,))
-            db.execute("DELETE FROM rank_cache WHERE updated_at < ?", (cutoff,))
-            db.execute("DELETE FROM geocode_cache WHERE updated_at < ?", (cutoff,))
-            db.execute("DELETE FROM review_override WHERE updated_at < ?", (cutoff,))
-            # Hard caps protect users with very large rotating libraries.
+        geo_cutoff = time.time() - 180 * 86400
+        with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=30) as db:
+            # Analysis/review caches intentionally have no time-based expiry:
+            # an unchanged archive should remain incremental even a year later.
+            db.execute("DELETE FROM geocode_cache WHERE updated_at < ?", (geo_cutoff,))
+            # Very high emergency caps prevent an accidentally unbounded DB while
+            # still accommodating multi-terabyte photo archives.
             db.execute("""DELETE FROM cull_cache WHERE path NOT IN
-                          (SELECT path FROM cull_cache ORDER BY updated_at DESC LIMIT 250000)""")
+                          (SELECT path FROM cull_cache ORDER BY updated_at DESC LIMIT 2000000)""")
             db.execute("""DELETE FROM rank_cache WHERE path NOT IN
-                          (SELECT path FROM rank_cache ORDER BY updated_at DESC LIMIT 250000)""")
+                          (SELECT path FROM rank_cache ORDER BY updated_at DESC LIMIT 2000000)""")
             db.execute("""DELETE FROM geocode_cache WHERE key NOT IN
-                          (SELECT key FROM geocode_cache ORDER BY updated_at DESC LIMIT 20000)""")
+                          (SELECT key FROM geocode_cache ORDER BY updated_at DESC LIMIT 50000)""")
             db.execute("""DELETE FROM review_override WHERE path NOT IN
-                          (SELECT path FROM review_override ORDER BY updated_at DESC LIMIT 250000)""")
+                          (SELECT path FROM review_override ORDER BY updated_at DESC LIMIT 2000000)""")
             db.commit()
     except Exception:
         logger.debug("index prune skipped", exc_info=True)
@@ -333,7 +394,7 @@ def _prune_index_db():
 threading.Thread(target=_prune_index_db, daemon=True,
                  name='photocurator-index-prune').start()
 
-APP_VERSION = "1.4.1"
+APP_VERSION = "1.4.2"
 IS_CODESPACES = os.environ.get('CODESPACES', '').strip().lower() == 'true'
 CODESPACE_NAME = os.environ.get('CODESPACE_NAME', '').strip()
 _CODESPACES_DOMAIN_RAW = os.environ.get(
@@ -1201,6 +1262,7 @@ def run_cull(folder, strictness, adaptive, rescue_on, recursive=True):
     try:
         images = list_images(folder, recursive=recursive)
         current_paths = {str(p) for p in images}
+        cull_cache = _load_cull_metrics_map(images)
         s['overrides'] = _load_review_overrides(images)
         total = len(images) or 1
         items = []   # {name, path, region_s, q}
@@ -1299,7 +1361,7 @@ def run_cull(folder, strictness, adaptive, rescue_on, recursive=True):
             eta = (total - done) / rate if rate > 0 else 0
             s['status'] = (f"模糊筛选 {p.name}（{done}/{total}，{done/total*100:.0f}%）· "
                            f"{_tiers(done)} · 已用时 {_fmt(elapsed)} · 预计剩余 {_fmt(eta)}")
-            cached = _cached_cull_metrics(p)
+            cached = cull_cache.get(str(p))
             if cached is not None:
                 region_s, quality = cached
                 s['cache_hits'] = int(s.get('cache_hits', 0)) + 1
@@ -1459,6 +1521,7 @@ def run_dedup(folder, threshold, ftype='all', pair='both',
                        for _, ps in sorted(by_parent.items(), key=lambda kv: kv[0])]
 
         total = len(paths)
+        cull_metric_cache = _load_cull_metrics_map(paths)
         processed = 0
         all_groups = []
         singleton_paths = []
@@ -1493,7 +1556,7 @@ def run_dedup(folder, threshold, ftype='all', pair='both',
                 scope_txt = '全局对比' if compare_scope == 'global' else f'文件夹：{batch_label}'
                 s['status'] = (f"相似去重 · {scope_txt} · {p.name}（{processed}/{total}）· "
                                f"已用时 {_fmt(elapsed)} · 预计剩余 {_fmt(eta)}")
-                cached_metrics = _cached_cull_metrics(p)
+                cached_metrics = cull_metric_cache.get(str(p))
                 if cached_metrics is not None:
                     sharp = float(cached_metrics[0])
                 else:
@@ -1667,6 +1730,7 @@ def run_rank(folder, ftype='all', pair='both', recursive=True):
         total = len(paths)
         s['total'] = total
         analyzer = AdvancedPhotoAnalyzer()
+        rank_cache_map = _load_rank_scores_map(paths)
         rank_cache_buffer = []
 
         t0 = time.time()
@@ -1689,7 +1753,7 @@ def run_rank(folder, ftype='all', pair='both', recursive=True):
             eta = (total - done) / rate if rate > 0 else 0
             s['status'] = (f"智能优选 {p.name}（{done}/{total}，{done/total*100:.0f}%）· "
                            f"已用时 {_fmt(elapsed)} · 预计剩余 {_fmt(eta)}")
-            sc = _cached_rank_score(p)
+            sc = rank_cache_map.get(str(p))
             if sc is not None:
                 s['cache_hits'] = int(s.get('cache_hits', 0)) + 1
             else:
