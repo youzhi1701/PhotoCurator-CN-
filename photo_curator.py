@@ -2195,6 +2195,7 @@ function escHtml(v){
   })[ch]);
 }
 let folder=null, photos=[], lbList=[], lbIndex=0, currentStep='cull', folderStatus={};
+const cullLiveStore=new Map();
 let isRunning=false, runningStep=null, codespacesMode=false;
 let lastRankSig='', renderedCount=0, photoIdx=0, lastStep=null, weightTimer=null, removedCount=0, pollFailures=0, largeResultWarned=false;
 // These controls are needed by setupFilterBar() during initial page boot.
@@ -2358,6 +2359,7 @@ document.getElementById('appExit').onclick=()=>{
 };
 function taskLabel(d){
   if(!d)return '待开始';
+  if(d.src_folder&&folder&&!sameFolder(d.src_folder,folder))return '待开始';
   if(d.running)return Math.max(0,Math.min(100,Number(d.progress)||0))+'% · 处理中';
   const st=String(d.status||'');
   if(st.includes('错误')||st.includes('失败'))return '需要处理';
@@ -2502,7 +2504,7 @@ document.querySelectorAll('.step').forEach(t=>t.onclick=()=>{
       document.getElementById('progressWrap').style.display='none';
       return;
     }
-    if(currentStep==='cull')renderCullStep(d.photos||[]);
+    if(currentStep==='cull')renderCullStep(cullRowsForPayload(d));
     else if(currentStep==='dedup')renderDedupGroups(d.photos||[]);
     else renderRank(d.photos||[]);
     updateVisibleStepStatus(currentStep,d);
@@ -2564,6 +2566,7 @@ function normalizedFolder(p){
 function sameFolder(a,b){return normalizedFolder(a)===normalizedFolder(b);}
 function resetWorkspaceForFolder(){
   cullChunkToken++;
+  cullLiveStore.clear();
   cullReady=false;
   photos=[];lbList=[];folderStatus={};
   lastRankSig='';lastCullSig='';lastCullMoveSig='';lastGallerySig='';
@@ -2602,7 +2605,7 @@ function loadShortcuts(){fetch('/api/shortcuts').then(r=>r.json()).then(d=>{
     fi.placeholder='输入 Codespaces 中的云端文件夹路径';
     h+=`<div style="background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:9px 10px;font-size:11px;line-height:1.55;margin-bottom:7px">☁️ <b>Codespaces 在线预览</b><br>当前只能访问云端工作区文件，不能直接读取你电脑的 C:/F: 等本地硬盘。</div>`;
   }else{
-    bb.disabled=isRunning;bb.textContent='选择文件夹…';
+    bb.disabled=isRunning||godMode;bb.textContent='选择文件夹…';
     fi.placeholder='请选择或粘贴照片文件夹路径';
   }
 
@@ -2637,7 +2640,7 @@ function loadShortcuts(){fetch('/api/shortcuts').then(r=>r.json()).then(d=>{
 }).catch(()=>{});
 }
 loadShortcuts();
-setInterval(()=>{if(!document.hidden&&!isRunning)loadShortcuts();},30000);  // pick up a card inserted later
+setInterval(()=>{if(!document.hidden&&!isRunning&&!godMode)loadShortcuts();},30000);  // pick up a card inserted later
 document.getElementById('folderInput').onchange=e=>selectFolderValue(e.target.value);
 document.getElementById('folderInput').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();selectFolderValue(e.target.value);}};
 document.getElementById('browseBtn').onclick=async()=>{
@@ -2692,7 +2695,7 @@ function snapshotPipelineConfig(){
 async function startStep(step,config=null){
   const cfg=config||snapshotPipelineConfig();
   runningStep=step;
-  if(step==='cull')cullReady=false;
+  if(step==='cull'){cullReady=false;cullLiveStore.clear();}
   pollFailures=0;largeResultWarned=false;
   document.getElementById('progressWrap').style.display='block';
   if(step===currentStep){
@@ -2775,6 +2778,13 @@ async function godRun(){
 }
 godBtn.onclick=()=>{};
 startBtn.onclick=()=>{if(godMode||isRunning){godAbort=true;doStop();toast('正在停止当前分析…','info');}else godRun();};
+function cullRowsForPayload(d){
+  const rows=d.photos||[];
+  if(!d.running)cullLiveStore.clear();
+  rows.forEach(p=>{if(p&&p.path)cullLiveStore.set(p.path,p);});
+  return Array.from(cullLiveStore.values());
+}
+
 let cullChunkToken=0;
 async function loadRemainingCull(total,offset){
   const token=++cullChunkToken;
@@ -2790,6 +2800,7 @@ async function loadRemainingCull(total,offset){
       rows.forEach(p=>merged.set(p.path,p));
       pos=d.next_offset||pos+rows.length;
       const combined=Array.from(merged.values());
+      cullLiveStore.clear();combined.forEach(p=>cullLiveStore.set(p.path,p));
       renderCullStep(combined);
       document.getElementById('progressText').textContent='结果载入 '+combined.length+' / '+total+' · 可继续浏览和复核';
       await new Promise(res=>setTimeout(res,0));
@@ -2817,7 +2828,7 @@ function poll(step){
       updateVisibleStepStatus(step,d);
       if(step===currentStep){
         if(step==='rank')renderRank(d.photos||[]);
-        else if(step==='cull')renderCullStep(d.photos||[]);
+        else if(step==='cull')renderCullStep(cullRowsForPayload(d));
         else renderDedupGroups(d.photos||[]);
       }
 
