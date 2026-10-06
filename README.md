@@ -9,9 +9,9 @@
 当前安装包：**PhotoCurator-Setup-v1.4.0**
 
 下载位置：
-https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37440664323
+https://github.com/youzhi1701/PhotoCurator-CN-/actions/workflows/build-release.yml
 
-进入页面后，在底部 **Artifacts** 中下载 **PhotoCurator-Setup-v1.4.0**。
+进入页面后打开最新一次成功的 **Build Windows Release**，在底部 **Artifacts** 下载 **PhotoCurator-Setup-v1.4.0**。
 
 
 ## 主要能力
