@@ -19,8 +19,9 @@ class PhotoOrganizer:
     
     def __init__(self, root_folder: str):
         self.root = Path(root_folder)
-        self.rozmazane_dir = self.root / "Blurred（模糊照片）"
-        self.duplicates_dir = self.root / "Duplicates（重复照片）"
+        self.result_root = self.root / "PhotoCurator_Result（照片筛选结果）"
+        self.rozmazane_dir = self.result_root / "Blurred（模糊照片）"
+        self.duplicates_dir = self.result_root / "Duplicates（重复照片）"
         self.topn_dir = None  # Set when exporting
         self.dry_run = False
         
