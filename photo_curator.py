@@ -1722,14 +1722,16 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   .activity-log{max-height:170px;overflow:auto;padding:0 10px 9px;font-size:10px;color:var(--muted);display:flex;flex-direction:column;gap:6px}
   .activity-item{padding:6px 7px;border-radius:7px;background:rgba(255,255,255,.55)}
   .activity-item b{color:var(--text)}
+  .workspace-nav{position:sticky;top:0;z-index:40;width:max-content;max-width:100%;margin:0 auto 10px;padding:5px;
+    background:rgba(255,255,255,.58);border:1px solid rgba(255,255,255,.8);border-radius:14px;
+    backdrop-filter:blur(20px) saturate(150%);-webkit-backdrop-filter:blur(20px) saturate(150%);
+    box-shadow:0 8px 24px rgba(68,82,145,.08)}
+  .workspace-nav .step{color:var(--text);background:transparent;border:0}
+  .workspace-nav .step:hover{background:rgba(255,255,255,.7)}
+  .workspace-nav .step.active{background:rgba(255,255,255,.9);color:var(--accent);box-shadow:0 4px 14px rgba(65,90,160,.10)}
 </style></head><body>
 <div class="top">
   <div class="brand">🖼️ PhotoCurator <small>照片整理工作区 · v{{ app_version }}</small></div>
-  <div class="steps" aria-label="结果视图">
-    <div class="step active" data-step="cull">清晰度结果</div>
-    <div class="step" data-step="dedup">相似组选优</div>
-    <div class="step" data-step="rank">精选推荐</div>
-  </div>
   <div class="top-right">
     <button class="theme" id="themeToggle" title="切换浅色 / 深色主题" aria-label="切换浅色 / 深色主题">🌙</button>
     <div class="window-controls">
@@ -1778,6 +1780,11 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
     </div>
   </div>
   <div class="main">
+    <div class="workspace-nav steps" aria-label="照片整理结果视图">
+      <div class="step active" data-step="cull">清晰度结果</div>
+      <div class="step" data-step="dedup">相似组选优</div>
+      <div class="step" data-step="rank">精选推荐</div>
+    </div>
     <div class="progress-wrap" id="progressWrap">
       <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
       <div class="progress-text" id="progressText">…</div>
