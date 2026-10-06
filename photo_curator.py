@@ -1650,14 +1650,20 @@ def run_dedup(folder, threshold, ftype='all', pair='both',
             s['photos'] = [g for g in all_groups if g.get('count', 0) > 1]
             s['groups'] = len(s['photos'])
             s['singleton_paths'] = list(singleton_paths)
-            s['kept_paths'] = list(kept)
+            s['kept_paths'] = list(singleton_paths) + [
+                p for g in all_groups for p in (g.get('selected_paths') or [])
+            ]
 
         s['groups_data'] = all_groups
         s['photos'] = all_groups
         s['groups'] = len(all_groups)
         s['singleton_paths'] = singleton_paths
         s['seen_paths'] = seen_paths
-        s['kept_paths'] = kept
+        # Recompute from the live group objects so manual selections made while
+        # later folders were still scanning are never overwritten by defaults.
+        s['kept_paths'] = list(singleton_paths) + [
+            p for g in all_groups for p in (g.get('selected_paths') or [])
+        ]
 
         if s.get('cancel'):
             s['status'] = (f"已停止 · 已扫描 {processed}/{total} 张 · "
