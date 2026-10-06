@@ -2976,10 +2976,25 @@ def api_shortcuts():
     # Built-in demo is part of the application experience, not a temporary
     # Codespaces-only fixture. It is available on desktop and online preview.
     demo_folder = ensure_builtin_demo()
+    demo_real = os.path.realpath(demo_folder) if demo_folder else None
+    recent = []
+    for item in load_recents():
+        try:
+            real = os.path.realpath(item)
+            # Do not repeat the permanent built-in test entry in "最近";
+            # also hide the obsolete Codespaces sample directory left by older
+            # builds so the sidebar stays compact.
+            if demo_real and os.path.normcase(real) == os.path.normcase(demo_real):
+                continue
+            if Path(real).name.lower() == '.codespaces_demo':
+                continue
+            recent.append(item)
+        except Exception:
+            recent.append(item)
 
     return jsonify({
         'sd': [] if CODESPACES_PUBLIC_HOST else detect_sd_cards(),
-        'recent': load_recents(),
+        'recent': recent,
         'rawpy': HAS_RAWPY,
         'heif': HAS_HEIF,
         'codespaces': bool(CODESPACES_PUBLIC_HOST),
