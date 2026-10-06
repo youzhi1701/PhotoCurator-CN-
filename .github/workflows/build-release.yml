@@ -5,6 +5,9 @@ on:
     branches: ["main"]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 concurrency:
   group: photocurator-windows-release
   cancel-in-progress: true
@@ -84,3 +87,37 @@ jobs:
           name: PhotoCurator-Setup-v1.4.2
           path: release/PhotoCurator-Setup-v1.4.2.exe
           if-no-files-found: error
+
+      - name: Publish GitHub Release v1.4.2
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.4.2
+          name: PhotoCurator 中文桌面版 v1.4.2
+          target_commitish: ${{ github.sha }}
+          make_latest: true
+          prerelease: false
+          draft: false
+          files: release/PhotoCurator-Setup-v1.4.2.exe
+          body: |
+            ## PhotoCurator 中文桌面版 v1.4.2
+
+            正式封装发布版本。推荐普通 Windows 用户直接下载安装包：
+            **PhotoCurator-Setup-v1.4.2.exe**
+
+            ### 本版重点
+            - 统一照片整理工作区：清晰度分析、相似组选优、精选推荐、回收站复核
+            - PhotoCurator 自有软件回收站，删除后可进行最后一轮复核、恢复或永久删除
+            - 大图库增量缓存与长期索引，减少未变化照片重复分析
+            - 主图库 Ctrl + 鼠标滚轮调整缩略图尺寸，不缩放整个界面
+            - 浅色极光 + iOS 毛玻璃界面与正式 C 图标
+            - 支持覆盖升级，保留配置、索引、日志、缓存、照片及软件回收站
+            - Windows 安装版无需用户自行安装 Python
+
+            ### 安全说明
+            普通“删除”不会直接永久删除照片，而是先进入
+            `PhotoCurator_RecycleBin（软件回收站）`。
+            只有在“回收站复核”中再次确认永久删除后，文件才会真正从磁盘移除。
+
+            ### 安装
+            下载并运行 `PhotoCurator-Setup-v1.4.2.exe` 即可。
+            已安装旧版可直接覆盖安装。
