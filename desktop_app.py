@@ -13,7 +13,7 @@ import urllib.request
 from pathlib import Path
 
 APP_TITLE = "照片筛选 · PhotoCurator 中文版"
-APP_VERSION = "1.3.0"
+APP_VERSION = "1.4.0"
 HOST = "127.0.0.1"
 DEFAULT_PORT = 5014
 
@@ -130,6 +130,28 @@ URL = f"http://{HOST}:{PORT}"
 class DesktopApi:
     """Small native bridge used only by the desktop WebView."""
 
+    def __init__(self):
+        self._maximized = True
+
+    def window_action(self, action):
+        window = webview.active_window()
+        if window is None:
+            return False
+        if action == 'minimize' or action == 'close':
+            # The custom close button is intentionally safe: it minimizes
+            # instead of destroying the running analysis session.
+            window.minimize()
+            return True
+        if action == 'toggle_maximize':
+            if self._maximized:
+                window.restore()
+                self._maximized = False
+            else:
+                window.maximize()
+                self._maximized = True
+            return True
+        return False
+
     def pick_folder(self):
         window = webview.active_window()
         if window is None:
@@ -197,7 +219,9 @@ def main():
         zoomable=False,
         confirm_close=False,
         text_select=True,
-        background_color="#f4f6fb",
+        background_color="#eef7ff",
+        frameless=True,
+        easy_drag=True,
     )
 
     def on_closing():
