@@ -72,7 +72,7 @@ except Exception:
 
 app = Flask(__name__)
 
-APP_VERSION = "1.2.3-cn.6"
+APP_VERSION = "1.2.3-cn.7"
 IS_CODESPACES = os.environ.get('CODESPACES', '').strip().lower() == 'true'
 CODESPACE_NAME = os.environ.get('CODESPACE_NAME', '').strip()
 _CODESPACES_DOMAIN_RAW = os.environ.get(
@@ -1528,6 +1528,7 @@ let lastRankSig='', renderedCount=0, photoIdx=0, lastStep=null, weightTimer=null
 // that would stop Codespaces shortcut/sample initialization.
 const startBtn=document.getElementById('startBtn');
 let godMode=false, godAbort=false, godResolve=null;
+let cullReady=false;
 const CATS=[['aesthetic','综合观感'],['composition','构图'],['technical','技术质量'],['sharpness','清晰度'],['color','色彩']];
 const catColor=(i,n)=>`hsl(${Math.round(i*360/(n||CATS.length))},80%,62%)`;
 const CATCOLORS=CATS.map((_,i)=>catColor(i,CATS.length));
@@ -2169,7 +2170,6 @@ function togglePhoneBg(path){
 
 /* ---- cull (3-tier, reconciling, filterable) ---- */
 let cullView=[], rankView=[], lastCullSig='', lastCullMoveSig='';
-let cullReady=false;
 const TIER_NAME={sharp:'清晰',soft:'轻微软',blurry:'模糊'};
 const NEXT_TIER={sharp:'soft',soft:'blurry',blurry:'sharp'};
 function cullCardHtml(p,idx){const path=escHtml(p.path);
