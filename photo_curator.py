@@ -2252,6 +2252,25 @@ function applyDedupSelection(){
 }
 document.getElementById('dedupApplyBtn').onclick=applyDedupSelection;
 
+function renderFolderPage(slice,cardBuilder,startIndex){
+  const buckets={};
+  slice.forEach((p,k)=>{
+    const key=p.rel_dir||'当前文件夹';
+    (buckets[key]||(buckets[key]=[])).push({p:p,idx:startIndex+k});
+  });
+  const keys=Object.keys(buckets).sort((a,b)=>a.localeCompare(b,'zh-CN'));
+  let html='<div class="folder-results">';
+  keys.forEach(key=>{
+    const rows=buckets[key];
+    html+='<section class="folder-group"><div class="folder-head"><b>📁 '+escHtml(key)+'</b><span>'+rows.length+' 张</span></div>';
+    html+='<div class="folder-grid">';
+    rows.forEach(x=>{html+=cardBuilder(x.p,x.idx);});
+    html+='</div></section>';
+  });
+  html+='</div>';
+  return html;
+}
+
 function updatePager(){
   const pager=document.getElementById('pager');if(!pager)return;
   const total=gItems.length,pages=Math.max(1,Math.ceil(total/PAGE_SIZE));
@@ -2309,6 +2328,12 @@ function renderRank(items){
   const sig=rankFilter+'#'+gPage+'|'+slice.map(p=>p.rank+':'+p.path+':'+(p.phonebg?1:0)).join('|');
   if(sig===lastRankSig){updatePager();return;}
   lastRankSig=sig;
+
+  if(recursiveScan){
+    g.innerHTML=renderFolderPage(slice,rankCard,start);
+    document.getElementById('sShowing').textContent=rankView.length;
+    updatePager();return;
+  }
 
   const emp=g.querySelector('.empty');if(emp)emp.remove();
   const existing={};g.querySelectorAll('.photo-card').forEach(n=>existing[n.dataset.path]=n);
@@ -2412,6 +2437,12 @@ function renderCullStep(items){
     document.getElementById('sShowing').textContent=0;
     updatePager();
     return;
+  }
+
+  if(recursiveScan){
+    g.innerHTML=renderFolderPage(cullView,cullCardHtml,0);
+    document.getElementById('sShowing').textContent=filtered.length;
+    updatePager();return;
   }
 
   const moveSig=items.filter(p=>p.tier==='blurry')
