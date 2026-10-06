@@ -4387,9 +4387,14 @@ def api_dedup_apply():
 
         s['groups_data'] = [g for g in s.get('groups_data', []) if g.get('members')]
         unresolved = []
+        allowed_after = _cull_allowed_for_dedup()
         for group in s['groups_data']:
             selected_set = set(group.get('selected_paths') or [])
-            if any(m.get('path') not in selected_set for m in group.get('members', [])):
+            if any(
+                m.get('path') not in selected_set
+                and (allowed_after is None or m.get('path') in allowed_after)
+                for m in group.get('members', [])
+            ):
                 unresolved.append(group)
         s['photos'] = unresolved
         s['applied'] = not unresolved
