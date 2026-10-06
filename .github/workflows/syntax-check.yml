@@ -83,13 +83,18 @@ jobs:
           first_setup = js.find("setupFilterBar();")
           start_decl = js.find("const startBtn=document.getElementById('startBtn');")
           god_decl = js.find("let godMode=false, godAbort=false, godResolve=null;")
+          cull_ready_decl = js.find("let cullReady=false;")
 
-          if min(first_setup, start_decl, god_decl) < 0:
+          if min(first_setup, start_decl, god_decl, cull_ready_decl) < 0:
               raise SystemExit("Required UI boot markers are missing")
-          if not (start_decl < first_setup and god_decl < first_setup):
+          if not (
+              start_decl < first_setup
+              and god_decl < first_setup
+              and cull_ready_decl < first_setup
+          ):
               raise SystemExit(
-                  "UI boot order regression: startBtn/godMode must be initialized "
-                  "before the first setupFilterBar() call"
+                  "UI boot order regression: startBtn/godMode/cullReady must be "
+                  "initialized before the first setupFilterBar() call"
               )
           print("UI boot initialization order OK")
           PY
