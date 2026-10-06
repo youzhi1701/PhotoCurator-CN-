@@ -1434,6 +1434,13 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   .dedup-choice-state{margin-top:4px;font-weight:700;color:var(--muted)}
   .dedup-choice.selected .dedup-choice-state{color:var(--good)}
   .dedup-recommend{position:absolute;top:6px;left:6px;background:var(--good);color:#fff;border-radius:5px;padding:3px 7px;font-size:10px;font-weight:700;z-index:2}
+  .folder-results{display:flex;flex-direction:column;gap:14px;width:100%;grid-column:1/-1}
+  .folder-group{border:1px solid var(--border);border-radius:12px;background:var(--panel);overflow:hidden}
+  .folder-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 12px;background:var(--panel2);font-size:12px}
+  .folder-head b{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .folder-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:10px;padding:10px}
+  .source-path{font-size:10px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:3px}
+  .settings-subtitle{font-size:11px;font-weight:700;color:var(--muted);margin:11px 0 5px}
   body.processing .photo-card{cursor:default}
 
   .zoomctl{display:flex;align-items:center;gap:4px;background:rgba(255,255,255,.14);padding:3px;border-radius:8px;flex:0 0 auto}
@@ -2253,7 +2260,7 @@ function rankCard(p,idx){const path=escHtml(p.path);
     <div class="photo-info"><div class="pi-row"><span class="photo-name">${escHtml(p.name)}</span>
       <button class="remove-btn" data-path="${path}" title="从优选结果中移除（不会删除原文件）">✕ 移除</button>
       <button class="delete-btn" data-step="rank" data-path="${path}" title="直接删除原文件">🗑 删除</button></div>
-      <div class="photo-score">${p.score}</div></div></div>`;}
+      <div class="photo-score">${p.score}</div><div class="source-path">${escHtml(p.rel_dir||'当前文件夹')}</div></div></div>`;}
 function renderRank(items){
   photos=items;const g=document.getElementById('gallery');
   if(lastStep!==currentStep){g.innerHTML='';lastRankSig='';lastStep=currentStep;gPage=0;}
@@ -2331,7 +2338,7 @@ function cullCardHtml(p,idx){const path=escHtml(p.path);
     ${moveSel}
     <button class="badge ${p.badgeType} badge-tier" data-path="${path}" data-tier="${p.tier}" title="点击切换：清晰 → 轻微软 → 模糊">⇄ ${p.badge}</button>
     <img class="photo-img" src="${p.thumb}" loading="lazy" decoding="async">
-    <div class="photo-info"><div class="pi-row"><span class="photo-name">${escHtml(p.name)}</span><span class="ftype${p.raw?'':(p.heic?' heic':' jpg')}">${p.fmt||(p.raw?'RAW':p.heic?'HEIC':'JPG')}</span><button class="delete-btn" data-step="cull" data-path="${path}" title="直接删除原文件">🗑 删除</button></div><div class="photo-score">${p.score}</div></div></div>`;}
+    <div class="photo-info"><div class="pi-row"><span class="photo-name">${escHtml(p.name)}</span><span class="ftype${p.raw?'':(p.heic?' heic':' jpg')}">${p.fmt||(p.raw?'RAW':p.heic?'HEIC':'JPG')}</span><button class="delete-btn" data-step="cull" data-path="${path}" title="直接删除原文件">🗑 删除</button></div><div class="photo-score">${p.score}</div><div class="source-path">${escHtml(p.rel_dir||'当前文件夹')}</div></div></div>`;}
 
 function syncCullCardNode(node,p,idx){
   const moveOn=p.move_selected!==false;
