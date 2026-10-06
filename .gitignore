@@ -25,3 +25,7 @@ Blurred/
 Duplicates/
 TOP_*/
 PhoneBG/
+
+# GitHub Codespaces local preview artifacts
+.codespaces-venv/
+.codespaces_demo/
