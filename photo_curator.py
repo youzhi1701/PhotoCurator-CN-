@@ -72,7 +72,7 @@ except Exception:
 
 app = Flask(__name__)
 
-APP_VERSION = "1.2.3-cn.7"
+APP_VERSION = "1.2.3-cn.8"
 IS_CODESPACES = os.environ.get('CODESPACES', '').strip().lower() == 'true'
 CODESPACE_NAME = os.environ.get('CODESPACE_NAME', '').strip()
 _CODESPACES_DOMAIN_RAW = os.environ.get(
@@ -1253,8 +1253,8 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   .badge.good{background:var(--good)} .badge.bad{background:var(--bad)}
   .move-select{position:absolute;top:6px;left:6px;z-index:8;width:25px;height:25px;border:2px solid #fff;border-radius:6px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;padding:0;font-size:15px;font-weight:900;cursor:pointer;box-shadow:0 1px 6px rgba(0,0,0,.28)}
   .move-select:hover{transform:scale(1.06)}
-  .move-select.off{background:rgba(20,25,35,.42);color:transparent}
-  .move-select.off:hover{color:#fff;background:rgba(37,99,235,.75)}
+  .move-select.off{background:rgba(255,255,255,.82);color:#667085;border-color:#94a3b8;box-shadow:0 1px 5px rgba(0,0,0,.16)}
+  .move-select.off:hover{color:var(--accent);border-color:var(--accent);background:#fff}
   .move-summary{display:inline-flex;align-items:center;gap:4px;padding:5px 8px;border-radius:8px;background:var(--panel2);font-size:11px;color:var(--muted)}
   .move-summary b{color:var(--accent);font-size:12px}
   .chip.move-bulk{padding-left:9px;padding-right:9px}
@@ -2174,14 +2174,43 @@ const TIER_NAME={sharp:'清晰',soft:'轻微软',blurry:'模糊'};
 const NEXT_TIER={sharp:'soft',soft:'blurry',blurry:'sharp'};
 function cullCardHtml(p,idx){const path=escHtml(p.path);
   const cls=p.tier==='sharp'?'kept':p.tier==='soft'?'soft':'rejected';
+  const moveOn=p.move_selected!==false;
   const moveSel=p.tier==='blurry'
-    ?`<button class="move-select${p.move_selected===false?' off':''}" data-path="${path}" data-selected="${p.move_selected===false?'0':'1'}" title="${p.move_selected===false?'未加入本次移动，点击重新选择':'已加入本次移动，点击保留在原位置'}">${p.move_selected===false?'':'✓'}</button>`
+    ?`<button class="move-select${moveOn?'':' off'}" data-path="${path}" data-selected="${moveOn?'1':'0'}" title="${moveOn?'已加入本次移动，点击保留在原位置':'保留在原位置，点击重新加入本次移动'}">${moveOn?'✓':'□'}</button>`
     :'';
-  return `<div class="photo-card ${cls}" data-i="${idx}" data-path="${path}" data-tier="${p.tier}">
+  return `<div class="photo-card ${cls}" data-i="${idx}" data-path="${path}" data-tier="${p.tier}" data-move-selected="${moveOn?'1':'0'}">
     ${moveSel}
     <button class="badge ${p.badgeType} badge-tier" data-path="${path}" data-tier="${p.tier}" title="点击切换：清晰 → 轻微软 → 模糊">⇄ ${p.badge}</button>
     <img class="photo-img" src="${p.thumb}" loading="lazy" decoding="async">
     <div class="photo-info"><div class="pi-row"><span class="photo-name">${escHtml(p.name)}</span><span class="ftype${p.raw?'':(p.heic?' heic':' jpg')}">${p.fmt||(p.raw?'RAW':p.heic?'HEIC':'JPG')}</span></div><div class="photo-score">${p.score}</div></div></div>`;}
+
+function syncCullCardNode(node,p,idx){
+  const moveOn=p.move_selected!==false;
+  node.dataset.i=idx;
+  node.dataset.tier=p.tier;
+  node.dataset.moveSelected=moveOn?'1':'0';
+  node.classList.toggle('kept',p.tier==='sharp');
+  node.classList.toggle('soft',p.tier==='soft');
+  node.classList.toggle('rejected',p.tier==='blurry');
+
+  const badge=node.querySelector('.badge-tier');
+  if(badge){
+    badge.dataset.tier=p.tier;
+    badge.classList.remove('good','soft','bad');
+    badge.classList.add(p.badgeType);
+    badge.textContent='⇄ '+p.badge;
+  }
+
+  const ms=node.querySelector('.move-select');
+  if(p.tier==='blurry'&&ms){
+    ms.dataset.selected=moveOn?'1':'0';
+    ms.classList.toggle('off',!moveOn);
+    ms.textContent=moveOn?'✓':'□';
+    ms.title=moveOn
+      ?'已加入本次移动，点击保留在原位置'
+      :'保留在原位置，点击重新加入本次移动';
+  }
+}
 function renderCullStep(items){
   photos=items;
   const fSig=[...new Set(items.filter(p=>p.raw).map(p=>p.fmt||'RAW'))].sort().join(',');
@@ -2224,7 +2253,11 @@ function renderCullStep(items){
   cullView.forEach((p,idx)=>{
     let node=existing[p.path];
     if(node&&node.dataset.tier===p.tier){
-      node.dataset.i=idx;delete existing[p.path];
+      // A card can keep the same classification while its independent
+      // "move this file" choice changes. Reused DOM must still mirror that
+      // state immediately, otherwise the counters and checkmarks disagree.
+      syncCullCardNode(node,p,idx);
+      delete existing[p.path];
     }else{
       if(node)node.remove();
       const w=document.createElement('div');w.innerHTML=cullCardHtml(p,idx);node=w.firstElementChild;
