@@ -51,6 +51,11 @@ jobs:
           installer = Path("packaging/PhotoCurator.iss").read_text(encoding="utf-8")
           version_info = Path("packaging/version_info.txt").read_text(encoding="utf-8")
           build_workflow = Path(".github/workflows/build-release.yml").read_text(encoding="utf-8")
+          manifest = json.loads(Path("packaging/release_manifest.json").read_text(encoding="utf-8"))
+          if not Path("packaging/ChineseSimplified.isl").is_file():
+              raise SystemExit("Vendored Simplified Chinese installer language is missing")
+          if manifest.get("version") != dv:
+              raise SystemExit("Release manifest version does not match APP_VERSION")
           if f'#define MyAppVersion "{dv}"' not in installer:
               raise SystemExit("Installer version does not match APP_VERSION")
           if f"StringStruct('ProductVersion', '{dv}')" not in version_info:
@@ -157,6 +162,60 @@ jobs:
           if "selected_path': selected" in source:
               raise SystemExit("Legacy single-keeper dedup state returned")
           print("Final recursive/grouped/multi-keep workflow guard OK")
+          PY
+
+      - name: Check v1.4.1 data-flow and large-library guards
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          source = Path("photo_curator.py").read_text(encoding="utf-8")
+          installer = Path("packaging/PhotoCurator.iss").read_text(encoding="utf-8")
+          workflow = Path(".github/workflows/build-release.yml").read_text(encoding="utf-8")
+
+          required = [
+              "review_override",
+              "UI_LIVE_RESULT_CAP",
+              "UI_RESULT_CHUNK",
+              "api_cull_results_chunk",
+              "snapshotPipelineConfig",
+              "cullLiveStore",
+              "singleton_paths",
+              "seen_paths",
+              "state['rank']['preview_at'] = 0.0",
+              "ftype:'all'",
+              "_save_cull_metrics_batch",
+              "_save_rank_scores_batch",
+              "[InstallDelete]",
+          ]
+          missing = [x for x in required if x not in (source + installer)]
+          if missing:
+              raise SystemExit("v1.4.1 architecture regression: " + repr(missing))
+
+          banned = [
+              "清晰度技术值",
+              "ftype:step==='cull'?'all':cullType",
+              "Download Simplified Chinese installer language",
+              "raw.githubusercontent.com/kira-96/Inno-Setup-Chinese-Simplified-Translation",
+          ]
+          leftovers = [x for x in banned if x in (source + workflow)]
+          if leftovers:
+              raise SystemExit("v1.4.1 legacy behavior returned: " + repr(leftovers))
+
+          js_saved = source.find("saved=JSON.parse(localStorage.getItem('pc-library-settings')")
+          for decl in (
+              "let cullStrictness=1.0;",
+              "let cullAdaptive=true;",
+              "let cullRescue=true;",
+              "let dedupThreshold=0.80;",
+              "let pairMode='both';",
+              "let rankTopN=50;",
+          ):
+              pos = source.find(decl)
+              if pos < 0 or (js_saved >= 0 and pos > js_saved):
+                  raise SystemExit("Settings initialization order regression: " + decl)
+
+          print("v1.4.1 data-flow / large-library guards OK")
           PY
 
       - name: Validate embedded HTML structure
