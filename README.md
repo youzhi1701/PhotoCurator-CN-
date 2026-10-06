@@ -4,6 +4,16 @@
 
 当前中文桌面版：**v1.3.0**
 
+## 正式版下载
+
+当前安装包：**PhotoCurator-Setup-v1.3.0**
+
+下载位置：
+https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37440664323
+
+进入页面后，在底部 **Artifacts** 中下载 **PhotoCurator-Setup-v1.3.0**。
+
+
 ## 主要能力
 
 核心流程保持原项目算法逻辑：
