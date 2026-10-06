@@ -48,7 +48,9 @@ jobs:
         shell: powershell
         run: |
           New-Item -ItemType Directory -Force release | Out-Null
-          & "\${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "packaging\PhotoCurator.iss"
+          $pf86 = [Environment]::GetFolderPath('ProgramFilesX86')
+          $iscc = Join-Path $pf86 "Inno Setup 6\ISCC.exe"
+          & $iscc "packaging\PhotoCurator.iss"
           if (!(Test-Path "release\PhotoCurator-Setup-v1.3.0.exe")) { throw "Installer not built" }
 
       - name: Upload installer
