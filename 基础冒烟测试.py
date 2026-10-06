@@ -367,6 +367,47 @@ def main():
         assert_true(blurry_a.exists() and keep_b.exists() and not drop_c.exists(),
                     "相似处理错误移动了模糊照片或当前保留项")
 
+        # Similarity metadata keeps the full source relationship so a photo
+        # rescued from Blurry later can immediately re-enter the eligible set.
+        rescued = sync_dir / "D_后续救回.jpg"
+        Image.new("RGB", (56, 42), "white").save(rescued)
+        photo_curator.state["dedup"].update({
+            "complete": True,
+            "running": False,
+            "src_folder": str(root),
+            "recursive": True,
+            "groups_data": [],
+            "photos": [],
+            "all_singleton_paths": [str(rescued)],
+            "singleton_paths": [],
+            "seen_paths": {str(rescued)},
+        })
+        photo_curator.state["cull"]["sharp_paths"] = []
+        photo_curator._sync_dedup_with_cull()
+        assert_true(str(rescued) not in photo_curator.state["dedup"]["kept_paths"],
+                    "仍为模糊状态的相似索引单例不应进入保留集合")
+        photo_curator.state["cull"]["sharp_paths"] = [str(rescued)]
+        photo_curator._sync_dedup_with_cull()
+        assert_true(str(rescued) in photo_curator.state["dedup"]["kept_paths"],
+                    "人工救回照片没有从完整相似索引恢复到保留集合")
+
+        # Duplicate groups support chunked transport so extreme libraries do not
+        # silently lose groups beyond one response cap.
+        photo_curator.state["dedup"]["photos"] = [
+            {"group_id": 101, "count": 2, "members": []},
+            {"group_id": 102, "count": 2, "members": []},
+            {"group_id": 103, "count": 2, "members": []},
+        ]
+        chunk = client.get(
+            "/api/results/dedup?offset=1&limit=1",
+            headers={"Host": f"127.0.0.1:{photo_curator.PORT}"},
+        )
+        assert_true(chunk.status_code == 200, f"相似组分块接口失败：HTTP {chunk.status_code}")
+        cp = chunk.get_json()
+        assert_true(cp.get("total") == 3 and cp.get("next_offset") == 2
+                    and cp.get("photos", [{}])[0].get("group_id") == 102,
+                    f"相似组分块结果错误：{cp}")
+
         # A completed Cull with zero survivors is a valid result. Dedup/Rank
         # must never fall back to scanning the original folder again, otherwise
         # photos the user/algorithm rejected as blurry would re-enter later stages.
