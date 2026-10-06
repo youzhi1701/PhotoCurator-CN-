@@ -2631,7 +2631,7 @@ function deletePhoto(step,path,fromLightbox=false){
       }else if(step==='dedup'){
         photos=d.photos||[];
         renderDedupGroups(photos);
-        document.getElementById('sGroups').textContent=d.groups||0;
+        document.getElementById('sGroups').textContent=d.duplicate_groups||0;
       }else{
         renderRank(d.photos||[]);
         setRemoved(d.removed||0);
@@ -3413,7 +3413,9 @@ def api_delete_photo():
         return jsonify({'ok': True, 'photos': cull['photos'],
                         'sharp': cull['sharp'], 'soft': cull['soft'], 'blurry': cull['blurry']})
     if step == 'dedup':
-        return jsonify({'ok': True, 'photos': dedup['photos'], 'groups': dedup['groups']})
+        return jsonify({'ok': True, 'photos': dedup['photos'],
+                        'groups': dedup['groups'],
+                        'duplicate_groups': len(dedup['photos'])})
     return jsonify({'ok': True, 'photos': rank['preview'], 'removed': len(state['excluded'])})
 
 
