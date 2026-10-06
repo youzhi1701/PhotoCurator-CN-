@@ -310,10 +310,17 @@ def main():
         Image.new("RGB", (48, 36), "white").save(dedup_cache_img)
         key_before = photo_curator.FastBatchDeduplicator._cache_key(str(dedup_cache_img))
         st = dedup_cache_img.stat()
-        os.utime(dedup_cache_img, ns=(st.st_atime_ns, st.st_mtime_ns + 1))
+        os.utime(dedup_cache_img, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000))
         key_after = photo_curator.FastBatchDeduplicator._cache_key(str(dedup_cache_img))
         assert_true(key_before != key_after,
                     "相似特征缓存必须使用纳秒级修改时间，不能复用同秒旧特征")
+
+        thumb_before = photo_curator._thumb_cache_path(str(dedup_cache_img))
+        st2 = dedup_cache_img.stat()
+        os.utime(dedup_cache_img, ns=(st2.st_atime_ns, st2.st_mtime_ns + 1_000_000))
+        thumb_after = photo_curator._thumb_cache_path(str(dedup_cache_img))
+        assert_true(thumb_before != thumb_after,
+                    "缩略图缓存必须随同秒文件变化失效，不能继续显示旧图")
 
         # Cross-stage consistency: when the currently selected duplicate keeper
         # is later marked blurry, promote the best still-kept Cull survivor.
