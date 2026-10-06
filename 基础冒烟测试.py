@@ -63,6 +63,26 @@ def main():
             safe = photo_curator._safe_image_path(str(p))
             assert_true(safe is not None, f"安全路径校验误拒绝：{p}")
 
+        # Built-in test data must always be available through the same API the
+        # sidebar uses. The canonical 12 files are persistent and may be
+        # replenished if a previous file-move test moved one away.
+        demo_dir = Path(photo_curator.ensure_builtin_demo())
+        demo_files = sorted(p for p in demo_dir.iterdir() if p.suffix.lower() == ".jpg")
+        assert_true(len(demo_files) >= 12,
+                    f"内置测试数据数量不足：{len(demo_files)}")
+
+        shortcuts = photo_curator.app.test_client().get(
+            "/api/shortcuts",
+            headers={"Host": f"127.0.0.1:{photo_curator.PORT}"},
+        )
+        assert_true(shortcuts.status_code == 200,
+                    f"快捷入口接口失败：HTTP {shortcuts.status_code}")
+        shortcut_data = shortcuts.get_json()
+        assert_true(shortcut_data.get("demo_folder") == str(demo_dir.resolve()),
+                    f"内置测试数据入口缺失：{shortcut_data}")
+        assert_true(shortcut_data.get("demo_count") == 12,
+                    f"内置测试数据标称数量错误：{shortcut_data}")
+
         # Verify the local HTTP endpoints also survive Unicode/special paths.
         client = photo_curator.app.test_client()
         sample = str(found[0])
