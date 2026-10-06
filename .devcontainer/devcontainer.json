@@ -1,0 +1,16 @@
+{
+  "name": "PhotoCurator 中文版在线预览",
+  "image": "mcr.microsoft.com/devcontainers/python:1-3.11-bookworm",
+  "forwardPorts": [5014],
+  "portsAttributes": {
+    "5014": {
+      "label": "照片筛选在线预览",
+      "onAutoForward": "notify",
+      "protocol": "http"
+    }
+  },
+  "remoteEnv": {
+    "PYTHONUTF8": "1",
+    "PIP_DISABLE_PIP_VERSION_CHECK": "1"
+  }
+}
