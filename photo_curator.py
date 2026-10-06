@@ -1463,6 +1463,57 @@ def _request_rank_score(path):
         logger.debug("rank refresh request failed", exc_info=True)
 
 
+def _cull_allowed_for_dedup():
+    """Current Cull survivors when Cull/Dedup refer to the same scan."""
+    cull = state['cull']
+    dedup = state['dedup']
+    if not cull.get('complete'):
+        return None
+    if cull.get('src_folder') != dedup.get('src_folder'):
+        return None
+    if bool(cull.get('recursive', False)) != bool(dedup.get('recursive', False)):
+        return None
+    return set(cull.get('sharp_paths') or [])
+
+
+def _sync_dedup_with_cull():
+    """Keep duplicate keepers valid after manual clear/blurry reclassification."""
+    dedup = state['dedup']
+    allowed = _cull_allowed_for_dedup()
+    if allowed is None:
+        return
+    new_groups = []
+    for group in dedup.get('groups_data', []):
+        members = [m for m in group.get('members', [])
+                   if m.get('path') and Path(m.get('path')).is_file()]
+        if not members:
+            continue
+        group['members'] = members
+        group['count'] = len(members)
+        eligible = [m.get('path') for m in members if m.get('path') in allowed]
+        selected = [p for p in (group.get('selected_paths') or [])
+                    if p in eligible]
+        if eligible and not selected:
+            # Members are quality-sorted; promote the best current Cull survivor.
+            selected = [eligible[0]]
+        group['selected_paths'] = selected
+        selected_set = set(selected)
+        for m in members:
+            m['selected'] = m.get('path') in selected_set
+        new_groups.append(group)
+    dedup['groups_data'] = new_groups
+    dedup['photos'] = [g for g in new_groups if g.get('count', 0) > 1]
+    dedup['groups'] = len(dedup['photos'])
+    dedup['singleton_paths'] = [
+        p for p in (dedup.get('singleton_paths') or [])
+        if p in allowed and Path(p).is_file()
+    ]
+    dedup['kept_paths'] = list(dedup['singleton_paths']) + [
+        p for g in new_groups for p in (g.get('selected_paths') or [])
+    ]
+    state['rank']['preview_at'] = 0.0
+
+
 # --------------------------------------------------------------------------- #
 #  DEDUP
 # --------------------------------------------------------------------------- #
@@ -1583,6 +1634,7 @@ def run_dedup(folder, threshold, ftype='all', pair='both',
                     all_groups.append({
                         'group_id': len(all_groups),
                         'count': len(member_rows),
+                        'ready': True,
                         'selected_paths': [selected],
                         'folder_rel': (rels[0] if len(rels) == 1 else '跨文件夹重复'),
                         'members': member_rows,
@@ -1590,6 +1642,15 @@ def run_dedup(folder, threshold, ftype='all', pair='both',
                 else:
                     singleton_paths.append(selected)
                 kept.append(selected)
+
+            # Folder-local batches are final as soon as that folder finishes.
+            # Publish them immediately so the user can review earlier folders
+            # while later folders are still being analyzed.
+            s['groups_data'] = list(all_groups)
+            s['photos'] = [g for g in all_groups if g.get('count', 0) > 1]
+            s['groups'] = len(s['photos'])
+            s['singleton_paths'] = list(singleton_paths)
+            s['kept_paths'] = list(kept)
 
         s['groups_data'] = all_groups
         s['photos'] = all_groups
@@ -1801,6 +1862,13 @@ def run_rank(folder, ftype='all', pair='both', recursive=True):
         s['status'] = f"发生错误：{e}"
     finally:
         s['running'] = False
+        # A manual Cull change can land between the final pending-path check and
+        # task completion. Once running=False, re-dispatch anything left so no
+        # user-approved photo is silently missed by the final recommendation.
+        late_pending = list(s.get('pending_paths') or set())
+        s.setdefault('pending_paths', set()).clear()
+        for raw in late_pending:
+            _request_rank_score(raw)
 
 
 # --------------------------------------------------------------------------- #
@@ -4172,10 +4240,6 @@ def api_cull_results_chunk():
 def api_dedup_select():
     """Toggle one photo's kept state; each similarity group must keep >= 1."""
     s = state['dedup']
-    if s.get('running'):
-        return jsonify({'error': '相似分析仍在运行，请等待这个相似组分析完成'}), 409
-    if not s.get('complete'):
-        return jsonify({'error': '请先完成相似照片筛选'}), 409
     data = request.get_json() or {}
     try:
         gid = int(data.get('group_id'))
@@ -4185,7 +4249,14 @@ def api_dedup_select():
     group = next((g for g in s.get('groups_data', []) if g.get('group_id') == gid), None)
     if not group:
         return jsonify({'error': '未找到这个相似组'}), 404
+    if s.get('running') and not group.get('ready'):
+        return jsonify({'error': '这个相似组仍在分析中'}), 409
+    if not s.get('running') and not s.get('complete'):
+        return jsonify({'error': '相似照片筛选尚未完成'}), 409
     member_paths = [m.get('path') for m in group.get('members', []) if m.get('path')]
+    allowed = _cull_allowed_for_dedup()
+    if allowed is not None and path not in allowed:
+        return jsonify({'error': '这张照片已在清晰度结果中标为模糊，不能设为相似组保留项'}), 409
     if path not in member_paths:
         return jsonify({'error': '这张照片不属于当前相似组'}), 400
 
@@ -4220,10 +4291,6 @@ def api_dedup_select():
 @app.route('/api/dedup-group-action', methods=['POST'])
 def api_dedup_group_action():
     """Fast keeper presets for one similarity group."""
-    if state['dedup'].get('running'):
-        return jsonify({'error': '相似分析仍在运行，请等待分析完成'}), 409
-    if not state['dedup'].get('complete'):
-        return jsonify({'error': '请先完成相似照片筛选'}), 409
     data = request.get_json() or {}
     try:
         gid = int(data.get('group_id'))
@@ -4236,11 +4303,17 @@ def api_dedup_group_action():
     group = next((g for g in s.get('groups_data', []) if g.get('group_id') == gid), None)
     if not group:
         return jsonify({'error': '未找到这个相似组'}), 404
+    if s.get('running') and not group.get('ready'):
+        return jsonify({'error': '这个相似组仍在分析中'}), 409
+    if not s.get('running') and not s.get('complete'):
+        return jsonify({'error': '相似照片筛选尚未完成'}), 409
     members = list(group.get('members') or [])
-    if not members:
-        return jsonify({'error': '相似组为空'}), 409
-    keep_n = len(members) if mode == 'all' else (2 if mode == 'best2' else 1)
-    selected = [m.get('path') for m in members[:keep_n] if m.get('path')]
+    allowed = _cull_allowed_for_dedup()
+    eligible = [m for m in members if allowed is None or m.get('path') in allowed]
+    if not eligible:
+        return jsonify({'error': '这个相似组当前没有清晰度复核后可保留的照片'}), 409
+    keep_n = len(eligible) if mode == 'all' else (2 if mode == 'best2' else 1)
+    selected = [m.get('path') for m in eligible[:keep_n] if m.get('path')]
     group['selected_paths'] = selected
     selected_set = set(selected)
     for m in members:
@@ -4268,13 +4341,17 @@ def api_dedup_apply():
         return jsonify({'error': '请先完成相似照片筛选'}), 409
     if s.get('applied'):
         return jsonify({'ok': True, 'moved': 0, 'already_applied': True})
+    _sync_dedup_with_cull()
+    allowed = _cull_allowed_for_dedup()
     dups = []
     for group in s.get('groups_data', []):
         if group.get('count', 0) <= 1:
             continue
         selected = set(group.get('selected_paths') or [])
         dups.extend(m.get('path') for m in group.get('members', [])
-                    if m.get('path') and m.get('path') not in selected)
+                    if m.get('path')
+                    and (allowed is None or m.get('path') in allowed)
+                    and m.get('path') not in selected)
     if not dups:
         s['applied'] = True
         return jsonify({'ok': True, 'moved': 0,
@@ -4531,6 +4608,7 @@ def api_toggle_status():
     s['sharp'] = sum(1 for p in s['photos'] if p['tier'] == 'sharp')
     s['soft'] = sum(1 for p in s['photos'] if p['tier'] == 'soft')
     s['blurry'] = sum(1 for p in s['photos'] if p['tier'] == 'blurry')
+    _sync_dedup_with_cull()
     move_total = sum(1 for p in s['photos'] if p.get('tier') == 'blurry')
     move_selected = sum(
         1 for p in s['photos']
