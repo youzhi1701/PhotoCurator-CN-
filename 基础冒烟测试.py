@@ -224,6 +224,53 @@ def main():
         assert_true(refuse_zero.status_code == 409,
                     "相似组不应允许取消最后一张保留照片")
 
+        # Applying a reviewed dedup group should move only unselected members,
+        # keep all selected originals, and clear resolved review cards.
+        apply_dir = root / "去重处理测试"
+        apply_dir.mkdir(parents=True, exist_ok=True)
+        keep_a = apply_dir / "保留A.jpg"
+        keep_b = apply_dir / "保留B.jpg"
+        drop_c = apply_dir / "待处理C.jpg"
+        for p in (keep_a, keep_b, drop_c):
+            Image.new("RGB", (50, 40), "white").save(p)
+        photo_curator.state["folder"] = str(root)
+        photo_curator.state["scan"].update({
+            "output_mode": "source",
+            "custom_output": "",
+        })
+        photo_curator.state["dedup"].update({
+            "complete": True,
+            "applied": False,
+            "running": False,
+            "groups_data": [{
+                "group_id": 7,
+                "count": 3,
+                "selected_paths": [str(keep_a), str(keep_b)],
+                "folder_rel": "去重处理测试",
+                "members": [
+                    {"path": str(keep_a), "selected": True},
+                    {"path": str(keep_b), "selected": True},
+                    {"path": str(drop_c), "selected": False},
+                ],
+            }],
+        })
+        photo_curator.state["dedup"]["photos"] = photo_curator.state["dedup"]["groups_data"]
+        applied = client.post(
+            "/api/dedup-apply",
+            json={},
+            headers={"Host": f"127.0.0.1:{photo_curator.PORT}"},
+        )
+        assert_true(applied.status_code == 200,
+                    f"相似照片确认处理失败：HTTP {applied.status_code}")
+        payload = applied.get_json()
+        assert_true(payload.get("moved") == 1 and not payload.get("photos"),
+                    f"相似照片处理结果错误：{payload}")
+        assert_true(keep_a.exists() and keep_b.exists() and not drop_c.exists(),
+                    "相似照片多选保留后错误移动了保留项，或未移动待处理项")
+        moved_c = apply_dir / "PhotoCurator_Result" / "Duplicates" / drop_c.name
+        assert_true(moved_c.exists(),
+                    f"待处理相似照片没有进入默认结果目录：{moved_c}")
+
         # Custom output is an explicit user-selected root and must remain
         # accessible to thumbnails / previews after a reviewed file is moved.
         custom_root = Path(td) / "自定义筛选结果"
