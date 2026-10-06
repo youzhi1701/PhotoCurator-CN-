@@ -72,7 +72,7 @@ except Exception:
 
 app = Flask(__name__)
 
-APP_VERSION = "1.2.3-cn.4"
+APP_VERSION = "1.2.3-cn.5"
 IS_CODESPACES = os.environ.get('CODESPACES', '').strip().lower() == 'true'
 CODESPACE_NAME = os.environ.get('CODESPACE_NAME', '').strip()
 _CODESPACES_DOMAIN_RAW = os.environ.get(
@@ -465,6 +465,53 @@ def save_recent(folder):
         RECENTS_FILE.write_text(json.dumps(recents[:8], ensure_ascii=False), encoding='utf-8')
     except Exception as e:
         logger.warning(f"save recents fail: {e}")
+
+
+def ensure_codespaces_demo():
+    """Guarantee a persistent, usable demo dataset for Codespaces preview.
+
+    Existing demo files and test outputs are never deleted or overwritten.
+    Missing canonical samples are recreated so file-operation tests cannot
+    permanently empty the demo folder.
+    """
+    if not CODESPACES_PUBLIC_HOST:
+        return None
+    raw_demo = (
+        os.environ.get('PHOTOCURATOR_DEMO_DIR')
+        or str(Path(__file__).resolve().parent / '.codespaces_demo')
+    )
+    demo = Path(raw_demo)
+    try:
+        demo.mkdir(parents=True, exist_ok=True)
+        from PIL import ImageDraw, ImageFilter
+        for i in range(12):
+            kind = 'blurry' if i >= 8 else ('soft' if i >= 4 else 'sharp')
+            target = demo / f"sample_{i+1:02d}_{kind}.jpg"
+            if target.exists():
+                continue
+            w, h = 960, 640
+            img = Image.new('RGB', (w, h), (235, 238, 244))
+            d = ImageDraw.Draw(img)
+            step = 32 + (i % 3) * 8
+            for x in range(0, w, step):
+                d.line((x, 0, w - x // 2, h), width=2 + i % 4,
+                       fill=(35 + i * 8, 65, 120 + i * 6))
+            for y in range(0, h, step):
+                d.line((0, y, w, h - y // 2), width=1 + (i % 3),
+                       fill=(110, 70 + i * 7, 60))
+            d.ellipse((180 + i * 8, 120, 560 + i * 8, 500),
+                      outline=(25, 25, 25), width=10)
+            d.rectangle((620, 120 + i * 7, 860, 420 + i * 4),
+                        outline=(20, 110, 80), width=8)
+            if kind == 'blurry':
+                img = img.filter(ImageFilter.GaussianBlur(radius=5.0))
+            elif kind == 'soft':
+                img = img.filter(ImageFilter.GaussianBlur(radius=1.4))
+            img.save(target, quality=92)
+        return os.path.realpath(demo)
+    except Exception as e:
+        logger.warning(f"ensure Codespaces demo failed: {e}")
+        return os.path.realpath(demo) if demo.is_dir() else None
 
 
 # DCIM folder-name hints -> camera brand label shown on the SD shortcut.
@@ -2520,14 +2567,9 @@ def index():
 
 @app.route('/api/shortcuts')
 def api_shortcuts():
-    demo_folder = None
-    if CODESPACES_PUBLIC_HOST:
-        raw_demo = (
-            os.environ.get('PHOTOCURATOR_DEMO_DIR')
-            or str(Path(__file__).resolve().parent / '.codespaces_demo')
-        )
-        if Path(raw_demo).is_dir():
-            demo_folder = os.path.realpath(raw_demo)
+    # Repair/recreate only missing canonical demo samples on every preview
+    # shortcut refresh. This keeps test data available even after move tests.
+    demo_folder = ensure_codespaces_demo() if CODESPACES_PUBLIC_HOST else None
 
     return jsonify({
         'sd': [] if CODESPACES_PUBLIC_HOST else detect_sd_cards(),
