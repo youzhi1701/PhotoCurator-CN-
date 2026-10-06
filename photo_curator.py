@@ -620,7 +620,8 @@ state = {
     'scan': {'recursive': True, 'compare_scope': 'folder',
              'output_mode': 'source', 'custom_output': ''},
     'cull':  {**_blank(), 'sharp': 0, 'soft': 0, 'blurry': 0, 'sharp_paths': [], 'overrides': {}, 'removed_paths': set(), 'cache_hits': 0},
-    'dedup': {**_blank(), 'groups': 0, 'kept_paths': [], 'groups_data': [], 'applied': False},
+    'dedup': {**_blank(), 'groups': 0, 'kept_paths': [], 'groups_data': [],
+              'singleton_paths': [], 'seen_paths': set(), 'applied': False},
     'rank':  {**_blank(), 'scores': [], 'total': 0, 'analyzed': 0, 'preview': [], 'preview_at': 0.0},
 }
 
@@ -1411,6 +1412,7 @@ def run_dedup(folder, threshold, ftype='all', pair='both',
     s = state['dedup']
     s.update({'running': True, 'cancel': False, 'progress': 0, 'status': '正在准备…',
               'photos': [], 'groups': 0, 'kept_paths': [], 'groups_data': [],
+              'singleton_paths': [], 'seen_paths': set(),
               'applied': False, 'complete': False, 'src_folder': str(folder),
               'recursive': bool(recursive), 'compare_scope': compare_scope})
     try:
@@ -1454,6 +1456,8 @@ def run_dedup(folder, threshold, ftype='all', pair='both',
         total = len(paths)
         processed = 0
         all_groups = []
+        singleton_paths = []
+        seen_paths = {str(p) for p in paths}
         kept = []
         t0 = time.time()
 
@@ -1507,18 +1511,23 @@ def run_dedup(folder, threshold, ftype='all', pair='both',
                     'rel_dir': relative_folder(m.path, folder),
                 } for m in members]
                 rels = sorted({m['rel_dir'] for m in member_rows})
-                all_groups.append({
-                    'group_id': len(all_groups),
-                    'count': len(member_rows),
-                    'selected_paths': [selected],
-                    'folder_rel': (rels[0] if len(rels) == 1 else '跨文件夹重复'),
-                    'members': member_rows,
-                })
+                if len(member_rows) > 1:
+                    all_groups.append({
+                        'group_id': len(all_groups),
+                        'count': len(member_rows),
+                        'selected_paths': [selected],
+                        'folder_rel': (rels[0] if len(rels) == 1 else '跨文件夹重复'),
+                        'members': member_rows,
+                    })
+                else:
+                    singleton_paths.append(selected)
                 kept.append(selected)
 
         s['groups_data'] = all_groups
-        s['photos'] = [g for g in all_groups if g['count'] > 1]
+        s['photos'] = all_groups
         s['groups'] = len(all_groups)
+        s['singleton_paths'] = singleton_paths
+        s['seen_paths'] = seen_paths
         s['kept_paths'] = kept
 
         if s.get('cancel'):
@@ -1569,10 +1578,7 @@ def build_topn(weights=None, topn=None):
     if (dedup.get('complete') and dedup.get('src_folder') == folder
             and bool(dedup.get('recursive', False)) == recursive):
         dedup_allowed = set(dedup.get('kept_paths') or [])
-        dedup_seen = {
-            str(m.get('path')) for g in dedup.get('groups_data', [])
-            for m in g.get('members', []) if m.get('path')
-        }
+        dedup_seen = set(dedup.get('seen_paths') or [])
         if allowed is None:
             allowed = {getattr(sc, 'path', '') for sc in rank_state.get('scores', [])
                        if getattr(sc, 'path', '') not in dedup_seen
@@ -1583,12 +1589,19 @@ def build_topn(weights=None, topn=None):
     scores = []
     for score in rank_state.get('scores', []):
         p = score.path
-        if p in excluded or not Path(p).is_file():
+        if p in excluded:
             continue
         if allowed is not None and p not in allowed:
             continue
         scores.append(score)
-    ranked = sorted(scores, key=lambda s: weighted_overall(s, weights), reverse=True)[:topn]
+    candidates = sorted(scores, key=lambda s: weighted_overall(s, weights), reverse=True)
+    ranked = []
+    for score in candidates:
+        if not Path(score.path).is_file():
+            continue
+        ranked.append(score)
+        if len(ranked) >= topn:
+            break
     out = []
     for rank, s in enumerate(ranked, 1):
         ov = weighted_overall(s, weights)
@@ -4084,7 +4097,7 @@ def api_dedup_select():
     for member in group.get('members', []):
         member['selected'] = member.get('path') in selected
 
-    s['kept_paths'] = [
+    s['kept_paths'] = list(s.get('singleton_paths') or []) + [
         p for g in s.get('groups_data', [])
         for p in (g.get('selected_paths') or [])
     ]
@@ -4123,7 +4136,9 @@ def api_dedup_group_action():
     selected_set = set(selected)
     for m in members:
         m['selected'] = m.get('path') in selected_set
-    s['kept_paths'] = [p for g in s.get('groups_data', []) for p in (g.get('selected_paths') or [])]
+    s['kept_paths'] = list(s.get('singleton_paths') or []) + [
+        p for g in s.get('groups_data', []) for p in (g.get('selected_paths') or [])
+    ]
     s['photos'] = [g for g in s.get('groups_data', []) if g.get('count', 0) > 1]
     state['rank']['preview_at'] = 0.0
     _activity('相似组选优', '', f'组 {gid} · {mode} · 保留 {len(selected)} 张')
@@ -4274,8 +4289,13 @@ def api_delete_photo():
         new_groups.append(group)
     dedup['groups_data'] = new_groups
     dedup['photos'] = [g for g in new_groups if g.get('count', 0) > 1]
-    dedup['groups'] = len(new_groups)
-    dedup['kept_paths'] = [p for g in new_groups for p in (g.get('selected_paths') or [])]
+    dedup['groups'] = len(dedup['photos'])
+    dedup['singleton_paths'] = [p for p in dedup.get('singleton_paths', []) if p != deleted]
+    if isinstance(dedup.get('seen_paths'), set):
+        dedup['seen_paths'].discard(deleted)
+    dedup['kept_paths'] = list(dedup.get('singleton_paths') or []) + [
+        p for g in new_groups for p in (g.get('selected_paths') or [])
+    ]
 
     # Rank: remove score object so deleted files cannot reappear after reweighting.
     rank = state['rank']
