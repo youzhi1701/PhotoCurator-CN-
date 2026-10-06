@@ -42,10 +42,29 @@ from photo_dedup_batch import FastBatchDeduplicator
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Installed builds keep all PhotoCurator-owned writable data on the same drive
+# as the chosen installation directory. Development/source runs keep the older
+# per-user fallback so existing contributors are not forced to write into Git.
+IS_FROZEN = bool(getattr(sys, 'frozen', False))
+if IS_FROZEN:
+    INSTALL_ROOT = Path(sys.executable).resolve().parent.parent
+    DATA_ROOT = INSTALL_ROOT / 'data'
+    RESOURCE_ROOT = Path(getattr(sys, '_MEIPASS', Path(sys.executable).resolve().parent))
+else:
+    INSTALL_ROOT = Path(__file__).resolve().parent
+    DATA_ROOT = Path(os.environ.get('PHOTOCURATOR_DATA_DIR', '')).expanduser() if os.environ.get('PHOTOCURATOR_DATA_DIR') else (Path.home() / '.photo_curator')
+    RESOURCE_ROOT = Path(__file__).resolve().parent
+
+for _dir in (DATA_ROOT, DATA_ROOT / 'logs', DATA_ROOT / 'cache', DATA_ROOT / 'config'):
+    try:
+        _dir.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+
 # Persist runtime diagnostics for the no-console desktop launcher. Keep logs
 # bounded so long photo-library sessions cannot grow them indefinitely.
 try:
-    LOG_DIR = Path.home() / '.photo_curator' / 'logs'
+    LOG_DIR = DATA_ROOT / 'logs'
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     _file_handler = RotatingFileHandler(
         LOG_DIR / 'photocurator.log',
@@ -62,7 +81,7 @@ except Exception:
 
 app = Flask(__name__)
 
-APP_VERSION = "1.2.6-cn.1"
+APP_VERSION = "1.3.0"
 IS_CODESPACES = os.environ.get('CODESPACES', '').strip().lower() == 'true'
 CODESPACE_NAME = os.environ.get('CODESPACE_NAME', '').strip()
 _CODESPACES_DOMAIN_RAW = os.environ.get(
@@ -207,13 +226,13 @@ MAP_TILES_ORIGIN = 'https://tiles.openfreemap.org'
 MAP_STYLE_LIGHT = MAP_TILES_ORIGIN + '/styles/positron'
 MAP_STYLE_DARK = MAP_TILES_ORIGIN + '/styles/dark'
 # MapLibre is vendored (see vendor/) so the app pulls no script off a CDN.
-VENDOR_DIR = Path(__file__).resolve().parent / 'vendor'
+VENDOR_DIR = RESOURCE_ROOT / 'vendor'
 VENDOR_FILES = {'maplibre-gl-csp.js': 'text/javascript',
                 'maplibre-gl-csp-worker.js': 'text/javascript',
                 'maplibre-gl.css': 'text/css'}
 
-RECENTS_FILE = Path.home() / '.photo_curator_recents.json'
-THUMB_DIR = Path(tempfile.gettempdir()) / 'photocurator_thumbs'
+RECENTS_FILE = DATA_ROOT / 'config' / 'recents.json'
+THUMB_DIR = DATA_ROOT / 'cache' / 'thumbnails'
 THUMB_DIR.mkdir(parents=True, exist_ok=True)
 
 CACHE_MAX_BYTES = int(os.environ.get('PHOTOCURATOR_CACHE_MAX_BYTES',
@@ -607,7 +626,7 @@ def ensure_builtin_demo():
     are never overwritten. If a test moves a canonical sample away, only the
     missing canonical file is recreated on the next shortcut refresh.
     """
-    demo = Path(__file__).resolve().parent / '内置测试数据'
+    demo = DATA_ROOT / '内置测试数据'
     try:
         demo.mkdir(parents=True, exist_ok=True)
         from PIL import ImageDraw, ImageFilter
