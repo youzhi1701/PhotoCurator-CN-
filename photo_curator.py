@@ -1693,6 +1693,8 @@ try{
   if(['small','large','list'].includes(v))resultView=v;
 }catch(_){}
 const collapsedFolders=new Set();
+const expandedFolders=new Set();
+let defaultFoldersCollapsed=false;
 try{
   const saved=JSON.parse(localStorage.getItem('pc-library-settings')||'{}');
   if(typeof saved.recursive==='boolean')recursiveScan=saved.recursive;
@@ -1738,11 +1740,15 @@ function updateResultTools(){
   tools.style.display=hasGroups?'flex':'none';
   applyResultView();
 }
+function isFolderCollapsed(key){
+  return defaultFoldersCollapsed ? !expandedFolders.has(key) : collapsedFolders.has(key);
+}
 function setAllFolders(collapsed){
+  defaultFoldersCollapsed=collapsed;
+  collapsedFolders.clear();
+  expandedFolders.clear();
   document.querySelectorAll('#gallery .folder-group').forEach(group=>{
     group.classList.toggle('collapsed',collapsed);
-    const key=decodeURIComponent(group.dataset.folder||'');
-    if(collapsed)collapsedFolders.add(key);else collapsedFolders.delete(key);
     const btn=group.querySelector('.fold-btn');if(btn)btn.textContent=collapsed?'展开':'收起';
   });
 }
@@ -1759,7 +1765,11 @@ document.getElementById('gallery').addEventListener('click',e=>{
   const key=decodeURIComponent(group.dataset.folder||'');
   const next=!group.classList.contains('collapsed');
   group.classList.toggle('collapsed',next);
-  if(next)collapsedFolders.add(key);else collapsedFolders.delete(key);
+  if(defaultFoldersCollapsed){
+    if(next)expandedFolders.delete(key);else expandedFolders.add(key);
+  }else{
+    if(next)collapsedFolders.add(key);else collapsedFolders.delete(key);
+  }
   const btn=group.querySelector('.fold-btn');if(btn)btn.textContent=next?'展开':'收起';
 });
 
@@ -2294,7 +2304,7 @@ function renderDedupGroups(groups){
   let seq=0,html='<div class="folder-results">';
   keys.forEach(key=>{
     const rows=buckets[key];
-    const folded=collapsedFolders.has(key);
+    const folded=isFolderCollapsed(key);
     html+='<section class="folder-group '+(folded?'collapsed':'')+'" data-folder="'+encodeURIComponent(key)+'"><div class="folder-head"><b>📁 '+escHtml(key)+'</b><span>'+rows.length+' 组 · <button class="fold-btn">'+(folded?'展开':'收起')+'</button></span></div>';
     html+='<div class="folder-body" style="padding:10px;display:flex;flex-direction:column;gap:10px">';
     rows.forEach(group=>{
@@ -2361,7 +2371,7 @@ function renderFolderPage(slice,cardBuilder,startIndex){
   let html='<div class="folder-results">';
   keys.forEach(key=>{
     const rows=buckets[key];
-    const folded=collapsedFolders.has(key);
+    const folded=isFolderCollapsed(key);
     html+='<section class="folder-group '+(folded?'collapsed':'')+'" data-folder="'+encodeURIComponent(key)+'"><div class="folder-head"><b>📁 '+escHtml(key)+'</b><span>'+rows.length+' 张 · <button class="fold-btn">'+(folded?'展开':'收起')+'</button></span></div>';
     html+='<div class="folder-grid folder-body">';
     rows.forEach(x=>{html+=cardBuilder(x.p,x.idx);});
