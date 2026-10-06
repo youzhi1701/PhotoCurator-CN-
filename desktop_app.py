@@ -10,6 +10,7 @@ import tempfile
 import threading
 import traceback
 import urllib.request
+import webbrowser
 from pathlib import Path
 
 APP_TITLE = "照片筛选 · PhotoCurator 中文版"
@@ -209,7 +210,7 @@ def main():
         server.stop()
         raise RuntimeError(
             f"本地服务启动失败（端口 {PORT}）。"
-            "请运行“调试运行.bat”或查看“startup-error.log”。"
+            "请重新启动 PhotoCurator；如仍失败，请查看安装目录 data/logs/startup-error.log。"
         )
 
     desktop_api = DesktopApi()
@@ -255,23 +256,31 @@ def main():
         else:
             webview.start(debug=False)
     except Exception as exc:
-        if os.name == 'nt':
+        # Formal installer builds do not expose maintenance BAT/CMD files.
+        # If WebView2 itself is unavailable, keep the already-running local
+        # service alive and fall back to the user's default browser.
+        try:
+            opened = bool(webbrowser.open(URL, new=1))
+        except Exception:
+            opened = False
+        if os.name == 'nt' and opened:
             try:
                 import ctypes
                 ctypes.windll.user32.MessageBoxW(
                     None,
-                    "桌面窗口引擎启动失败。\n\n"
-                    "请确认 Microsoft Edge WebView2 Runtime 已安装。\n"
-                    "你也可以直接运行“浏览器兼容模式.bat”继续使用。\n\n"
-                    f"错误：{exc}",
+                    "PhotoCurator 桌面窗口引擎暂时无法启动。\n\n"
+                    "已自动切换到默认浏览器兼容模式。照片仍只在本机处理。\n"
+                    "使用完成后，再点击此提示框的“确定”即可退出本地服务。\n\n"
+                    f"桌面窗口错误：{exc}",
                     APP_TITLE,
-                    0x10,
+                    0x40,
                 )
+                return
             except Exception:
                 pass
         raise RuntimeError(
-            "桌面窗口引擎启动失败；请安装/修复 Microsoft Edge WebView2 Runtime，"
-            "或使用“浏览器兼容模式.bat”。"
+            "桌面窗口引擎启动失败，并且未能自动打开浏览器兼容模式。"
+            "请安装或修复 Microsoft Edge WebView2 Runtime。"
         ) from exc
     finally:
         server.stop()
