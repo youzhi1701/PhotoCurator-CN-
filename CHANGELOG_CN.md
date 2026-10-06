@@ -1,3 +1,19 @@
+## v1.2.6-cn.1
+
+- 对 Windows 最终运行链进行整体重构，解决 CMD 将中文提示、括号或编码异常内容误解析为命令的问题
+- 新增 ASCII-only 核心启动脚本：PhotoCurator-Install / Start / Browser / Debug / Check / Logs
+- 原中文 .bat 入口保留，但缩减为两行转发包装器，避免代码页差异影响解析
+- GitHub Windows CI 新增所有启动脚本 parse-only 回归测试与 ASCII 编码检查
+- 桌面启动失败日志统一为 startup-error.log，并保留旧“启动错误.log”兼容检测
+- 结果目录改为带中文括号备注的可读命名：
+  - PhotoCurator_Result（照片筛选结果）
+  - Blurred（模糊照片）
+  - Duplicates（重复照片）
+- 旧版 PhotoCurator_Result / Blurred / Duplicates 目录仍会被识别并排除，避免升级后重复扫描
+- 递归扫描继续自动排除新旧结果目录、回收站、系统卷和自定义结果目录
+- 同步文件整理器、冒烟测试、README、版本号和忽略规则
+- 本轮只做最终运行稳定性、路径、编码和目录一致性收口，不扩展业务功能
+
 ## v1.2.5-cn.1
 
 - 完成大文件夹 / 子文件夹递归扫描：默认可覆盖所选目录下全部子文件夹
