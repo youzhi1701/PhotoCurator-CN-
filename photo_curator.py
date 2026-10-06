@@ -2060,7 +2060,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   .top button,.top input,.top .theme,.top .window-controls{position:relative;z-index:2}
   .folder-grid .photo-card{content-visibility:auto;contain-intrinsic-size:190px 240px}
   body.processing #settingsPanel input,
-  body.processing #settingsPanel select{opacity:.72}
+  body.processing #settingsPanel select{opacity:.58;pointer-events:none}
 </style></head><body>
 <div class="top pywebview-drag-region">
   <div class="brand">🖼️ PhotoCurator <small>照片整理工作区 · v{{ app_version }}</small></div>
@@ -2163,7 +2163,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   <div class="task-row"><span>清晰度分析</span><b id="taskCull">待开始</b></div>
   <div class="task-row"><span>相似分析</span><b id="taskDedup">待开始</b></div>
   <div class="task-row"><span>精选评分</span><b id="taskRank">待开始</b></div>
-  <div class="task-tip">分析过程中可以切换结果视图，已经完成的结果可继续复核。</div>
+  <div class="task-tip">分析过程中可以切换结果视图并复核已完成结果；本次分析参数会锁定到任务结束。</div>
   <button class="task-exit" id="appExit">退出 PhotoCurator</button>
 </aside>
 <div class="toast-wrap" id="toastWrap"></div>
@@ -2620,7 +2620,7 @@ function loadShortcuts(){fetch('/api/shortcuts').then(r=>r.json()).then(d=>{
     +`请重新运行依赖安装后再试。</div>`+h;
   if(!(d.sd||[]).length&&!codespacesMode)h+=`<div style="font-size:11px;color:var(--muted);margin-top:6px">未检测到相机存储卡；插入后会自动出现在这里，也可以直接选择文件夹。</div>`;
   document.getElementById('shortcuts').innerHTML=h;
-  document.querySelectorAll('.shortcut').forEach(b=>{b.disabled=isRunning;b.onclick=()=>{if(isRunning)return;selectFolderValue(b.dataset.p);fi.value=folder||'';};});
+  document.querySelectorAll('.shortcut').forEach(b=>{b.disabled=isRunning||godMode;b.onclick=()=>{if(isRunning||godMode)return;selectFolderValue(b.dataset.p);fi.value=folder||'';};});
 }).catch(()=>{});
 }
 loadShortcuts();
@@ -2660,14 +2660,15 @@ document.getElementById('browseBtn').onclick=async()=>{
 /* start / stop (the same button toggles) */
 function setStartBtn(running){
   isRunning=running;
-  document.body.classList.toggle('processing',running);
+  const busy=running||godMode;
+  document.body.classList.toggle('processing',busy);
   startBtn.textContent=godMode?(running?'■ 停止分析':'分析处理中…'):(running?'■ 停止当前分析':'▶ 开始分析');
   startBtn.classList.toggle('stopping',running);
   const fi=document.getElementById('folderInput');
   const bb=document.getElementById('browseBtn');
-  if(fi)fi.disabled=running;
-  if(bb)bb.disabled=running||codespacesMode;
-  document.querySelectorAll('.shortcut').forEach(x=>x.disabled=running);
+  if(fi)fi.disabled=busy;
+  if(bb)bb.disabled=busy||codespacesMode;
+  document.querySelectorAll('.shortcut').forEach(x=>x.disabled=busy);
 }
 function snapshotPipelineConfig(){
   return {
@@ -2756,7 +2757,7 @@ async function godRun(){
     }
     if(!godAbort)toast('✨ 分析完成：清晰度、相似组和精选结果均已生成','good');
   } finally {
-    godMode=false;setGodBtn(false);startBtn.disabled=false;
+    godMode=false;setGodBtn(false);setStartBtn(false);startBtn.disabled=false;
   }
 }
 godBtn.onclick=()=>{};
