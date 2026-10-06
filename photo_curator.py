@@ -34,7 +34,6 @@ import cv2
 import numpy as np
 from flask import Flask, render_template_string, request, jsonify, send_file, abort
 from PIL import Image, ImageOps
-from send2trash import send2trash
 
 from raw_loader import (RAW_EXTS, HAS_RAWPY, is_raw,
                         HEIF_EXTS, HAS_HEIF, is_heif, needs_jpeg_preview,
@@ -119,6 +118,13 @@ def _db_init():
         db.execute("""CREATE TABLE IF NOT EXISTS activity_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL NOT NULL,
             action TEXT NOT NULL, path TEXT, detail TEXT
+        )""")
+        db.execute("""CREATE TABLE IF NOT EXISTS software_trash (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            original_path TEXT NOT NULL,
+            trash_path TEXT NOT NULL UNIQUE,
+            source_step TEXT NOT NULL,
+            deleted_at REAL NOT NULL
         )""")
         db.execute("""CREATE TABLE IF NOT EXISTS geocode_cache (
             key TEXT PRIMARY KEY, label TEXT NOT NULL, updated_at REAL NOT NULL
@@ -522,6 +528,7 @@ def _security_headers(resp):
 IMG_EXTS = {'.jpg', '.jpeg', '.png', '.tif', '.tiff', '.bmp', '.webp'}
 
 RESULT_ROOT_DIR = 'PhotoCurator_Result（照片筛选结果）'
+SOFTWARE_TRASH_DIR = 'PhotoCurator_RecycleBin（软件回收站）'
 RESULT_KIND_DIRS = {
     'Blurred': 'Blurred（模糊照片）',
     'Duplicates': 'Duplicates（重复照片）',
@@ -530,6 +537,7 @@ LEGACY_RESULT_DIRS = {
     'photocurator_result', 'blurred', 'duplicates',
     'photocurator_result（照片筛选结果）',
     'blurred（模糊照片）', 'duplicates（重复照片）',
+    'photocurator_recyclebin', 'photocurator_recyclebin（软件回收站）',
 }
 
 # RAW formats (CR2/CR3, NEF, ARW, DNG, ...) — decoded via rawpy if installed.
@@ -919,6 +927,121 @@ def _move_reviewed_files(paths, kind, root, mode='source', custom_output=''):
             result['failed'] += 1
             logger.warning(f"move reviewed file failed {src}: {e}")
     return result
+
+
+def _trash_destination(src, root):
+    """Choose a reversible PhotoCurator-owned trash path on the source drive."""
+    src = Path(src).resolve()
+    root = Path(root).resolve()
+    try:
+        rel_parent = src.parent.relative_to(root)
+    except Exception:
+        rel_parent = Path()
+    base = root / SOFTWARE_TRASH_DIR / rel_parent
+    base.mkdir(parents=True, exist_ok=True)
+    return _unique_destination(base / src.name)
+
+
+def _move_to_software_trash(src, root, source_step):
+    """Move one source photo into PhotoCurator's own reversible recycle bin."""
+    src = Path(src)
+    dst = _trash_destination(src, root)
+    original = str(src.resolve())
+    shutil.move(str(src), str(dst))
+    trash_path = str(dst.resolve())
+    with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=15) as db:
+        db.execute(
+            """INSERT INTO software_trash(original_path,trash_path,source_step,deleted_at)
+               VALUES(?,?,?,?)""",
+            (original, trash_path, str(source_step or ''), time.time())
+        )
+        trash_id = int(db.execute("SELECT last_insert_rowid()").fetchone()[0])
+        db.commit()
+    _activity('移入软件回收站', original, trash_path)
+    return trash_id, trash_path
+
+
+def _trash_rows(root=None):
+    """Return live software-trash rows, pruning records whose files disappeared."""
+    params = ()
+    where = ""
+    if root:
+        root_cmp = os.path.normcase(os.path.realpath(str(root)))
+        where = " WHERE original_path LIKE ?"
+        prefix = os.path.realpath(str(root)).rstrip("\\/") + os.sep + "%"
+        params = (prefix,)
+    stale = []
+    rows = []
+    with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=15) as db:
+        for row in db.execute(
+            "SELECT id,original_path,trash_path,source_step,deleted_at "
+            "FROM software_trash" + where + " ORDER BY deleted_at DESC", params
+        ).fetchall():
+            tid, original, trash_path, source_step, deleted_at = row
+            if not Path(trash_path).is_file():
+                stale.append((int(tid),))
+                continue
+            if root:
+                try:
+                    if os.path.commonpath([
+                        os.path.normcase(os.path.realpath(original)), root_cmp
+                    ]) != root_cmp:
+                        continue
+                except Exception:
+                    continue
+            rows.append({
+                'id': int(tid),
+                'name': Path(trash_path).name,
+                'path': str(trash_path),
+                'original_path': str(original),
+                'source_step': str(source_step or ''),
+                'deleted_at': float(deleted_at),
+                'thumb': thumb_url(str(trash_path)),
+                'rel_dir': relative_folder(original, root) if root else str(Path(original).parent),
+            })
+        if stale:
+            db.executemany("DELETE FROM software_trash WHERE id=?", stale)
+            db.commit()
+    return rows
+
+
+def _restore_trash_item(trash_id):
+    with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=15) as db:
+        row = db.execute(
+            "SELECT original_path,trash_path FROM software_trash WHERE id=?",
+            (int(trash_id),)
+        ).fetchone()
+    if not row:
+        raise FileNotFoundError("回收站记录不存在")
+    original, trash_path = map(str, row)
+    src = Path(trash_path)
+    if not src.is_file():
+        raise FileNotFoundError("回收站中的照片已不存在")
+    desired = Path(original)
+    desired.parent.mkdir(parents=True, exist_ok=True)
+    restored = _unique_destination(desired)
+    shutil.move(str(src), str(restored))
+    with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=15) as db:
+        db.execute("DELETE FROM software_trash WHERE id=?", (int(trash_id),))
+        db.commit()
+    _activity('从软件回收站恢复', str(restored), original)
+    return str(restored)
+
+
+def _purge_trash_item(trash_id):
+    with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=15) as db:
+        row = db.execute(
+            "SELECT trash_path FROM software_trash WHERE id=?", (int(trash_id),)
+        ).fetchone()
+    if not row:
+        raise FileNotFoundError("回收站记录不存在")
+    target = Path(str(row[0]))
+    if target.is_file():
+        target.unlink()
+    with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=15) as db:
+        db.execute("DELETE FROM software_trash WHERE id=?", (int(trash_id),))
+        db.commit()
+    _activity('永久删除', str(target), '软件回收站')
 
 
 def _thumb_cache_path(image_path):
