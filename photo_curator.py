@@ -3802,7 +3802,7 @@ def api_progress(step):
     if step == 'cull':
         s = state['cull']
         all_photos = s['photos']
-        limit = UI_RESULT_CAP
+        limit = UI_LIVE_RESULT_CAP if s['running'] else UI_RESULT_CHUNK
         photos = all_photos[:limit]
         return jsonify({'running': s['running'], 'progress': s['progress'], 'status': s['status'],
                         'photos': photos,
@@ -3838,6 +3838,21 @@ def api_progress(step):
                         'photos': s.get('preview', []),
                         'stats': {'images': s['total'], 'cache_hits': s.get('cache_hits',0)}})
     abort(404)
+
+
+@app.route('/api/results/cull')
+def api_cull_results_chunk():
+    """Chunked Cull result transport: no visible pagination, bounded payloads."""
+    s = state['cull']
+    try:
+        offset = max(0, int(request.args.get('offset', 0)))
+        limit = min(UI_RESULT_CHUNK, max(1, int(request.args.get('limit', UI_RESULT_CHUNK))))
+    except (TypeError, ValueError):
+        return jsonify({'error': '结果范围无效'}), 400
+    all_photos = s.get('photos', [])
+    rows = all_photos[offset:offset + limit]
+    return jsonify({'photos': rows, 'offset': offset, 'next_offset': offset + len(rows),
+                    'total': len(all_photos), 'done': offset + len(rows) >= len(all_photos)})
 
 
 @app.route('/api/dedup-select', methods=['POST'])
@@ -4137,9 +4152,6 @@ def _known_rank_path(path):
 
 @app.route('/api/exclude', methods=['POST'])
 def api_exclude():
-    blocked = _reject_mutation_while_running()
-    if blocked:
-        return blocked
     data = request.get_json() or {}
     path = str(data.get('path') or '')
     if not _known_rank_path(path):
@@ -4149,9 +4161,6 @@ def api_exclude():
 
 @app.route('/api/restore', methods=['POST'])
 def api_restore():
-    blocked = _reject_mutation_while_running()
-    if blocked:
-        return blocked
     data = request.get_json() or {}
     if data.get('all'):
         state['excluded'].clear()
@@ -4364,9 +4373,6 @@ WALLPAPER_W, WALLPAPER_H = 1290, 2796  # universal 19.5:9 portrait
 @app.route('/api/toggle-phonebg', methods=['POST'])
 def api_toggle_phonebg():
     """Flag / unflag a photo as suitable for a phone wallpaper."""
-    blocked = _reject_mutation_while_running()
-    if blocked:
-        return blocked
     data = request.get_json() or {}
     path = str(data.get('path') or '')
     if not path:
