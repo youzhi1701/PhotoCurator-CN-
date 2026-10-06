@@ -1583,7 +1583,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
         <div class="stat-row" data-steps="cull"><span>清晰</span><span class="v" id="sSharp">0</span></div>
         <div class="stat-row" data-steps="cull"><span>轻微软（可保留）</span><span class="v" id="sSoft" style="color:var(--warn)">0</span></div>
         <div class="stat-row" data-steps="cull"><span>模糊</span><span class="v" id="sBlurry">0</span></div>
-        <div class="stat-row" data-steps="dedup"><span>去重后保留</span><span class="v" id="sGroups">0</span></div>
+        <div class="stat-row" data-steps="dedup"><span>相似分组</span><span class="v" id="sGroups">0</span></div>
         <div class="stat-row" data-steps="cull dedup rank"><span>当前显示</span><span class="v" id="sShowing">0</span></div>
         <div id="removedBox" style="display:none">已移除 <b id="removedN">0</b> 张 · <a id="restoreAll">全部恢复</a></div>
       </div>
@@ -2119,7 +2119,8 @@ function poll(step){
       if('sharp'in st)document.getElementById('sSharp').textContent=st.sharp;
       if('blurry'in st)document.getElementById('sBlurry').textContent=st.blurry;
       if('soft'in st)document.getElementById('sSoft').textContent=st.soft;
-      if('groups'in st)document.getElementById('sGroups').textContent=st.groups;
+      if('duplicate_groups'in st)document.getElementById('sGroups').textContent=st.duplicate_groups;
+      else if('groups'in st)document.getElementById('sGroups').textContent=st.groups;
       if(step==='rank')renderRank(d.photos||[]);
       else if(step==='cull')renderCullStep(d.photos||[]);
       else renderDedupGroups(d.photos||[]);
@@ -2321,7 +2322,7 @@ function applyDedupSelection(){
     .then(d=>{
       btn.style.display='none';
       toast('已按当前选择处理 '+(d.moved||0)+' 张相似照片','good');
-      document.getElementById('progressText').textContent='处理完成 · 已移动 '+(d.moved||0)+' 张未保留照片到 Duplicates 文件夹';
+      document.getElementById('progressText').textContent='处理完成 · 已移动 '+(d.moved||0)+' 张未保留照片到 Duplicates 结果目录';
     })
     .catch(err=>toast('处理失败：'+(err.message||'未知错误'),'bad'))
     .finally(()=>{btn.disabled=false;btn.textContent='✓ 确认处理未保留照片';});
@@ -2899,7 +2900,7 @@ document.getElementById('exportPbgBtn').onclick=async function(){
 document.getElementById('moveBlurryBtn').onclick=async function(){
   const before=cullMoveCounts();
   if(!before.selected)return;
-  if(!confirm('是否将已选择的 '+before.selected+' 张“模糊”照片移动到“模糊照片（Blurred）”子文件夹？\n\n未勾选的模糊照片会保留在原位置；只会移动，不会删除原文件。'))return;
+  if(!confirm('是否移动已选择的 '+before.selected+' 张“模糊”照片？\n\n将按当前存放位置设置进入 Blurred 结果目录；未勾选照片保留原位，只移动，不删除。'))return;
   this.disabled=true;this.textContent='正在移动 '+before.selected+' 张…';
   try{
     const r=await fetch('/api/move-blurry',{method:'POST'});
