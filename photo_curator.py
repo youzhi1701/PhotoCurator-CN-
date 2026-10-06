@@ -2195,20 +2195,41 @@ function renderDedupGroups(groups){
     g.innerHTML='<div class="empty"><div class="icon">✓</div><div class="title">没有需要人工处理的相似组</div><p>单独照片会自动保留；只有检测到 2 张及以上相似照片时才会出现在这里。</p></div>';
     return;
   }
-  g.innerHTML='<div class="dedup-review">'+groups.map((group,idx)=>{
-    const members=(group.members||[]);
-    return '<div class="dedup-group" data-group="'+group.group_id+'">'
-      +'<div class="dedup-group-head"><b>相似组 '+(idx+1)+' · '+members.length+' 张</b><span>点击任意照片切换保留项</span></div>'
-      +'<div class="dedup-choices">'+members.map((p,mi)=>{
+  const buckets={};
+  groups.forEach(group=>{
+    const key=group.folder_rel||'当前文件夹';
+    (buckets[key]||(buckets[key]=[])).push(group);
+  });
+  const keys=Object.keys(buckets).sort((a,b)=>a.localeCompare(b,'zh-CN'));
+  let seq=0;
+  let html='<div class="folder-results">';
+  keys.forEach(key=>{
+    const rows=buckets[key];
+    const total=rows.reduce((n,x)=>n+(x.members||[]).length,0);
+    html+='<section class="folder-group"><div class="folder-head"><b>📁 '+escHtml(key)+'</b><span>'+rows.length+' 组 · '+total+' 张</span></div>';
+    html+='<div style="padding:10px;display:flex;flex-direction:column;gap:10px">';
+    rows.forEach(group=>{
+      seq++;
+      const members=group.members||[];
+      html+='<div class="dedup-group" data-group="'+group.group_id+'">';
+      html+='<div class="dedup-group-head"><b>相似组 '+seq+' · '+members.length+' 张</b><span>点击照片切换保留项</span></div>';
+      html+='<div class="dedup-choices">';
+      members.forEach(p=>{
         const sel=!!p.selected;
-        return '<div class="dedup-choice '+(sel?'selected':'')+'" data-group="'+group.group_id+'" data-path="'+escHtml(p.path)+'">'
-          +(sel?'<div class="dedup-recommend">✓ 当前保留</div>':'')
-          +'<img src="'+p.thumb+'" loading="lazy" decoding="async">'
-          +'<div class="dedup-choice-meta"><div class="dedup-choice-name">'+escHtml(p.name)+'</div>'
-          +'<div class="dedup-choice-state">'+(sel?'系统推荐 / 当前选择':'点击改为保留')+'</div>'
-          +'<button class="delete-btn" data-step="dedup" data-path="'+escHtml(p.path)+'" style="margin-top:6px" title="直接删除原文件">🗑 删除</button></div></div>';
-      }).join('')+'</div></div>';
-  }).join('')+'</div>';
+        html+='<div class="dedup-choice '+(sel?'selected':'')+'" data-group="'+group.group_id+'" data-path="'+escHtml(p.path)+'">';
+        if(sel)html+='<div class="dedup-recommend">✓ 当前保留</div>';
+        html+='<img src="'+p.thumb+'" loading="lazy" decoding="async">';
+        html+='<div class="dedup-choice-meta"><div class="dedup-choice-name">'+escHtml(p.name)+'</div>';
+        html+='<div class="source-path">'+escHtml(p.rel_dir||'当前文件夹')+'</div>';
+        html+='<div class="dedup-choice-state">'+(sel?'系统推荐 / 当前选择':'点击改为保留')+'</div>';
+        html+='<button class="delete-btn" data-step="dedup" data-path="'+escHtml(p.path)+'" style="margin-top:6px" title="直接删除原文件">🗑 删除</button></div></div>';
+      });
+      html+='</div></div>';
+    });
+    html+='</div></section>';
+  });
+  html+='</div>';
+  g.innerHTML=html;
 }
 function selectDedupPhoto(groupId,path){
   fetch('/api/dedup-select',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({group_id:Number(groupId),path})})
