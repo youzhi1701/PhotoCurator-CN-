@@ -97,6 +97,10 @@ def _db_init():
             path TEXT PRIMARY KEY, size INTEGER NOT NULL, mtime_ns INTEGER NOT NULL,
             score_json TEXT NOT NULL, updated_at REAL NOT NULL
         )""")
+        db.execute("""CREATE TABLE IF NOT EXISTS review_override (
+            path TEXT PRIMARY KEY, size INTEGER NOT NULL, mtime_ns INTEGER NOT NULL,
+            tier TEXT NOT NULL, move_selected INTEGER NOT NULL, updated_at REAL NOT NULL
+        )""")
         db.execute("""CREATE TABLE IF NOT EXISTS activity_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL NOT NULL,
             action TEXT NOT NULL, path TEXT, detail TEXT
@@ -142,6 +146,72 @@ def _save_cull_metrics(path, region_s, quality):
             db.commit()
     except Exception:
         logger.debug("cull cache write failed", exc_info=True)
+
+def _load_review_overrides(paths):
+    """Load only still-valid manual decisions for the current source files."""
+    try:
+        with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=15) as db:
+            rows = db.execute(
+                "SELECT path,size,mtime_ns,tier,move_selected FROM review_override"
+            ).fetchall()
+        saved = {str(r[0]): r for r in rows}
+        out = {}
+        for p in paths:
+            key = str(p)
+            row = saved.get(key)
+            if not row:
+                continue
+            try:
+                st = Path(key).stat()
+            except OSError:
+                continue
+            if int(st.st_size) != int(row[1]) or int(st.st_mtime_ns) != int(row[2]):
+                continue
+            tier = str(row[3])
+            if tier not in ('sharp', 'soft', 'blurry'):
+                continue
+            out[key] = {'tier': tier, 'move_selected': bool(row[4])}
+        return out
+    except Exception:
+        logger.debug("review override load failed", exc_info=True)
+        return {}
+
+
+def _save_review_overrides(rows):
+    """Persist manual review choices keyed to the exact current file version."""
+    payload = []
+    now = time.time()
+    for path, tier, move_selected in rows:
+        try:
+            p = Path(path); st = p.stat()
+            if tier not in ('sharp', 'soft', 'blurry'):
+                continue
+            payload.append((str(p), int(st.st_size), int(st.st_mtime_ns),
+                            tier, 1 if move_selected else 0, now))
+        except OSError:
+            continue
+    if not payload:
+        return
+    try:
+        with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=20) as db:
+            db.executemany("""INSERT INTO review_override(path,size,mtime_ns,tier,move_selected,updated_at)
+                              VALUES(?,?,?,?,?,?)
+                              ON CONFLICT(path) DO UPDATE SET size=excluded.size,mtime_ns=excluded.mtime_ns,
+                              tier=excluded.tier,move_selected=excluded.move_selected,
+                              updated_at=excluded.updated_at""", payload)
+            db.commit()
+    except Exception:
+        logger.debug("review override save failed", exc_info=True)
+
+
+def _delete_review_override(path):
+    try:
+        with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=10) as db:
+            db.execute("DELETE FROM review_override WHERE path=?", (str(path),))
+            db.commit()
+    except Exception:
+        logger.debug("review override cleanup failed", exc_info=True)
+
 
 RANK_CACHE_VERSION = 1
 
@@ -246,6 +316,7 @@ def _prune_index_db():
             db.execute("DELETE FROM cull_cache WHERE updated_at < ?", (cutoff,))
             db.execute("DELETE FROM rank_cache WHERE updated_at < ?", (cutoff,))
             db.execute("DELETE FROM geocode_cache WHERE updated_at < ?", (cutoff,))
+            db.execute("DELETE FROM review_override WHERE updated_at < ?", (cutoff,))
             # Hard caps protect users with very large rotating libraries.
             db.execute("""DELETE FROM cull_cache WHERE path NOT IN
                           (SELECT path FROM cull_cache ORDER BY updated_at DESC LIMIT 250000)""")
@@ -253,6 +324,8 @@ def _prune_index_db():
                           (SELECT path FROM rank_cache ORDER BY updated_at DESC LIMIT 250000)""")
             db.execute("""DELETE FROM geocode_cache WHERE key NOT IN
                           (SELECT key FROM geocode_cache ORDER BY updated_at DESC LIMIT 20000)""")
+            db.execute("""DELETE FROM review_override WHERE path NOT IN
+                          (SELECT path FROM review_override ORDER BY updated_at DESC LIMIT 250000)""")
             db.commit()
     except Exception:
         logger.debug("index prune skipped", exc_info=True)
@@ -1126,6 +1199,11 @@ def run_cull(folder, strictness, adaptive, rescue_on, recursive=True):
               'complete': False, 'src_folder': str(folder), 'recursive': bool(recursive)})
     try:
         images = list_images(folder, recursive=recursive)
+        current_paths = {str(p) for p in images}
+        persisted = _load_review_overrides(images)
+        in_memory = {k:v for k,v in (s.get('overrides') or {}).items() if k in current_paths}
+        persisted.update(in_memory)
+        s['overrides'] = persisted
         total = len(images) or 1
         items = []   # {name, path, region_s, q}
         cache_buffer = []
@@ -4128,6 +4206,7 @@ def api_delete_photo():
         return jsonify({'error': f'移入回收站失败：{e}'}), 500
 
     deleted = str(target)
+    _delete_review_override(deleted)
     state['cull'].setdefault('removed_paths', set()).add(deleted)
     state['excluded'].discard(deleted)
     state['phone_bg'].discard(deleted)
@@ -4263,6 +4342,7 @@ def api_toggle_status():
     now_kept = tier != 'blurry'
     s.setdefault('overrides', {}).setdefault(path, {})['tier'] = tier
     s['overrides'][path]['move_selected'] = (tier == 'blurry')
+    _save_review_overrides([(path, tier, tier == 'blurry')])
     _activity('人工分类', path, tier)
     # Manual review is classification-only. Never move a file merely because
     # its badge was changed; disk changes happen only via an explicit Move action.
@@ -4323,6 +4403,10 @@ def api_select_blurry():
             if photo.get('tier') == 'blurry':
                 photo['move_selected'] = selected
                 state['cull'].setdefault('overrides', {}).setdefault(photo.get('path'), {})['move_selected'] = selected
+        _save_review_overrides([
+            (p.get('path'), p.get('tier'), p.get('move_selected', True))
+            for p in photos if p.get('tier') == 'blurry' and p.get('path')
+        ])
         count, total = _blurry_move_counts()
         return jsonify({'ok': True, 'selected': count, 'total': total})
 
@@ -4335,6 +4419,7 @@ def api_select_blurry():
 
     photo['move_selected'] = bool(data.get('selected', True))
     state['cull'].setdefault('overrides', {}).setdefault(path, {})['move_selected'] = photo['move_selected']
+    _save_review_overrides([(path, photo.get('tier'), photo['move_selected'])])
     _activity('移动选择', path, '选中' if photo['move_selected'] else '取消')
     count, total = _blurry_move_counts()
     return jsonify({
@@ -4374,6 +4459,7 @@ def api_move_blurry():
     for photo in blurry_photos:
         old = photo.get('path')
         if old in moved_map:
+            _delete_review_override(old)
             new = moved_map[old]
             photo['path'] = new
             photo['thumb'] = thumb_url(new)
