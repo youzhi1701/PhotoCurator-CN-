@@ -69,12 +69,6 @@ jobs:
         shell: powershell
         run: choco install innosetup -y --no-progress
 
-      - name: Download Simplified Chinese installer language
-        shell: powershell
-        run: |
-          Invoke-WebRequest "https://raw.githubusercontent.com/kira-96/Inno-Setup-Chinese-Simplified-Translation/main/ChineseSimplified.isl" -OutFile "packaging\ChineseSimplified.isl"
-          if (!(Test-Path "packaging\ChineseSimplified.isl")) { throw "Chinese installer language file missing" }
-
       - name: Build installer
         shell: powershell
         run: |
