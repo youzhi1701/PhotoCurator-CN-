@@ -3586,15 +3586,21 @@ function deletePhoto(step,path,fromLightbox=false){
     .then(d=>{
       toast('已移入回收站：'+name,'good');
       if(step==='cull'){
-        photos=d.photos||[];
+        cullChunkToken++;cullLiveStore.clear();
+        const snap={photos:d.photos||[],running:false,result_total:Number(d.result_total||0)};
+        photos=cullRowsForPayload(snap);
         document.getElementById('sSharp').textContent=d.sharp||0;
         document.getElementById('sSoft').textContent=d.soft||0;
         document.getElementById('sBlurry').textContent=d.blurry||0;
         lastCullSig='';lastCullMoveSig='';renderCullStep(photos);updateCullMoveButton();
+        maybeLoadAllCull(snap);
       }else if(step==='dedup'){
-        photos=d.photos||[];
+        dedupChunkToken++;dedupLiveStore.clear();
+        const snap={photos:d.photos||[],running:false,result_total:Number(d.result_total||0)};
+        photos=dedupRowsForPayload(snap);
         renderDedupGroups(photos);
         document.getElementById('sGroups').textContent=d.duplicate_groups||0;
+        maybeLoadAllDedup(snap);
       }else{
         renderRank(d.photos||[]);
         setRemoved(d.removed||0);
@@ -4621,6 +4627,7 @@ def api_delete_photo():
     dedup['kept_paths'] = list(dedup.get('singleton_paths') or []) + [
         p for g in new_groups for p in (g.get('selected_paths') or [])
     ]
+    _sync_dedup_with_cull()
 
     # Rank: remove score object so deleted files cannot reappear after reweighting.
     rank = state['rank']
@@ -4631,10 +4638,16 @@ def api_delete_photo():
     rank['preview_at'] = time.time()
 
     if step == 'cull':
-        return jsonify({'ok': True, 'photos': cull['photos'],
+        first = cull['photos'][:UI_RESULT_CHUNK]
+        return jsonify({'ok': True, 'photos': first,
+                        'result_total': len(cull['photos']),
+                        'truncated': len(cull['photos']) > len(first),
                         'sharp': cull['sharp'], 'soft': cull['soft'], 'blurry': cull['blurry']})
     if step == 'dedup':
-        return jsonify({'ok': True, 'photos': dedup['photos'],
+        first = dedup['photos'][:UI_RESULT_CHUNK]
+        return jsonify({'ok': True, 'photos': first,
+                        'result_total': len(dedup['photos']),
+                        'truncated': len(dedup['photos']) > len(first),
                         'groups': dedup['groups'],
                         'duplicate_groups': len(dedup['photos'])})
     return jsonify({'ok': True, 'photos': rank['preview'], 'removed': len(state['excluded'])})
