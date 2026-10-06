@@ -179,6 +179,60 @@ def _save_rank_score(path, score):
         logger.debug("rank cache write failed", exc_info=True)
 
 
+def _save_cull_metrics_batch(rows):
+    if not rows:
+        return
+    payload = []
+    now = time.time()
+    for path, region_s, quality in rows:
+        try:
+            p = Path(path); st = p.stat()
+            payload.append((str(p), int(st.st_size), int(st.st_mtime_ns),
+                            float(region_s), float(quality), now))
+        except OSError:
+            continue
+    if not payload:
+        return
+    try:
+        with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=20) as db:
+            db.executemany("""INSERT INTO cull_cache(path,size,mtime_ns,region_s,quality,updated_at)
+                              VALUES(?,?,?,?,?,?)
+                              ON CONFLICT(path) DO UPDATE SET size=excluded.size,mtime_ns=excluded.mtime_ns,
+                              region_s=excluded.region_s,quality=excluded.quality,updated_at=excluded.updated_at""",
+                           payload)
+            db.commit()
+    except Exception:
+        logger.debug("cull cache batch write failed", exc_info=True)
+
+
+def _save_rank_scores_batch(rows):
+    if not rows:
+        return
+    payload = []
+    now = time.time()
+    for path, score in rows:
+        try:
+            p = Path(path); st = p.stat()
+            data = asdict(score)
+            data['_cache_version'] = RANK_CACHE_VERSION
+            payload.append((str(p), int(st.st_size), int(st.st_mtime_ns),
+                            json.dumps(data, ensure_ascii=False), now))
+        except OSError:
+            continue
+    if not payload:
+        return
+    try:
+        with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=20) as db:
+            db.executemany("""INSERT INTO rank_cache(path,size,mtime_ns,score_json,updated_at)
+                              VALUES(?,?,?,?,?)
+                              ON CONFLICT(path) DO UPDATE SET size=excluded.size,mtime_ns=excluded.mtime_ns,
+                              score_json=excluded.score_json,updated_at=excluded.updated_at""",
+                           payload)
+            db.commit()
+    except Exception:
+        logger.debug("rank cache batch write failed", exc_info=True)
+
+
 try:
     _db_init()
 except Exception:
@@ -411,7 +465,9 @@ CATEGORIES = ['composition', 'technical', 'sharpness', 'color', 'aesthetic']
 
 # Keep the WebView responsive on very large folders. Processing/state remains
 # complete; this cap affects only one HTTP response rendered by the UI.
-UI_RESULT_CAP = 5000
+UI_LIVE_RESULT_CAP = 1200
+UI_RESULT_CHUNK = 5000
+UI_RESULT_CAP = UI_RESULT_CHUNK
 
 
 # --------------------------------------------------------------------------- #
@@ -1072,6 +1128,7 @@ def run_cull(folder, strictness, adaptive, rescue_on, recursive=True):
         images = list_images(folder, recursive=recursive)
         total = len(images) or 1
         items = []   # {name, path, region_s, q}
+        cache_buffer = []
 
         def thresholds():
             if adaptive and items:
@@ -1153,6 +1210,8 @@ def run_cull(folder, strictness, adaptive, rescue_on, recursive=True):
                 s['current_folder'] = rel
                 last_rel = rel
             if s.get('cancel'):
+                _save_cull_metrics_batch(cache_buffer)
+                cache_buffer.clear()
                 classify_all()
                 s['status'] = (f"已停止：{idx}/{total} · {_tiers(idx)} · "
                                f"已用时 {_fmt(time.time()-t0)}")
@@ -1175,17 +1234,23 @@ def run_cull(folder, strictness, adaptive, rescue_on, recursive=True):
                 gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
                 region_s = region_sharpness(gray)
                 quality = quick_quality(bgr, gray)
-                _save_cull_metrics(p, region_s, quality)
+                cache_buffer.append((str(p), region_s, quality))
+                if len(cache_buffer) >= 64:
+                    _save_cull_metrics_batch(cache_buffer)
+                    cache_buffer.clear()
             items.append({'name': p.name, 'path': str(p),
                           'region_s': region_s, 'q': quality})
             # Reclassification is for live UI only; final output is still
             # classified once more below. Throttle it so very large folders do
             # not repeatedly rescan the entire processed list every five files.
             now = time.time()
+            classify_interval = 1.0 if idx < 1000 else (3.0 if idx < 10000 else 8.0)
             if (idx < 20 and idx % 5 == 0) or idx == len(images) - 1 \
-                    or now - s.get('_last_classify_at', 0.0) >= 1.0:
+                    or now - s.get('_last_classify_at', 0.0) >= classify_interval:
                 classify_all()
                 s['_last_classify_at'] = now
+        _save_cull_metrics_batch(cache_buffer)
+        cache_buffer.clear()
         classify_all()
         if last_rel is not None:
             s['folder_status'][last_rel] = '已完成'
@@ -1495,6 +1560,7 @@ def run_rank(folder, ftype='all', pair='both', recursive=True):
         total = len(paths)
         s['total'] = total
         analyzer = AdvancedPhotoAnalyzer()
+        rank_cache_buffer = []
 
         t0 = time.time()
 
@@ -1520,10 +1586,16 @@ def run_rank(folder, ftype='all', pair='both', recursive=True):
             else:
                 sc = analyzer.analyze_image(str(p))
                 if sc:
-                    _save_rank_score(p, sc)
+                    rank_cache_buffer.append((str(p), sc))
+                    if len(rank_cache_buffer) >= 32:
+                        _save_rank_scores_batch(rank_cache_buffer)
+                        rank_cache_buffer.clear()
             if sc:
                 s['scores'].append(sc)
             s['analyzed'] = len(s['scores'])
+        _save_rank_scores_batch(rank_cache_buffer)
+        rank_cache_buffer.clear()
+
         # Manual Cull review may add newly-kept photos while ranking is running.
         # Score those additions before declaring the task complete.
         while not s.get('cancel'):
