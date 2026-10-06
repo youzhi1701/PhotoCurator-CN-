@@ -4689,9 +4689,89 @@ def _known_step_paths(step):
     return set()
 
 
+@app.route('/api/trash', methods=['GET'])
+def api_trash():
+    """List PhotoCurator's own recycle bin for the current selected library."""
+    folder = state.get('folder')
+    if not folder or not Path(folder).is_dir():
+        return jsonify({'photos': [], 'count': 0})
+    rows = _trash_rows(folder)
+    return jsonify({'photos': rows, 'count': len(rows)})
+
+
+@app.route('/api/trash-restore', methods=['POST'])
+def api_trash_restore():
+    blocked = _reject_mutation_while_running()
+    if blocked:
+        return blocked
+    data = request.get_json() or {}
+    try:
+        trash_id = int(data.get('id'))
+    except (TypeError, ValueError):
+        return jsonify({'error': '无效的回收站记录'}), 400
+    try:
+        restored = _restore_trash_item(trash_id)
+        return jsonify({'ok': True, 'restored_path': restored,
+                        'photos': _trash_rows(state.get('folder')),
+                        'count': len(_trash_rows(state.get('folder')))})
+    except Exception as e:
+        logger.warning(f"trash restore failed {trash_id}: {e}")
+        return jsonify({'error': f'恢复失败：{e}'}), 500
+
+
+@app.route('/api/trash-purge', methods=['POST'])
+def api_trash_purge():
+    """Permanently delete one or all photos after the final recycle-bin review."""
+    blocked = _reject_mutation_while_running()
+    if blocked:
+        return blocked
+    data = request.get_json() or {}
+    folder = state.get('folder')
+    try:
+        if data.get('all'):
+            rows = _trash_rows(folder)
+            failed = 0
+            for row in rows:
+                try:
+                    _purge_trash_item(row['id'])
+                except Exception:
+                    failed += 1
+            left = _trash_rows(folder)
+            return jsonify({'ok': failed == 0, 'purged': len(rows) - failed,
+                            'failed': failed, 'photos': left, 'count': len(left)})
+        trash_id = int(data.get('id'))
+        _purge_trash_item(trash_id)
+        rows = _trash_rows(folder)
+        return jsonify({'ok': True, 'purged': 1, 'photos': rows, 'count': len(rows)})
+    except (TypeError, ValueError):
+        return jsonify({'error': '无效的回收站记录'}), 400
+    except Exception as e:
+        logger.warning(f"trash purge failed: {e}")
+        return jsonify({'error': f'永久删除失败：{e}'}), 500
+
+
+@app.route('/api/trash-restore-all', methods=['POST'])
+def api_trash_restore_all():
+    blocked = _reject_mutation_while_running()
+    if blocked:
+        return blocked
+    folder = state.get('folder')
+    rows = _trash_rows(folder)
+    restored = failed = 0
+    for row in rows:
+        try:
+            _restore_trash_item(row['id'])
+            restored += 1
+        except Exception:
+            failed += 1
+    left = _trash_rows(folder)
+    return jsonify({'ok': failed == 0, 'restored': restored, 'failed': failed,
+                    'photos': left, 'count': len(left)})
+
+
 @app.route('/api/delete-photo', methods=['POST'])
 def api_delete_photo():
-    """Move one reviewed source photo to the operating-system recycle bin."""
+    """Move one reviewed source photo to PhotoCurator's own recycle bin."""
     data = request.get_json() or {}
     step = str(data.get('step') or '')
     blocked = _reject_mutation_while_running()
@@ -4706,12 +4786,12 @@ def api_delete_photo():
     target = _safe_image_path(path)
     if target is None:
         return jsonify({'error': '照片路径无效或已不在允许的照片目录中'}), 400
+    folder = state.get('folder')
     try:
-        send2trash(str(target))
-        _activity('移入回收站', str(target), step)
+        trash_id, trash_path = _move_to_software_trash(target, folder, step)
     except Exception as e:
-        logger.warning(f"recycle-photo failed {target}: {e}")
-        return jsonify({'error': f'移入回收站失败：{e}'}), 500
+        logger.warning(f"software-trash move failed {target}: {e}")
+        return jsonify({'error': f'移入软件回收站失败：{e}'}), 500
 
     deleted = str(target)
     _delete_review_override(deleted)
@@ -4767,18 +4847,21 @@ def api_delete_photo():
 
     if step == 'cull':
         first = cull['photos'][:UI_RESULT_CHUNK]
-        return jsonify({'ok': True, 'photos': first,
+        return jsonify({'ok': True, 'photos': first, 'trash_id': trash_id,
+                        'trash_count': len(_trash_rows(folder)),
                         'result_total': len(cull['photos']),
                         'truncated': len(cull['photos']) > len(first),
                         'sharp': cull['sharp'], 'soft': cull['soft'], 'blurry': cull['blurry']})
     if step == 'dedup':
         first = dedup['photos'][:UI_RESULT_CHUNK]
-        return jsonify({'ok': True, 'photos': first,
+        return jsonify({'ok': True, 'photos': first, 'trash_id': trash_id,
+                        'trash_count': len(_trash_rows(folder)),
                         'result_total': len(dedup['photos']),
                         'truncated': len(dedup['photos']) > len(first),
                         'groups': dedup['groups'],
                         'duplicate_groups': len(dedup['photos'])})
-    return jsonify({'ok': True, 'photos': rank['preview'], 'removed': len(state['excluded'])})
+    return jsonify({'ok': True, 'photos': rank['preview'], 'removed': len(state['excluded']),
+                    'trash_id': trash_id, 'trash_count': len(_trash_rows(folder))})
 
 
 @app.route('/api/weights', methods=['POST'])
