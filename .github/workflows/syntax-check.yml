@@ -19,7 +19,7 @@ jobs:
 
       - name: Compile Python sources
         run: |
-          python -m py_compile             desktop_app.py             photo_curator.py             photo_dedup_batch.py             photo_file_organizer.py             photo_ranking_engine.py             photo_ranking_v3.py             raw_loader.py             "基础冒烟测试.py"             "Codespaces冒烟测试.py"
+          python -m py_compile             desktop_app.py             photo_curator.py             photo_dedup_batch.py             photo_file_organizer.py             photo_ranking_engine.py             photo_ranking_v3.py             raw_loader.py             "基础冒烟测试.py"             "Codespaces冒烟测试.py"             windows_smoke_test.py
 
       - name: Validate Codespaces helper files and version consistency
         run: |
@@ -129,7 +129,9 @@ jobs:
               "compare_scope == 'global'",
               "'selected_paths': [selected]",
               "每个相似组至少保留 1 张照片",
-              "PhotoCurator_Result",
+              "PhotoCurator_Result（照片筛选结果）",
+              "Blurred（模糊照片）",
+              "Duplicates（重复照片）",
               "id=\"resultTools\"",
               "data-view=\"small\"",
               "data-view=\"large\"",
@@ -310,7 +312,7 @@ jobs:
 
       - name: Compile Python sources
         run: |
-          python -m py_compile desktop_app.py photo_curator.py photo_dedup_batch.py photo_file_organizer.py photo_ranking_engine.py photo_ranking_v3.py raw_loader.py "基础冒烟测试.py" "Codespaces冒烟测试.py"
+          python -m py_compile desktop_app.py photo_curator.py photo_dedup_batch.py photo_file_organizer.py photo_ranking_engine.py photo_ranking_v3.py raw_loader.py "基础冒烟测试.py" "Codespaces冒烟测试.py" windows_smoke_test.py
 
       - name: Unicode path and image IO smoke test
         run: |
