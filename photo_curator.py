@@ -1793,8 +1793,9 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   .task-tip{font-size:10px;color:var(--muted);line-height:1.5;padding-top:7px}
   .task-exit{width:100%;margin-top:10px;padding:8px;border:1px solid rgba(220,38,38,.18);border-radius:9px;background:rgba(255,255,255,.5);color:#b91c1c;font-size:11px;font-weight:700;cursor:pointer}
   .task-exit:hover{background:rgba(254,226,226,.8)}
+  .top button,.top input,.top .theme,.top .window-controls{position:relative;z-index:2}
 </style></head><body>
-<div class="top">
+<div class="top pywebview-drag-region">
   <div class="brand">🖼️ PhotoCurator <small>照片整理工作区 · v{{ app_version }}</small></div>
   <div class="top-right">
     <button class="theme" id="taskToggle" title="任务中心" aria-label="任务中心">◉</button>
