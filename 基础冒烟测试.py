@@ -78,6 +78,36 @@ def main():
         thumb.close()
         full.close()
 
+        # Blurry classification and file-action selection are separate.
+        # Unchecking a blurry frame must not change its classification and the
+        # backend must report the exact selected/total move counts.
+        photo_curator.state["cull"]["photos"] = [
+            {"path": str(found[0]), "tier": "blurry", "move_selected": True},
+            {"path": str(found[1]), "tier": "blurry", "move_selected": True},
+            {"path": str(found[2]), "tier": "sharp", "move_selected": False},
+        ]
+        sel = client.post(
+            "/api/select-blurry",
+            json={"path": str(found[0]), "selected": False},
+            headers={"Host": f"127.0.0.1:{photo_curator.PORT}"},
+        )
+        assert_true(sel.status_code == 200, f"模糊照片取消移动失败：HTTP {sel.status_code}")
+        payload = sel.get_json()
+        assert_true(payload["selected"] == 1 and payload["total"] == 2,
+                    f"移动选择计数错误：{payload}")
+        assert_true(photo_curator.state["cull"]["photos"][0]["tier"] == "blurry",
+                    "取消移动不应改变模糊分类")
+
+        bulk = client.post(
+            "/api/select-blurry",
+            json={"all": False},
+            headers={"Host": f"127.0.0.1:{photo_curator.PORT}"},
+        )
+        assert_true(bulk.status_code == 200, f"模糊照片全不选失败：HTTP {bulk.status_code}")
+        payload = bulk.get_json()
+        assert_true(payload["selected"] == 0 and payload["total"] == 2,
+                    f"全不选计数错误：{payload}")
+
         outside = Path(td) / "目录外照片.jpg"
         Image.new("RGB", (20, 20), "white").save(outside)
         assert_true(photo_curator._safe_image_path(str(outside)) is None,
