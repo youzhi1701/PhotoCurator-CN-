@@ -81,62 +81,9 @@ PY
   fi
 fi
 
-DEMO_DIR="$ROOT/.codespaces_demo"
-mkdir -p "$DEMO_DIR"
-echo "[3/4] 检查在线样例照片..."
-DEMO_DIR="$DEMO_DIR" "$PY" - <<'PY'
-import os
-from pathlib import Path
-from PIL import Image, ImageDraw, ImageFilter
-
-out = Path(os.environ["DEMO_DIR"])
-out.mkdir(parents=True, exist_ok=True)
-created = 0
-
-# Keep the test dataset persistent. Never clear or overwrite anything already
-# present in .codespaces_demo. If a canonical sample was moved away during a
-# file-operation test, only recreate that missing root sample on the next start.
-for i in range(12):
-    if i >= 8:
-        kind = "blurry"
-    elif i >= 4:
-        kind = "soft"
-    else:
-        kind = "sharp"
-
-    target = out / f"sample_{i+1:02d}_{kind}.jpg"
-    if target.exists():
-        continue
-
-    w, h = 960, 640
-    img = Image.new("RGB", (w, h), (235, 238, 244))
-    d = ImageDraw.Draw(img)
-
-    step = 32 + (i % 3) * 8
-    for x in range(0, w, step):
-        d.line((x, 0, w - x // 2, h), width=2 + i % 4,
-               fill=(35 + i * 8, 65, 120 + i * 6))
-    for y in range(0, h, step):
-        d.line((0, y, w, h - y // 2), width=1 + (i % 3),
-               fill=(110, 70 + i * 7, 60))
-    d.ellipse((180 + i * 8, 120, 560 + i * 8, 500),
-              outline=(25, 25, 25), width=10)
-    d.rectangle((620, 120 + i * 7, 860, 420 + i * 4),
-                outline=(20, 110, 80), width=8)
-
-    if kind == "blurry":
-        img = img.filter(ImageFilter.GaussianBlur(radius=5.0))
-    elif kind == "soft":
-        img = img.filter(ImageFilter.GaussianBlur(radius=1.4))
-
-    img.save(target, quality=92)
-    created += 1
-
-print(f"在线样例：保留现有数据，补齐 {created} 张；基准样例共 12 张。")
-PY
+echo "[3/4] 内置测试数据将在程序启动后自动检查并补齐。"
 
 export PHOTOCURATOR_PORT="${PHOTOCURATOR_PORT:-5014}"
-export PHOTOCURATOR_DEMO_DIR="$DEMO_DIR"
 
 PID_FILE="$ROOT/.codespaces_preview.pid"
 LOG_FILE="$ROOT/.codespaces_preview.log"
@@ -217,7 +164,7 @@ fi
 echo "[4/4] 正在后台启动在线预览..."
 : > "$LOG_FILE"
 
-nohup env   CODESPACES=true   CODESPACE_NAME="${CODESPACE_NAME:-}"   GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN="$DOMAIN"   PHOTOCURATOR_PORT="$PHOTOCURATOR_PORT"   PHOTOCURATOR_DEMO_DIR="$PHOTOCURATOR_DEMO_DIR"   "$PY" "$ROOT/photo_curator.py"   >"$LOG_FILE" 2>&1 < /dev/null &
+nohup env   CODESPACES=true   CODESPACE_NAME="${CODESPACE_NAME:-}"   GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN="$DOMAIN"   PHOTOCURATOR_PORT="$PHOTOCURATOR_PORT"   "$PY" "$ROOT/photo_curator.py"   >"$LOG_FILE" 2>&1 < /dev/null &
 
 SERVER_PID=$!
 echo "$SERVER_PID" > "$PID_FILE"
