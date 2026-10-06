@@ -164,7 +164,7 @@ jobs:
           print("Final recursive/grouped/multi-keep workflow guard OK")
           PY
 
-      - name: Check v1.4.1 data-flow and large-library guards
+      - name: Check v1.4.2 data-flow and large-library guards
         run: |
           python - <<'PY'
           from pathlib import Path
@@ -186,11 +186,16 @@ jobs:
               "ftype:'all'",
               "_save_cull_metrics_batch",
               "_save_rank_scores_batch",
+              "_load_cull_metrics_map",
+              "_load_rank_scores_map",
+              "_sync_dedup_with_cull",
+              "late_pending",
+              "'ready': True",
               "[InstallDelete]",
           ]
           missing = [x for x in required if x not in (source + installer)]
           if missing:
-              raise SystemExit("v1.4.1 architecture regression: " + repr(missing))
+              raise SystemExit("v1.4.2 architecture regression: " + repr(missing))
 
           banned = [
               "清晰度技术值",
@@ -200,7 +205,7 @@ jobs:
           ]
           leftovers = [x for x in banned if x in (source + workflow)]
           if leftovers:
-              raise SystemExit("v1.4.1 legacy behavior returned: " + repr(leftovers))
+              raise SystemExit("v1.4.2 legacy behavior returned: " + repr(leftovers))
 
           js_saved = source.find("saved=JSON.parse(localStorage.getItem('pc-library-settings')")
           for decl in (
@@ -215,7 +220,7 @@ jobs:
               if pos < 0 or (js_saved >= 0 and pos > js_saved):
                   raise SystemExit("Settings initialization order regression: " + decl)
 
-          print("v1.4.1 data-flow / large-library guards OK")
+          print("v1.4.2 data-flow / large-library guards OK")
           PY
 
       - name: Validate embedded HTML structure
