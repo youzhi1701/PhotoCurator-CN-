@@ -72,7 +72,7 @@ except Exception:
 
 app = Flask(__name__)
 
-APP_VERSION = "1.2.4-cn.1"
+APP_VERSION = "1.2.4-cn.2"
 IS_CODESPACES = os.environ.get('CODESPACES', '').strip().lower() == 'true'
 CODESPACE_NAME = os.environ.get('CODESPACE_NAME', '').strip()
 _CODESPACES_DOMAIN_RAW = os.environ.get(
@@ -1149,7 +1149,6 @@ def run_dedup(folder, threshold, ftype='all', pair='both',
 
 
 # --------------------------------------------------------------------------- #
-#  RANK# --------------------------------------------------------------------------- #
 #  RANK
 # --------------------------------------------------------------------------- #
 def weighted_overall(score, weights):
@@ -2117,15 +2116,15 @@ function emptyHTML(step){
     cull:['✂️','步骤 1 · 模糊筛选','先识别并筛出失焦、明显模糊的照片。',
       ['🔍 评估真实清晰度，雾气和夜空不会被简单误判为模糊',
        '🟢 清晰 &nbsp;·&nbsp; 🟠 轻微软（可保留） &nbsp;·&nbsp; 🔴 模糊',
-       '📁 选择照片文件夹，然后点击 <b>开始模糊筛选</b>；完成后再确认是否移动模糊照片']],
+       '📁 默认扫描当前文件夹及所有子文件夹；结果按来源文件夹分组显示']],
     dedup:['🪢','步骤 2 · 相似去重','将连拍或高度相似照片归组，保留其中最佳的一张。',
       ['📸 自动识别并归组近似照片',
        '⭐ 每组优先保留最清晰的一张',
-       '🪢 点击 <b>开始相似筛选</b>；完成后逐组对比并确认保留照片，再统一处理未保留项']],
+       '🪢 可选择“各子文件夹独立对比”或“整个范围全局对比”，最后再统一处理未保留项']],
     rank:['🏆','步骤 3 · 智能优选','综合画质、构图与色彩，找出更值得保留的照片。',
       ['🎯 综合评估构图、光线、清晰度、色彩与对比度',
        '🥇 先完成智能评分并展示候选照片，提供单张评分雷达图',
-       '☑️ 筛选后可手动移除 / 恢复候选；确认无误后再导出优选照片']]
+       '☑️ 大目录结果按来源文件夹分组；筛选后可继续移除、删除或导出优选照片']]
   };
   const c=C[step]||C.cull;
   return `<div class="empty"><div class="icon">${c[0]}</div>
@@ -3215,7 +3214,8 @@ def api_dedup_apply():
                     if m.get('path') and m.get('path') != selected)
     if not dups:
         s['applied'] = True
-        return jsonify({'ok': True, 'moved': 0, 'dest': str(Path(folder) / 'Duplicates')})
+        return jsonify({'ok': True, 'moved': 0,
+                        'dest': '按当前“处理文件存放位置”规则'})
     try:
         prefs = state.get('scan', {})
         result = _move_reviewed_files(
