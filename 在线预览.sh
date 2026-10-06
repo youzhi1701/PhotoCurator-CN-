@@ -53,7 +53,26 @@ fi
 VENV="$ROOT/.codespaces-venv"
 if [[ ! -x "$VENV/bin/python" ]]; then
   echo "[1/4] 创建 Codespaces 独立 Python 环境..."
-  "$BASE_PY" -m venv "$VENV"
+  rm -rf "$VENV"
+
+  if ! "$BASE_PY" -m venv "$VENV"; then
+    PY_MM="$("$BASE_PY" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
+    echo
+    echo "      当前 Python 缺少 venv/ensurepip，正在自动修复 python${PY_MM}-venv..."
+
+    if command -v sudo >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then
+      sudo apt-get update -qq
+      sudo apt-get install -y "python${PY_MM}-venv"
+      rm -rf "$VENV"
+      "$BASE_PY" -m venv "$VENV"
+    else
+      echo
+      echo "[无法自动修复] 当前 Codespace 不允许安装 python${PY_MM}-venv。"
+      echo "请按 Ctrl+Shift+P，运行：Codespaces: Rebuild Container"
+      echo "重建后仓库会使用已配置的 Python 3.11 环境。"
+      exit 4
+    fi
+  fi
 fi
 
 PY="$VENV/bin/python"
