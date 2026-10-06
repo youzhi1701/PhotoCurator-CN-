@@ -19,7 +19,7 @@ jobs:
 
       - name: Compile Python sources
         run: |
-          python -m py_compile             desktop_app.py             photo_curator.py             photo_dedup_batch.py             photo_file_organizer.py             photo_ranking_engine.py             photo_ranking_v3.py             raw_loader.py             "Codespaces冒烟测试.py"
+          python -m py_compile             desktop_app.py             photo_curator.py             photo_dedup_batch.py             photo_file_organizer.py             photo_ranking_engine.py             photo_ranking_v3.py             raw_loader.py             "基础冒烟测试.py"             "Codespaces冒烟测试.py"
 
       - name: Validate Codespaces helper files and version consistency
         run: |
@@ -116,6 +116,32 @@ jobs:
           if missing:
               raise SystemExit("Cull move-selection UI sync regression: " + repr(missing))
           print("Cull move-selection UI sync guard OK")
+          PY
+
+      - name: Check final library workflow regressions
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          source = Path("photo_curator.py").read_text(encoding="utf-8")
+          required = [
+              "def list_images(folder, recursive=False)",
+              "compare_scope == 'global'",
+              "'selected_paths': [selected]",
+              "每个相似组至少保留 1 张照片",
+              "PhotoCurator_Result",
+              "id=\"resultTools\"",
+              "data-view=\"small\"",
+              "data-view=\"large\"",
+              "data-view=\"list\"",
+              "collapsedFolders",
+          ]
+          missing = [x for x in required if x not in source]
+          if missing:
+              raise SystemExit("Final library workflow regression: " + repr(missing))
+          if "selected_path': selected" in source:
+              raise SystemExit("Legacy single-keeper dedup state returned")
+          print("Final recursive/grouped/multi-keep workflow guard OK")
           PY
 
       - name: Validate embedded HTML structure
