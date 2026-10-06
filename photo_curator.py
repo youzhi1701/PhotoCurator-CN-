@@ -3654,10 +3654,9 @@ def api_progress(step):
 @app.route('/api/dedup-select', methods=['POST'])
 def api_dedup_select():
     """Toggle one photo's kept state; each similarity group must keep >= 1."""
-    blocked = _reject_mutation_while_running()
-    if blocked:
-        return blocked
     s = state['dedup']
+    if s.get('running'):
+        return jsonify({'error': '相似分析仍在运行，请等待这个相似组分析完成'}), 409
     if not s.get('complete'):
         return jsonify({'error': '请先完成相似照片筛选'}), 409
     data = request.get_json() or {}
@@ -3702,9 +3701,8 @@ def api_dedup_select():
 @app.route('/api/dedup-group-action', methods=['POST'])
 def api_dedup_group_action():
     """Fast keeper presets for one similarity group."""
-    blocked = _reject_mutation_while_running()
-    if blocked:
-        return blocked
+    if state['dedup'].get('running'):
+        return jsonify({'error': '相似分析仍在运行，请等待分析完成'}), 409
     data = request.get_json() or {}
     try:
         gid = int(data.get('group_id'))
