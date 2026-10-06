@@ -72,7 +72,7 @@ except Exception:
 
 app = Flask(__name__)
 
-APP_VERSION = "1.2.2-cn.3"
+APP_VERSION = "1.2.2-cn.4"
 IS_CODESPACES = os.environ.get('CODESPACES', '').strip().lower() == 'true'
 CODESPACE_NAME = os.environ.get('CODESPACE_NAME', '').strip()
 _CODESPACES_DOMAIN_RAW = os.environ.get(
@@ -142,28 +142,24 @@ def _guard_request():
     """Block forged local/cloud requests while allowing the exact Codespaces proxy.
 
     Desktop/browser mode accepts loopback only. In Codespaces the server binds
-    to 0.0.0.0 so GitHub's authenticated port proxy can reach it, but Host and
-    Origin/Referer are still restricted to the single derived forwarding host.
+    to 0.0.0.0 so GitHub's authenticated port proxy can reach it. The Host must
+    still match the one exact forwarded Codespace hostname. When browsers send
+    an Origin header, it must also be same-origin.
+
+    Referer is intentionally not used as an access-control signal: opening a
+    private forwarded port from the Codespaces editor legitimately sends a
+    github.dev editor Referer on the top-level GET.
     """
     host = (request.host or '').lower().rstrip('.')
     if host not in _ALLOWED_HOSTS:
         abort(403)
 
-    from urllib.parse import urlparse
-
     origin = request.headers.get('Origin')
     if origin:
+        from urllib.parse import urlparse
         origin_host = (urlparse(origin).hostname or '').lower().rstrip('.')
         if origin_host not in _ALLOWED_ORIGIN_HOSTS:
             abort(403)
-    else:
-        # Normal top-level navigation may not carry Origin. If a Referer is
-        # present, constrain it too; absence of both is valid for direct GETs.
-        referer = request.headers.get('Referer')
-        if referer:
-            referer_host = (urlparse(referer).hostname or '').lower().rstrip('.')
-            if referer_host not in _ALLOWED_ORIGIN_HOSTS:
-                abort(403)
 
 
 @app.after_request
