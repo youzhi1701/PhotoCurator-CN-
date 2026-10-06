@@ -19,7 +19,36 @@ jobs:
 
       - name: Compile Python sources
         run: |
-          python -m py_compile             desktop_app.py             photo_curator.py             photo_dedup_batch.py             photo_file_organizer.py             photo_ranking_engine.py             photo_ranking_v3.py             raw_loader.py
+          python -m py_compile             desktop_app.py             photo_curator.py             photo_dedup_batch.py             photo_file_organizer.py             photo_ranking_engine.py             photo_ranking_v3.py             raw_loader.py             "Codespaces冒烟测试.py"
+
+      - name: Validate Codespaces helper files and version consistency
+        run: |
+          bash -n "在线预览.sh"
+          python - <<'PY'
+          import json
+          import re
+          from pathlib import Path
+
+          json.loads(Path(".devcontainer/devcontainer.json").read_text(encoding="utf-8"))
+
+          desktop = Path("desktop_app.py").read_text(encoding="utf-8")
+          core = Path("photo_curator.py").read_text(encoding="utf-8")
+          readme = Path("README.md").read_text(encoding="utf-8")
+
+          def version(source):
+              m = re.search(r'^APP_VERSION\s*=\s*"([^"]+)"', source, re.M)
+              if not m:
+                  raise SystemExit("APP_VERSION not found")
+              return m.group(1)
+
+          dv = version(desktop)
+          cv = version(core)
+          if dv != cv:
+              raise SystemExit(f"Version mismatch: desktop={dv}, core={cv}")
+          if f"v{dv}" not in readme:
+              raise SystemExit(f"README missing current build v{dv}")
+          print("Codespaces helpers + version consistency OK:", dv)
+          PY
 
       - name: Extract embedded UI JavaScript
         run: |
@@ -160,11 +189,15 @@ jobs:
 
       - name: Compile Python sources
         run: |
-          python -m py_compile desktop_app.py photo_curator.py photo_dedup_batch.py photo_file_organizer.py photo_ranking_engine.py photo_ranking_v3.py raw_loader.py "基础冒烟测试.py"
+          python -m py_compile desktop_app.py photo_curator.py photo_dedup_batch.py photo_file_organizer.py photo_ranking_engine.py photo_ranking_v3.py raw_loader.py "基础冒烟测试.py" "Codespaces冒烟测试.py"
 
       - name: Unicode path and image IO smoke test
         run: |
           python "基础冒烟测试.py"
+
+      - name: Codespaces forwarding security smoke test
+        run: |
+          python "Codespaces冒烟测试.py"
 
 
       - name: Technical identifier localization guard
