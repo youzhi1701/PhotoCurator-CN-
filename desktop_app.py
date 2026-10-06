@@ -168,7 +168,7 @@ def main():
         server.stop()
         raise RuntimeError(
             f"本地服务启动失败（端口 {PORT}）。"
-            "请运行“调试运行.bat”或查看“启动错误.log”。"
+            "请运行“调试运行.bat”或查看“startup-error.log”。"
         )
 
     window = webview.create_window(
