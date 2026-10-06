@@ -1,5 +1,12 @@
 # 更新记录
 
+## v1.2.2-cn.2
+
+- 修复旧 Codespace 中 Python 已存在但缺少 `venv/ensurepip` 时，在线预览无法启动的问题
+- `在线预览.sh` 现在会自动识别当前 Python 小版本，并尝试安装对应的 `python3.x-venv`
+- 自动修复完成后会重新创建独立环境并继续启动，无需用户手工执行 apt 命令
+- 若 Codespace 权限不允许自动安装，才会明确提示使用 **Codespaces: Rebuild Container**
+
 ## v1.2.2-cn.1
 
 本版本新增安全的 GitHub Codespaces 在线预览能力，同时保持 Windows 本地模式的安全边界不变。
