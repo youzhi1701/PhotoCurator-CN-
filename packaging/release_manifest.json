@@ -1,0 +1,19 @@
+{
+  "product": "PhotoCurator",
+  "channel": "stable",
+  "version": "1.4.0",
+  "installer": "PhotoCurator-Setup-v1.4.0.exe",
+  "upgrade_mode": "in_place",
+  "same_app_id": true,
+  "preserve": [
+    "data/config",
+    "data/library_index.sqlite3",
+    "user_photo_folders",
+    "PhotoCurator_Result（照片筛选结果）",
+    "custom_output_directories"
+  ],
+  "replace": [
+    "app"
+  ],
+  "notes": "运行新版安装包即可覆盖升级；不需要先卸载旧版。"
+}
