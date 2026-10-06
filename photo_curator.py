@@ -20,6 +20,8 @@ import time
 import shutil
 import hashlib
 import logging
+import sqlite3
+import urllib.request
 from logging.handlers import RotatingFileHandler
 import threading
 import subprocess
@@ -32,6 +34,7 @@ import cv2
 import numpy as np
 from flask import Flask, render_template_string, request, jsonify, send_file, abort
 from PIL import Image, ImageOps
+from send2trash import send2trash
 
 from raw_loader import (RAW_EXTS, HAS_RAWPY, is_raw,
                         HEIF_EXTS, HAS_HEIF, is_heif, needs_jpeg_preview,
@@ -81,7 +84,65 @@ except Exception:
 
 app = Flask(__name__)
 
-APP_VERSION = "1.3.0"
+INDEX_DB = DATA_ROOT / 'config' / 'library_index.sqlite3'
+_DB_LOCK = threading.Lock()
+
+def _db_init():
+    with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=15) as db:
+        db.execute("""CREATE TABLE IF NOT EXISTS cull_cache (
+            path TEXT PRIMARY KEY, size INTEGER NOT NULL, mtime_ns INTEGER NOT NULL,
+            region_s REAL NOT NULL, quality REAL NOT NULL, updated_at REAL NOT NULL
+        )""")
+        db.execute("""CREATE TABLE IF NOT EXISTS activity_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL NOT NULL,
+            action TEXT NOT NULL, path TEXT, detail TEXT
+        )""")
+        db.execute("""CREATE TABLE IF NOT EXISTS geocode_cache (
+            key TEXT PRIMARY KEY, label TEXT NOT NULL, updated_at REAL NOT NULL
+        )""")
+        db.commit()
+
+def _activity(action, path='', detail=''):
+    try:
+        with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=10) as db:
+            db.execute("INSERT INTO activity_log(ts,action,path,detail) VALUES(?,?,?,?)",
+                       (time.time(), str(action), str(path or ''), str(detail or '')))
+            db.commit()
+    except Exception:
+        logger.debug("activity log write failed", exc_info=True)
+
+def _cached_cull_metrics(path):
+    try:
+        p = Path(path); st = p.stat()
+        with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=10) as db:
+            row = db.execute(
+                "SELECT region_s,quality FROM cull_cache WHERE path=? AND size=? AND mtime_ns=?",
+                (str(p), int(st.st_size), int(st.st_mtime_ns))
+            ).fetchone()
+        return (float(row[0]), float(row[1])) if row else None
+    except Exception:
+        return None
+
+def _save_cull_metrics(path, region_s, quality):
+    try:
+        p = Path(path); st = p.stat()
+        with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=10) as db:
+            db.execute("""INSERT INTO cull_cache(path,size,mtime_ns,region_s,quality,updated_at)
+                          VALUES(?,?,?,?,?,?)
+                          ON CONFLICT(path) DO UPDATE SET size=excluded.size,mtime_ns=excluded.mtime_ns,
+                          region_s=excluded.region_s,quality=excluded.quality,updated_at=excluded.updated_at""",
+                       (str(p), int(st.st_size), int(st.st_mtime_ns),
+                        float(region_s), float(quality), time.time()))
+            db.commit()
+    except Exception:
+        logger.debug("cull cache write failed", exc_info=True)
+
+try:
+    _db_init()
+except Exception:
+    logger.warning("library index unavailable", exc_info=True)
+
+APP_VERSION = "1.4.0"
 IS_CODESPACES = os.environ.get('CODESPACES', '').strip().lower() == 'true'
 CODESPACE_NAME = os.environ.get('CODESPACE_NAME', '').strip()
 _CODESPACES_DOMAIN_RAW = os.environ.get(
@@ -365,7 +426,7 @@ state = {
     'phone_bg': set(),   # paths flagged "suitable as phone wallpaper"
     'scan': {'recursive': True, 'compare_scope': 'folder',
              'output_mode': 'source', 'custom_output': ''},
-    'cull':  {**_blank(), 'sharp': 0, 'soft': 0, 'blurry': 0, 'sharp_paths': []},
+    'cull':  {**_blank(), 'sharp': 0, 'soft': 0, 'blurry': 0, 'sharp_paths': [], 'overrides': {}, 'removed_paths': set(), 'cache_hits': 0},
     'dedup': {**_blank(), 'groups': 0, 'kept_paths': [], 'groups_data': [], 'applied': False},
     'rank':  {**_blank(), 'scores': [], 'total': 0, 'analyzed': 0, 'preview': [], 'preview_at': 0.0},
 }
@@ -555,6 +616,7 @@ def _move_reviewed_files(paths, kind, root, mode='source', custom_output=''):
         try:
             dst = _output_destination(src, kind, root, mode, custom_output)
             shutil.move(str(src), str(dst))
+            _activity('移动文件', str(src), str(dst))
             result['moved'] += 1
             result['destinations'].append({'old': str(src), 'new': str(dst)})
         except Exception as e:
@@ -936,6 +998,8 @@ def run_cull(folder, strictness, adaptive, rescue_on, recursive=True):
     s = state['cull']
     s.update({'running': True, 'cancel': False, 'progress': 0, 'status': '正在扫描照片…',
               'photos': [], 'sharp': 0, 'soft': 0, 'blurry': 0, 'sharp_paths': [],
+              'cache_hits': 0, 'overrides': s.get('overrides', {}),
+              'removed_paths': s.get('removed_paths', set()),
               # complete=True only when cull runs to the end; a stopped cull must
               # not feed its partial survivor list into Dedup/Rank.
               'complete': False, 'src_folder': str(folder), 'recursive': bool(recursive)})
@@ -964,9 +1028,16 @@ def run_cull(folder, strictness, adaptive, rescue_on, recursive=True):
             blur_lo, sharp_hi, q_rescue = thresholds()
             photos, kept = [], []
             sharp = soft = blurry = 0
+            overrides = s.get('overrides', {})
+            removed = s.get('removed_paths', set())
             for it in items:
+                if it['path'] in removed or not Path(it['path']).is_file():
+                    continue
                 tier, star = classify_sharpness(it['region_s'], it['q'],
                                                 blur_lo, sharp_hi, q_rescue, rescue_on)
+                ov = overrides.get(it['path']) or {}
+                if ov.get('tier') in ('sharp', 'soft', 'blurry'):
+                    tier = ov['tier']
                 if tier == 'sharp':
                     sharp += 1
                 elif tier == 'soft':
@@ -987,7 +1058,7 @@ def run_cull(folder, strictness, adaptive, rescue_on, recursive=True):
                                # classification itself. Blurry frames start
                                # selected, but the user may uncheck any of them
                                # before the explicit Move action.
-                               'move_selected': tier == 'blurry'})
+                               'move_selected': (overrides.get(it['path']) or {}).get('move_selected', tier == 'blurry')})
             # Newest-processed first in the live grid (no scrolling to bottom).
             # Only the display order is reversed; `kept` stays in capture order
             # so Dedup/Rank still receive survivors in their natural sequence.
@@ -1020,13 +1091,20 @@ def run_cull(folder, strictness, adaptive, rescue_on, recursive=True):
             eta = (total - done) / rate if rate > 0 else 0
             s['status'] = (f"模糊筛选 {p.name}（{done}/{total}，{done/total*100:.0f}%）· "
                            f"{_tiers(done)} · 已用时 {_fmt(elapsed)} · 预计剩余 {_fmt(eta)}")
-            bgr = imread_bgr(str(p))       # RAW-aware
-            if bgr is None:
-                continue
-            gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+            cached = _cached_cull_metrics(p)
+            if cached is not None:
+                region_s, quality = cached
+                s['cache_hits'] = int(s.get('cache_hits', 0)) + 1
+            else:
+                bgr = imread_bgr(str(p))       # RAW-aware
+                if bgr is None:
+                    continue
+                gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+                region_s = region_sharpness(gray)
+                quality = quick_quality(bgr, gray)
+                _save_cull_metrics(p, region_s, quality)
             items.append({'name': p.name, 'path': str(p),
-                          'region_s': region_sharpness(gray),
-                          'q': quick_quality(bgr, gray)})
+                          'region_s': region_s, 'q': quality})
             # Reclassification is for live UI only; final output is still
             # classified once more below. Throttle it so very large folders do
             # not repeatedly rescan the entire processed list every five files.
@@ -3216,6 +3294,54 @@ def api_exif():
     return jsonify(extract_exif(str(p)))
 
 
+@app.route('/api/activity')
+def api_activity():
+    try:
+        limit = min(200, max(1, int(request.args.get('limit', 60))))
+        with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=10) as db:
+            rows = db.execute(
+                "SELECT ts,action,path,detail FROM activity_log ORDER BY id DESC LIMIT ?",
+                (limit,)
+            ).fetchall()
+        return jsonify({'items': [
+            {'ts': r[0], 'action': r[1], 'path': r[2], 'detail': r[3]} for r in rows
+        ]})
+    except Exception:
+        return jsonify({'items': []})
+
+
+@app.route('/api/reverse-geocode')
+def api_reverse_geocode():
+    try:
+        lat = float(request.args.get('lat')); lon = float(request.args.get('lon'))
+    except Exception:
+        return jsonify({'label': ''}), 400
+    key = f"{lat:.4f},{lon:.4f}"
+    try:
+        with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=10) as db:
+            row = db.execute("SELECT label FROM geocode_cache WHERE key=?", (key,)).fetchone()
+        if row:
+            return jsonify({'label': row[0], 'cached': True})
+    except Exception:
+        pass
+    label = ''
+    try:
+        url = ('https://nominatim.openstreetmap.org/reverse?format=jsonv2&accept-language=zh-CN'
+               f'&zoom=18&addressdetails=1&lat={lat:.7f}&lon={lon:.7f}')
+        req = urllib.request.Request(url, headers={'User-Agent': f'PhotoCurator/{APP_VERSION}'})
+        with urllib.request.urlopen(req, timeout=4.0) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+        label = str(data.get('display_name') or '')
+        if label:
+            with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=10) as db:
+                db.execute("INSERT OR REPLACE INTO geocode_cache(key,label,updated_at) VALUES(?,?,?)",
+                           (key, label, time.time()))
+                db.commit()
+    except Exception:
+        pass
+    return jsonify({'label': label, 'cached': False})
+
+
 @app.route('/api/run/<step>', methods=['POST'])
 def api_run(step):
     data = request.get_json() or {}
@@ -3292,7 +3418,7 @@ def api_progress(step):
     if step == 'cull':
         s = state['cull']
         all_photos = s['photos']
-        limit = 200 if s['running'] else UI_RESULT_CAP
+        limit = UI_RESULT_CAP
         photos = all_photos[:limit]
         return jsonify({'running': s['running'], 'progress': s['progress'], 'status': s['status'],
                         'photos': photos,
@@ -3464,7 +3590,7 @@ def _known_step_paths(step):
 
 @app.route('/api/delete-photo', methods=['POST'])
 def api_delete_photo():
-    """Permanently delete one reviewed source photo after explicit UI confirmation."""
+    """Move one reviewed source photo to the operating-system recycle bin."""
     blocked = _reject_mutation_while_running()
     if blocked:
         return blocked
@@ -3481,12 +3607,14 @@ def api_delete_photo():
     if target is None:
         return jsonify({'error': '照片路径无效或已不在允许的照片目录中'}), 400
     try:
-        target.unlink()
+        send2trash(str(target))
+        _activity('移入回收站', str(target), step)
     except Exception as e:
-        logger.warning(f"delete-photo failed {target}: {e}")
-        return jsonify({'error': f'删除失败：{e}'}), 500
+        logger.warning(f"recycle-photo failed {target}: {e}")
+        return jsonify({'error': f'移入回收站失败：{e}'}), 500
 
     deleted = str(target)
+    state['cull'].setdefault('removed_paths', set()).add(deleted)
     state['excluded'].discard(deleted)
     state['phone_bg'].discard(deleted)
 
@@ -3628,6 +3756,9 @@ def api_toggle_status():
     if not photo:
         return jsonify({'error': '未找到照片'}), 404
     now_kept = tier != 'blurry'
+    s.setdefault('overrides', {}).setdefault(path, {})['tier'] = tier
+    s['overrides'][path]['move_selected'] = (tier == 'blurry')
+    _activity('人工分类', path, tier)
     # Manual review is classification-only. Never move a file merely because
     # its badge was changed; disk changes happen only via an explicit Move action.
     new_path = path
@@ -3686,6 +3817,7 @@ def api_select_blurry():
         for photo in photos:
             if photo.get('tier') == 'blurry':
                 photo['move_selected'] = selected
+                state['cull'].setdefault('overrides', {}).setdefault(photo.get('path'), {})['move_selected'] = selected
         count, total = _blurry_move_counts()
         return jsonify({'ok': True, 'selected': count, 'total': total})
 
@@ -3697,6 +3829,8 @@ def api_select_blurry():
         return jsonify({'error': '只有“模糊”照片可以加入移动列表'}), 400
 
     photo['move_selected'] = bool(data.get('selected', True))
+    state['cull'].setdefault('overrides', {}).setdefault(path, {})['move_selected'] = photo['move_selected']
+    _activity('移动选择', path, '选中' if photo['move_selected'] else '取消')
     count, total = _blurry_move_counts()
     return jsonify({
         'ok': True,
