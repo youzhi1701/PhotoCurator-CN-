@@ -924,12 +924,17 @@ def _move_reviewed_files(paths, kind, root, mode='source', custom_output=''):
 def _thumb_cache_path(image_path):
     p = Path(image_path)
     try:
-        mtime = p.stat().st_mtime
+        st = p.stat()
+        mtime_ns = int(st.st_mtime_ns)
+        size_bytes = int(st.st_size)
     except OSError:
-        mtime = 0
-    # The trailing version tag invalidates old cached thumbnails when the
-    # thumbnail logic changes (v2 = EXIF orientation applied).
-    key = hashlib.md5(f"{image_path}:{mtime}:v2".encode()).hexdigest()
+        mtime_ns = 0
+        size_bytes = 0
+    # Versioned high-resolution file fingerprint. Including mtime_ns + size
+    # prevents a replaced same-name photo from reusing an old thumbnail.
+    key = hashlib.md5(
+        f"{image_path}:{mtime_ns}:{size_bytes}:v3".encode()
+    ).hexdigest()
     return THUMB_DIR / f"{key}.jpg"
 
 
@@ -953,9 +958,9 @@ def make_thumb_file(image_path, size=300):
 
 def thumb_url(image_path):
     # The &v tag busts the BROWSER's HTTP cache when thumbnail logic changes
-    # (v2 = EXIF orientation applied). Without it, the browser keeps serving the
-    # previously-cached (sideways) thumbnail for the same URL.
-    return '/api/thumb?path=' + quote(str(image_path)) + '&v=2'
+    # (v3 = high-resolution source fingerprint + EXIF orientation). Without
+    # a URL version bump, a browser may keep a stale response across upgrades.
+    return '/api/thumb?path=' + quote(str(image_path)) + '&v=3'
 
 
 def load_recents():
