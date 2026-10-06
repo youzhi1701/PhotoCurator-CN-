@@ -2333,9 +2333,18 @@ function applyDedupSelection(){
   fetch('/api/dedup-apply',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})
     .then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;})
     .then(d=>{
-      btn.style.display='none';
-      toast('已按当前选择处理 '+(d.moved||0)+' 张相似照片','good');
-      document.getElementById('progressText').textContent='处理完成 · 已移动 '+(d.moved||0)+' 张未保留照片到 Duplicates 结果目录';
+      const remain=(d.photos||[]).length;
+      renderDedupGroups(d.photos||[]);
+      if(remain===0){
+        btn.style.display='none';
+        document.getElementById('gallery').innerHTML='<div class="empty"><div class="icon">✓</div><div class="title">相似照片处理完成</div><p>未保留照片已按当前设置处理。</p></div>';
+        document.getElementById('resultTools').style.display='none';
+      }else{
+        btn.style.display='block';
+      }
+      const extra=(d.failed||0)?('，'+d.failed+' 张处理失败，可再次尝试'):'';
+      toast('已处理 '+(d.moved||0)+' 张相似照片'+extra,(d.failed||0)?'bad':'good');
+      document.getElementById('progressText').textContent=(remain===0?'处理完成':'部分处理完成')+' · 已移动 '+(d.moved||0)+' 张未保留照片'+extra;
     })
     .catch(err=>toast('处理失败：'+(err.message||'未知错误'),'bad'))
     .finally(()=>{btn.disabled=false;btn.textContent='✓ 确认处理未保留照片';});
@@ -3339,10 +3348,37 @@ def api_dedup_apply():
         )
         moved = int(result.get('moved', 0) or 0)
         failed = int(result.get('failed', 0) or 0)
-        s['applied'] = failed == 0
-        s['status'] = (f"处理完成 · 已移动 {moved} 张未保留照片到重复照片（Duplicates）文件夹"
-                       + (f" · {failed} 张失败" if failed else ''))
-        return jsonify({'ok': failed == 0, 'moved': moved, 'failed': failed,
+
+        # Remove successfully moved (or externally missing) non-kept members
+        # from the review state. Failed files that still exist remain visible,
+        # so the user can retry instead of seeing stale cards pointing at files
+        # that have already moved away.
+        for group in s.get('groups_data', []):
+            selected_set = set(group.get('selected_paths') or [])
+            remaining = []
+            for member in group.get('members', []):
+                p = member.get('path')
+                if p in selected_set or (p and Path(p).is_file()):
+                    remaining.append(member)
+            group['members'] = remaining
+            group['count'] = len(remaining)
+
+        s['groups_data'] = [g for g in s.get('groups_data', []) if g.get('members')]
+        unresolved = []
+        for group in s['groups_data']:
+            selected_set = set(group.get('selected_paths') or [])
+            if any(m.get('path') not in selected_set for m in group.get('members', [])):
+                unresolved.append(group)
+        s['photos'] = unresolved
+        s['applied'] = not unresolved
+        s['status'] = (
+            f"{'处理完成' if not unresolved else '部分处理完成'} · "
+            f"已移动 {moved} 张未保留照片"
+            + (f" · {failed} 张失败，可再次尝试" if failed else '')
+        )
+        return jsonify({'ok': not unresolved, 'moved': moved, 'failed': failed,
+                        'photos': s['photos'],
+                        'duplicate_groups': len(s['photos']),
                         'dest': '按当前“处理文件存放位置”规则'})
     except Exception as e:
         logger.warning(f"dedup apply failed: {e}")
