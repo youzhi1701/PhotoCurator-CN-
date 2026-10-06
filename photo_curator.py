@@ -1858,7 +1858,7 @@ try{
 }catch(_){}
 const collapsedFolders=new Set();
 const expandedFolders=new Set();
-let defaultFoldersCollapsed=false;
+let defaultFoldersCollapsed=true;
 try{
   const saved=JSON.parse(localStorage.getItem('pc-library-settings')||'{}');
   if(typeof saved.recursive==='boolean')recursiveScan=saved.recursive;
@@ -1935,6 +1935,10 @@ document.getElementById('gallery').addEventListener('click',e=>{
     if(next)collapsedFolders.add(key);else collapsedFolders.delete(key);
   }
   const btn=group.querySelector('.fold-btn');if(btn)btn.textContent=next?'展开':'收起';
+  // Re-render so collapsed folders do not keep thousands of hidden thumbnail nodes.
+  if(currentStep==='cull')renderCullStep(photos);
+  else if(currentStep==='dedup')renderDedupGroups(photos);
+  else renderRank(photos);
 });
 
 /* theme */
@@ -2491,7 +2495,7 @@ function renderDedupGroups(groups){
     const folded=isFolderCollapsed(key);
     html+='<section class="folder-group '+(folded?'collapsed':'')+'" data-folder="'+encodeURIComponent(key)+'"><div class="folder-head"><b>📁 '+escHtml(key)+'</b><span>'+rows.length+' 组 · <button class="fold-btn">'+(folded?'展开':'收起')+'</button></span></div>';
     html+='<div class="folder-body" style="padding:10px;display:flex;flex-direction:column;gap:10px">';
-    rows.forEach(group=>{
+    if(!folded)rows.forEach(group=>{
       seq++;
       const members=group.members||[];
       const kept=members.filter(p=>p.selected).length;
@@ -2559,7 +2563,7 @@ function renderFolderPage(slice,cardBuilder,startIndex){
     const fs=folderStatus[key]||'';
     html+='<section class="folder-group '+(folded?'collapsed':'')+'" data-folder="'+encodeURIComponent(key)+'"><div class="folder-head"><b>📁 '+escHtml(key)+'</b><span>'+rows.length+' 张'+(fs?' · '+escHtml(fs):'')+' · <button class="fold-btn">'+(folded?'展开':'收起')+'</button></span></div>';
     html+='<div class="folder-grid folder-body">';
-    rows.forEach(x=>{html+=cardBuilder(x.p,x.idx);});
+    if(!folded)rows.forEach(x=>{html+=cardBuilder(x.p,x.idx);});
     html+='</div></section>';
   });
   html+='</div>';
