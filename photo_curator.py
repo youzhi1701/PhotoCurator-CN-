@@ -1193,18 +1193,15 @@ def run_cull(folder, strictness, adaptive, rescue_on, recursive=True):
     s.update({'running': True, 'cancel': False, 'progress': 0, 'status': '正在扫描照片…',
               'photos': [], 'sharp': 0, 'soft': 0, 'blurry': 0, 'sharp_paths': [],
               'cache_hits': 0, 'folder_status': {}, 'current_folder': '',
-              'overrides': s.get('overrides', {}),
-              'removed_paths': s.get('removed_paths', set()),
+              'overrides': {},
+              'removed_paths': set(),
               # complete=True only when cull runs to the end; a stopped cull must
               # not feed its partial survivor list into Dedup/Rank.
               'complete': False, 'src_folder': str(folder), 'recursive': bool(recursive)})
     try:
         images = list_images(folder, recursive=recursive)
         current_paths = {str(p) for p in images}
-        persisted = _load_review_overrides(images)
-        in_memory = {k:v for k,v in (s.get('overrides') or {}).items() if k in current_paths}
-        persisted.update(in_memory)
-        s['overrides'] = persisted
+        s['overrides'] = _load_review_overrides(images)
         total = len(images) or 1
         items = []   # {name, path, region_s, q}
         cache_buffer = []
@@ -1670,6 +1667,8 @@ def run_rank(folder, ftype='all', pair='both', recursive=True):
 
         for idx, p in enumerate(paths):
             if s.get('cancel'):
+                _save_rank_scores_batch(rank_cache_buffer)
+                rank_cache_buffer.clear()
                 s['status'] = (f"已停止：{idx}/{total} · 已评分 {len(s['scores'])} 张 · "
                                f"已用时 {_fmt(time.time()-t0)}")
                 return
