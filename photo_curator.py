@@ -3397,7 +3397,7 @@ function renderDedupGroups(groups){
         html+='<img src="'+p.thumb+'" loading="lazy" decoding="async">';
         html+='<div class="dedup-choice-meta"><div class="dedup-choice-name">'+escHtml(p.name)+'</div>';
         html+='<div class="source-path">'+escHtml(p.rel_dir||'当前文件夹')+'</div>';
-        html+='<button class="delete-btn" data-step="dedup" data-path="'+escHtml(p.path)+'" style="margin-top:6px" title="移入 Windows 回收站">🗑 删除</button></div></div>';
+        html+='<button class="delete-btn" data-step="dedup" data-path="'+escHtml(p.path)+'" style="margin-top:6px" title="移入软件回收站">🗑 删除</button></div></div>';
       });
       html+='</div></div>';
     });
@@ -3490,7 +3490,7 @@ function rankCard(p,idx){const path=escHtml(p.path);
     <img class="photo-img" src="${p.thumb}" loading="lazy" decoding="async">
     <div class="photo-info"><div class="pi-row"><span class="photo-name">${escHtml(p.name)}</span>
       <button class="remove-btn" data-path="${path}" title="从优选结果中移除（不会删除原文件）">✕ 移除</button>
-      <button class="delete-btn" data-step="rank" data-path="${path}" title="移入 Windows 回收站">🗑 删除</button></div>
+      <button class="delete-btn" data-step="rank" data-path="${path}" title="移入软件回收站">🗑 删除</button></div>
       <div class="source-path">${escHtml(p.rel_dir||'当前文件夹')}</div></div></div>`;}
 function renderRank(items){
   photos=items;const g=document.getElementById('gallery');
@@ -3562,6 +3562,76 @@ function togglePhoneBg(path){
     }).catch(err=>toast('壁纸标记失败：'+(err.message||'未知错误'),'bad'));
 }
 
+/* ---- PhotoCurator software recycle bin / final review ---- */
+function trashCard(p,idx){
+  const path=escHtml(p.path),original=escHtml(p.original_path||'');
+  const when=p.deleted_at?new Date(p.deleted_at*1000).toLocaleString():'';
+  return `<div class="photo-card rejected" data-i="${idx}" data-path="${path}" data-trash-id="${p.id}">
+    <div class="badge bad">待最终确认</div>
+    <img class="photo-img" src="${p.thumb}" loading="lazy" decoding="async">
+    <div class="photo-info">
+      <div class="pi-row"><span class="photo-name">${escHtml(p.name)}</span>
+        <button class="trash-restore-btn" data-id="${p.id}">↩ 恢复</button>
+        <button class="trash-purge-btn" data-id="${p.id}">永久删除</button>
+      </div>
+      <div class="source-path" title="${original}">原位置：${original}</div>
+      <div class="source-path">${when?'移入时间：'+escHtml(when):'软件回收站'}</div>
+    </div>
+  </div>`;
+}
+function renderTrash(items){
+  photos=items||[];
+  const g=document.getElementById('gallery');
+  document.getElementById('sTrash').textContent=photos.length;
+  document.getElementById('sShowing').textContent=photos.length;
+  document.getElementById('resultTools').style.display='none';
+  if(!photos.length){
+    g.innerHTML='<div class="empty"><div class="icon">🗑️</div><div class="title">软件回收站为空</div><p>没有等待最后复核的照片。</p></div>';
+    setupFilterBar();return;
+  }
+  g.innerHTML=photos.map((p,i)=>trashCard(p,i)).join('');
+  setupFilterBar();
+}
+function loadTrash(){
+  fetch('/api/trash').then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;})
+    .then(d=>renderTrash(d.photos||[]))
+    .catch(err=>toast('回收站读取失败：'+(err.message||'未知错误'),'bad'));
+}
+function trashRestoreOne(id,fromLightbox=false){
+  fetch('/api/trash-restore',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})})
+    .then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;})
+    .then(d=>{
+      renderTrash(d.photos||[]);
+      toast('已恢复到原照片目录'+(d.restored_path?'：'+d.restored_path:''),'good');
+      if(fromLightbox){lbList=photos.slice();if(!lbList.length)closeLb();else{if(lbIndex>=lbList.length)lbIndex=lbList.length-1;showLb();}}
+    }).catch(err=>toast('恢复失败：'+(err.message||'未知错误'),'bad'));
+}
+function trashPurgeOne(id,fromLightbox=false){
+  if(!confirm('确认永久删除这张照片？\n\n永久删除后将无法从 PhotoCurator 恢复。'))return;
+  fetch('/api/trash-purge',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})})
+    .then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;})
+    .then(d=>{
+      renderTrash(d.photos||[]);toast('照片已永久删除','good');
+      if(fromLightbox){lbList=photos.slice();if(!lbList.length)closeLb();else{if(lbIndex>=lbList.length)lbIndex=lbList.length-1;showLb();}}
+    }).catch(err=>toast('永久删除失败：'+(err.message||'未知错误'),'bad'));
+}
+function trashRestoreAll(){
+  if(!photos.length)return;
+  if(!confirm('确认恢复软件回收站中的全部 '+photos.length+' 张照片？'))return;
+  fetch('/api/trash-restore-all',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})
+    .then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;})
+    .then(d=>{renderTrash(d.photos||[]);toast('已恢复 '+(d.restored||0)+' 张照片'+(d.failed?'，'+d.failed+' 张失败':''),d.failed?'bad':'good');})
+    .catch(err=>toast('批量恢复失败：'+(err.message||'未知错误'),'bad'));
+}
+function trashPurgeAll(){
+  if(!photos.length)return;
+  if(!confirm('确认永久删除软件回收站中的全部 '+photos.length+' 张照片？\n\n这是最后一步，删除后不可恢复。'))return;
+  fetch('/api/trash-purge',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({all:true})})
+    .then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;})
+    .then(d=>{renderTrash(d.photos||[]);toast('已永久删除 '+(d.purged||0)+' 张照片'+(d.failed?'，'+d.failed+' 张失败':''),d.failed?'bad':'good');})
+    .catch(err=>toast('清空回收站失败：'+(err.message||'未知错误'),'bad'));
+}
+
 /* ---- cull (3-tier, reconciling, filterable) ---- */
 let cullView=[], rankView=[], lastCullSig='', lastCullMoveSig='';
 const TIER_NAME={sharp:'清晰',soft:'轻微软',blurry:'模糊'};
@@ -3576,7 +3646,7 @@ function cullCardHtml(p,idx){const path=escHtml(p.path);
     ${moveSel}
     <button class="badge ${p.badgeType} badge-tier" data-path="${path}" data-tier="${p.tier}" title="点击切换：清晰 → 轻微软 → 模糊">⇄ ${p.badge}</button>
     <img class="photo-img" src="${p.thumb}" loading="lazy" decoding="async">
-    <div class="photo-info"><div class="pi-row"><span class="photo-name">${escHtml(p.name)}</span><span class="ftype${p.raw?'':(p.heic?' heic':' jpg')}">${p.fmt||(p.raw?'RAW':p.heic?'HEIC':'JPG')}</span><button class="delete-btn" data-step="cull" data-path="${path}" title="移入 Windows 回收站">🗑 删除</button></div><div class="source-path">${escHtml(p.rel_dir||'当前文件夹')}</div></div></div>`;}
+    <div class="photo-info"><div class="pi-row"><span class="photo-name">${escHtml(p.name)}</span><span class="ftype${p.raw?'':(p.heic?' heic':' jpg')}">${p.fmt||(p.raw?'RAW':p.heic?'HEIC':'JPG')}</span><button class="delete-btn" data-step="cull" data-path="${path}" title="移入软件回收站">🗑 删除</button></div><div class="source-path">${escHtml(p.rel_dir||'当前文件夹')}</div></div></div>`;}
 
 function syncCullCardNode(node,p,idx){
   const moveOn=p.move_selected!==false;
@@ -3736,11 +3806,11 @@ function cullSetTier(path,tier){
 function deletePhoto(step,path,fromLightbox=false){
   const p=(photos||[]).find(x=>x.path===path)||((lbList||[]).find(x=>x.path===path));
   const name=p&&p.name?p.name:path.split(/[\\/]/).pop();
-  if(!confirm('确认将这张照片移入 Windows 回收站？\n\n'+name+'\n\n之后仍可从系统回收站恢复。'))return;
+  if(!confirm('确认将这张照片移入软件回收站？\n\n'+name+'\n\n之后可在“回收站复核”中再次查看、恢复或永久删除。'))return;
   fetch('/api/delete-photo',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({step,path})})
     .then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;})
     .then(d=>{
-      toast('已移入回收站：'+name,'good');
+      toast('已移入软件回收站：'+name,'good');
       if(step==='cull'){
         cullChunkToken++;cullLiveStore.clear();
         const snap={photos:d.photos||[],running:false,result_total:Number(d.result_total||0)};
@@ -3767,7 +3837,7 @@ function deletePhoto(step,path,fromLightbox=false){
         if(lbIndex>=lbList.length)lbIndex=lbList.length-1;
         showLb();
       }
-    }).catch(err=>toast('移入回收站失败：'+(err.message||'未知错误'),'bad'));
+    }).catch(err=>toast('移入软件回收站失败：'+(err.message||'未知错误'),'bad'));
 }
 function lbDeleteCurrent(){
   const p=lbList[lbIndex];if(p)deletePhoto(currentStep,p.path,true);
@@ -3792,6 +3862,8 @@ function toggleStatus(path,btn,cb){
 
 /* ---- gallery clicks ---- */
 document.getElementById('gallery').addEventListener('click',e=>{
+  const tr=e.target.closest('.trash-restore-btn');if(tr){e.stopPropagation();trashRestoreOne(Number(tr.dataset.id));return;}
+  const tp=e.target.closest('.trash-purge-btn');if(tp){e.stopPropagation();trashPurgeOne(Number(tp.dataset.id));return;}
   const db=e.target.closest('.delete-btn');if(db){e.stopPropagation();deletePhoto(db.dataset.step||currentStep,db.dataset.path);return;}
   const dc=e.target.closest('.dedup-choice');if(dc&&currentStep==='dedup'){e.stopPropagation();selectDedupPhoto(dc.dataset.group,dc.dataset.path);return;}
   const rm=e.target.closest('.remove-btn');if(rm){e.stopPropagation();removePhoto(rm.dataset.path);return;}
@@ -3832,8 +3904,11 @@ function showLb(){
     : (p.score!=null?'   ·   '+p.score:'');
   document.getElementById('lbCount').textContent=(lbIndex+1)+' / '+lbList.length+extra;
   const rm=document.getElementById('lbRemove'),rs=document.getElementById('lbRestore'),tg=document.getElementById('lbToggle'),ms=document.getElementById('lbMoveSelect'),del=document.getElementById('lbDelete');
+  const tr=document.getElementById('lbTrashRestore'),tp=document.getElementById('lbTrashPurge');
   rm.style.display=currentStep==='rank'?'inline-block':'none';
   del.style.display=['cull','dedup','rank'].includes(currentStep)?'inline-block':'none';
+  tr.style.display=currentStep==='trash'?'inline-block':'none';
+  tp.style.display=currentStep==='trash'?'inline-block':'none';
   rs.style.display=(currentStep==='rank'&&removedCount>0)?'inline-block':'none';
   tg.style.display=currentStep==='cull'?'inline-block':'none';
   ms.style.display=(currentStep==='cull'&&p.tier==='blurry')?'inline-block':'none';
@@ -3855,9 +3930,9 @@ function showLb(){
     html+=`<div style="font-size:10px;opacity:.5;margin-top:14px">将鼠标停留在任意评分项上，可查看该指标的含义。</div>`;
     side.style.display='block';side.innerHTML=html;
   }else{
-    const label=currentStep==='cull'?(p.badge||TIER_NAME[p.tier]||'清晰度结果'):'照片';
+    const label=currentStep==='cull'?(p.badge||TIER_NAME[p.tier]||'清晰度结果'):(currentStep==='trash'?'待最终确认':'照片');
     side.style.display='block';
-    side.innerHTML=`<h3>${currentStep==='cull'?'清晰度':'照片'}</h3><div style="font-size:13px;opacity:.9">${escHtml(p.name)}</div><div style="font-size:18px;font-weight:700;margin-top:8px">${escHtml(label)}</div>${currentStep==='rank'&&p.score!=null?`<div style="font-size:11px;opacity:.58;margin-top:4px">综合评分 ${p.score}</div>`:''}`;
+    side.innerHTML=`<h3>${currentStep==='cull'?'清晰度':currentStep==='trash'?'软件回收站':'照片'}</h3><div style="font-size:13px;opacity:.9">${escHtml(p.name)}</div><div style="font-size:18px;font-weight:700;margin-top:8px">${escHtml(label)}</div>${currentStep==='trash'?`<div style="font-size:11px;opacity:.7;margin-top:8px;line-height:1.5">原位置：${escHtml(p.original_path||'')}</div>`:''}${currentStep==='rank'&&p.score!=null?`<div style="font-size:11px;opacity:.58;margin-top:4px">综合评分 ${p.score}</div>`:''}`;
   }
   loadExif(p.path,side);
 }
@@ -3959,6 +4034,8 @@ function lbRemoveCurrent(){const p=lbList[lbIndex];if(!p)return;
     if(!lbList.length){closeLb();return;}if(lbIndex>=lbList.length)lbIndex=lbList.length-1;showLb();});}
 document.getElementById('lbRemove').onclick=lbRemoveCurrent;
 document.getElementById('lbDelete').onclick=lbDeleteCurrent;
+document.getElementById('lbTrashRestore').onclick=()=>{const p=lbList[lbIndex];if(p)trashRestoreOne(Number(p.id),true);};
+document.getElementById('lbTrashPurge').onclick=()=>{const p=lbList[lbIndex];if(p)trashPurgeOne(Number(p.id),true);};
 document.getElementById('lbRestore').onclick=()=>restoreAll(true);
 document.getElementById('lbToggle').onclick=()=>{const p=lbList[lbIndex];if(!p)return;
   const next=NEXT_TIER[p.tier||'sharp'];
