@@ -227,7 +227,7 @@ def main():
         text_select=True,
         background_color="#eef7ff",
         frameless=True,
-        easy_drag=True,
+        easy_drag=False,
     )
 
     def on_closing():
