@@ -2,16 +2,16 @@
 
 基于开源项目 **Photo Curator v7.0** 二次开发的 Windows 中文桌面照片筛选工具。
 
-当前中文桌面版：**v1.4.0**
+当前中文桌面版：**v1.4.1**
 
 ## 正式版下载
 
-当前安装包：**PhotoCurator-Setup-v1.4.0**
+当前安装包：**PhotoCurator-Setup-v1.4.1**
 
 下载位置：
 https://github.com/youzhi1701/PhotoCurator-CN-/actions/workflows/build-release.yml
 
-进入页面后打开最新一次成功的 **Build Windows Release**，在底部 **Artifacts** 下载 **PhotoCurator-Setup-v1.4.0**。
+进入页面后打开最新一次成功的 **Build Windows Release**，在底部 **Artifacts** 下载 **PhotoCurator-Setup-v1.4.1**。
 
 
 ## 主要能力
@@ -98,7 +98,7 @@ bash 在线预览.sh
 
 正式版对普通用户只保留三件事：
 
-1. **安装**：运行 `PhotoCurator-Setup-v1.4.0.exe`，安装目录可自由选择
+1. **安装**：运行 `PhotoCurator-Setup-v1.4.1.exe`，安装目录可自由选择
 2. **打开**：安装后从桌面或开始菜单打开 `PhotoCurator`
 3. **卸载**：从 Windows“设置 → 应用”卸载 PhotoCurator
 
@@ -145,7 +145,7 @@ PhotoCurator 使用固定应用标识进行**原位覆盖升级**：
 
 默认扫描范围为 **当前文件夹 + 所有子文件夹**。
 
-v1.4.0 开始建立本地照片索引：
+v1.4.1 开始建立本地照片索引：
 
 - 第一次扫描计算清晰度基础指标并写入本地索引
 - 再次扫描同一照片时先比较文件大小与修改时间
@@ -155,6 +155,7 @@ v1.4.0 开始建立本地照片索引：
 - 扫描结果按来源文件夹累计展示，完成一个文件夹即可先操作一个
 - 运行记录与关键文件操作会写入本地操作日志
 - 分析中可切换到已经完成的结果视图继续复核
+- 清晰度人工复核和相似组保留选择会动态影响后续精选结果，避免三个阶段之间状态脱节
 
 传统“第几页”分页已取消，浏览改为文件夹分组和缩略图懒加载。
 
