@@ -290,6 +290,87 @@ def main():
         assert_true(photo_curator._safe_image_path(str(outside)) is None,
                     "安全路径校验错误地允许了所选目录外文件")
 
+        # PhotoCurator uses its own recycle bin, not the Windows recycle bin.
+        # Deleting is reversible until the user explicitly purges it during the
+        # final review, and the recycle-bin directory must never re-enter scans.
+        photo_curator.state["folder"] = str(root)
+        photo_curator.state["scan"].update({
+            "output_mode": "source",
+            "custom_output": "",
+        })
+        trash_src = root / "软件回收站复核测试.jpg"
+        Image.new("RGB", (52, 38), "white").save(trash_src)
+        photo_curator.state["cull"].update({
+            "running": False,
+            "complete": True,
+            "src_folder": str(root),
+            "recursive": True,
+            "photos": [{"path": str(trash_src), "tier": "sharp", "move_selected": False}],
+            "sharp_paths": [str(trash_src)],
+            "sharp": 1, "soft": 0, "blurry": 0,
+        })
+        deleted_to_trash = client.post(
+            "/api/delete-photo",
+            json={"step": "cull", "path": str(trash_src)},
+            headers={"Host": f"127.0.0.1:{photo_curator.PORT}"},
+        )
+        assert_true(deleted_to_trash.status_code == 200,
+                    f"移入软件回收站失败：HTTP {deleted_to_trash.status_code}")
+        trash_payload = deleted_to_trash.get_json()
+        trash_id = trash_payload.get("trash_id")
+        assert_true(trash_id and not trash_src.exists(),
+                    f"源照片没有进入软件回收站：{trash_payload}")
+        trash_rows = photo_curator._trash_rows(root)
+        trash_row = next((x for x in trash_rows if x["id"] == trash_id), None)
+        assert_true(trash_row is not None and Path(trash_row["path"]).is_file(),
+                    f"软件回收站记录或文件缺失：{trash_rows}")
+        assert_true(photo_curator.SOFTWARE_TRASH_DIR in trash_row["path"],
+                    f"软件回收站目录错误：{trash_row}")
+        assert_true(Path(trash_row["path"]) not in photo_curator.list_images(root, recursive=True),
+                    "软件回收站中的照片不应重新进入递归扫描")
+
+        trash_list = client.get(
+            "/api/trash",
+            headers={"Host": f"127.0.0.1:{photo_curator.PORT}"},
+        )
+        assert_true(trash_list.status_code == 200
+                    and any(x["id"] == trash_id for x in trash_list.get_json().get("photos", [])),
+                    "软件回收站复核接口没有返回已删除照片")
+
+        restored = client.post(
+            "/api/trash-restore",
+            json={"id": trash_id},
+            headers={"Host": f"127.0.0.1:{photo_curator.PORT}"},
+        )
+        assert_true(restored.status_code == 200 and trash_src.exists(),
+                    f"软件回收站恢复失败：{restored.get_json()}")
+        assert_true(all(x["id"] != trash_id for x in photo_curator._trash_rows(root)),
+                    "恢复后软件回收站记录没有清除")
+
+        purge_src = root / "软件回收站永久删除测试.jpg"
+        Image.new("RGB", (53, 39), "white").save(purge_src)
+        photo_curator.state["cull"].update({
+            "photos": [{"path": str(purge_src), "tier": "sharp", "move_selected": False}],
+            "sharp_paths": [str(purge_src)],
+            "sharp": 1, "soft": 0, "blurry": 0,
+        })
+        deleted_again = client.post(
+            "/api/delete-photo",
+            json={"step": "cull", "path": str(purge_src)},
+            headers={"Host": f"127.0.0.1:{photo_curator.PORT}"},
+        )
+        purge_id = deleted_again.get_json().get("trash_id")
+        purge_row = next(x for x in photo_curator._trash_rows(root) if x["id"] == purge_id)
+        purged = client.post(
+            "/api/trash-purge",
+            json={"id": purge_id},
+            headers={"Host": f"127.0.0.1:{photo_curator.PORT}"},
+        )
+        assert_true(purged.status_code == 200
+                    and not Path(purge_row["path"]).exists()
+                    and not purge_src.exists(),
+                    f"软件回收站永久删除失败：{purged.get_json()}")
+
         # Incremental index: unchanged files must reuse cached analysis, while
         # a changed file version must invalidate the old cache entry.
         cache_img = root / "增量缓存测试.jpg"
