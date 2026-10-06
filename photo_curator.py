@@ -86,6 +86,8 @@ app = Flask(__name__)
 
 INDEX_DB = DATA_ROOT / 'config' / 'library_index.sqlite3'
 _DB_LOCK = threading.Lock()
+_GEOCODE_LOCK = threading.Lock()
+_GEOCODE_LAST_AT = 0.0
 CULL_METRICS_VERSION = 1
 
 def _db_init():
@@ -383,23 +385,28 @@ except Exception:
     logger.warning("library index unavailable", exc_info=True)
 
 def _prune_index_db():
-    """Bound index growth without forcing unchanged photos to be rescanned."""
+    """Keep indexes bounded without doing multi-million-row DELETE work every launch."""
     try:
         geo_cutoff = time.time() - 180 * 86400
         with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=30) as db:
             # Analysis/review caches intentionally have no time-based expiry:
             # an unchanged archive should remain incremental even a year later.
             db.execute("DELETE FROM geocode_cache WHERE updated_at < ?", (geo_cutoff,))
-            # Very high emergency caps prevent an accidentally unbounded DB while
-            # still accommodating multi-terabyte photo archives.
-            db.execute("""DELETE FROM cull_cache WHERE path NOT IN
-                          (SELECT path FROM cull_cache ORDER BY updated_at DESC LIMIT 2000000)""")
-            db.execute("""DELETE FROM rank_cache WHERE path NOT IN
-                          (SELECT path FROM rank_cache ORDER BY updated_at DESC LIMIT 2000000)""")
-            db.execute("""DELETE FROM geocode_cache WHERE key NOT IN
-                          (SELECT key FROM geocode_cache ORDER BY updated_at DESC LIMIT 50000)""")
-            db.execute("""DELETE FROM review_override WHERE path NOT IN
-                          (SELECT path FROM review_override ORDER BY updated_at DESC LIMIT 2000000)""")
+            caps = (
+                ('cull_cache', 'path', 2_000_000),
+                ('rank_cache', 'path', 2_000_000),
+                ('review_override', 'path', 2_000_000),
+                ('geocode_cache', 'key', 50_000),
+            )
+            for table, key, cap in caps:
+                count = int(db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
+                if count > cap:
+                    db.execute(
+                        f"""DELETE FROM {table} WHERE {key} NOT IN
+                            (SELECT {key} FROM {table}
+                             ORDER BY updated_at DESC LIMIT ?)""",
+                        (cap,)
+                    )
             db.commit()
     except Exception:
         logger.debug("index prune skipped", exc_info=True)
@@ -4170,6 +4177,10 @@ def api_activity():
 def api_reverse_geocode():
     try:
         lat = float(request.args.get('lat')); lon = float(request.args.get('lon'))
+        if not np.isfinite(lat) or not np.isfinite(lon):
+            raise ValueError("non-finite coordinates")
+        if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
+            raise ValueError("coordinates out of range")
     except Exception:
         return jsonify({'label': ''}), 400
     key = f"{lat:.4f},{lon:.4f}"
@@ -4182,11 +4193,21 @@ def api_reverse_geocode():
         pass
     label = ''
     try:
-        url = ('https://nominatim.openstreetmap.org/reverse?format=jsonv2&accept-language=zh-CN'
-               f'&zoom=18&addressdetails=1&lat={lat:.7f}&lon={lon:.7f}')
-        req = urllib.request.Request(url, headers={'User-Agent': f'PhotoCurator/{APP_VERSION}'})
-        with urllib.request.urlopen(req, timeout=4.0) as resp:
-            data = json.loads(resp.read().decode('utf-8'))
+        # Serialize uncached reverse-geocode requests and space them out. Rapid
+        # lightbox browsing can otherwise create multiple concurrent requests.
+        global _GEOCODE_LAST_AT
+        with _GEOCODE_LOCK:
+            wait = 1.05 - (time.monotonic() - _GEOCODE_LAST_AT)
+            if wait > 0:
+                time.sleep(wait)
+            url = ('https://nominatim.openstreetmap.org/reverse?format=jsonv2&accept-language=zh-CN'
+                   f'&zoom=18&addressdetails=1&lat={lat:.7f}&lon={lon:.7f}')
+            req = urllib.request.Request(url, headers={'User-Agent': f'PhotoCurator/{APP_VERSION}'})
+            try:
+                with urllib.request.urlopen(req, timeout=4.0) as resp:
+                    data = json.loads(resp.read().decode('utf-8'))
+            finally:
+                _GEOCODE_LAST_AT = time.monotonic()
         label = str(data.get('display_name') or '')
         if label:
             with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=10) as db:
