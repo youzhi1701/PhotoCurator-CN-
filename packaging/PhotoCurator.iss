@@ -36,6 +36,10 @@ RestartApplications=no
 [Tasks]
 Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "快捷方式"; Flags: unchecked
 
+[InstallDelete]
+; 覆盖升级前清理旧程序文件，避免 PyInstaller 旧模块残留；data 目录不受影响。
+Type: filesandordirs; Name: "{app}\app"
+
 [Files]
 Source: "..\dist\PhotoCurator\*"; DestDir: "{app}\app"; Flags: ignoreversion recursesubdirs createallsubdirs restartreplace
 Source: "MicrosoftEdgeWebview2Setup.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall
