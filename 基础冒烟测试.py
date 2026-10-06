@@ -289,6 +289,84 @@ def main():
         assert_true(photo_curator._safe_image_path(str(outside)) is None,
                     "安全路径校验错误地允许了所选目录外文件")
 
+        # Incremental index: unchanged files must reuse cached analysis, while
+        # a changed file version must invalidate the old cache entry.
+        cache_img = root / "增量缓存测试.jpg"
+        Image.new("RGB", (44, 33), "white").save(cache_img)
+        photo_curator._save_cull_metrics(cache_img, 123.0, 66.0)
+        cached = photo_curator._load_cull_metrics_map([cache_img])
+        assert_true(str(cache_img) in cached and cached[str(cache_img)] == (123.0, 66.0),
+                    f"增量清晰度缓存读取失败：{cached}")
+        Image.new("RGB", (45, 33), "white").save(cache_img)
+        invalidated = photo_curator._load_cull_metrics_map([cache_img])
+        assert_true(str(cache_img) not in invalidated,
+                    "照片内容变化后不应继续复用旧清晰度缓存")
+
+        # Cross-stage consistency: when the currently selected duplicate keeper
+        # is later marked blurry, promote the best still-kept Cull survivor.
+        # Applying duplicate cleanup must not move the blurry photo as a duplicate.
+        sync_dir = root / "跨阶段联动测试"
+        sync_dir.mkdir(parents=True, exist_ok=True)
+        blurry_a = sync_dir / "A_后改模糊.jpg"
+        keep_b = sync_dir / "B_应自动保留.jpg"
+        drop_c = sync_dir / "C_重复待处理.jpg"
+        for p in (blurry_a, keep_b, drop_c):
+            Image.new("RGB", (55, 41), "white").save(p)
+
+        photo_curator.state["folder"] = str(root)
+        photo_curator.state["cull"].update({
+            "complete": True,
+            "running": False,
+            "src_folder": str(root),
+            "recursive": True,
+            "sharp_paths": [str(keep_b), str(drop_c)],
+            "photos": [
+                {"path": str(blurry_a), "tier": "blurry", "move_selected": True},
+                {"path": str(keep_b), "tier": "sharp", "move_selected": False},
+                {"path": str(drop_c), "tier": "sharp", "move_selected": False},
+            ],
+            "sharp": 2, "soft": 0, "blurry": 1,
+        })
+        photo_curator.state["dedup"].update({
+            "complete": True,
+            "running": False,
+            "applied": False,
+            "src_folder": str(root),
+            "recursive": True,
+            "groups_data": [{
+                "group_id": 11,
+                "count": 3,
+                "ready": True,
+                "selected_paths": [str(blurry_a)],
+                "folder_rel": "跨阶段联动测试",
+                "members": [
+                    {"path": str(blurry_a), "selected": True},
+                    {"path": str(keep_b), "selected": False},
+                    {"path": str(drop_c), "selected": False},
+                ],
+            }],
+            "singleton_paths": [],
+            "seen_paths": {str(blurry_a), str(keep_b), str(drop_c)},
+        })
+        photo_curator.state["dedup"]["photos"] = photo_curator.state["dedup"]["groups_data"]
+        photo_curator._sync_dedup_with_cull()
+        selected_now = photo_curator.state["dedup"]["groups_data"][0]["selected_paths"]
+        assert_true(selected_now == [str(keep_b)],
+                    f"模糊化原保留项后没有自动晋升可用照片：{selected_now}")
+
+        applied_sync = client.post(
+            "/api/dedup-apply",
+            json={},
+            headers={"Host": f"127.0.0.1:{photo_curator.PORT}"},
+        )
+        assert_true(applied_sync.status_code == 200,
+                    f"跨阶段相似处理失败：HTTP {applied_sync.status_code}")
+        payload = applied_sync.get_json()
+        assert_true(payload.get("moved") == 1 and payload.get("ok") is True,
+                    f"跨阶段相似处理结果错误：{payload}")
+        assert_true(blurry_a.exists() and keep_b.exists() and not drop_c.exists(),
+                    "相似处理错误移动了模糊照片或当前保留项")
+
         # A completed Cull with zero survivors is a valid result. Dedup/Rank
         # must never fall back to scanning the original folder again, otherwise
         # photos the user/algorithm rejected as blurry would re-enter later stages.
