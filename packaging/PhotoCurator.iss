@@ -1,7 +1,10 @@
 #define MyAppName "PhotoCurator"
-#define MyAppVersion "1.3.0"
+#define MyAppVersion "1.4.0"
 #define MyAppPublisher "PhotoCurator-CN"
 #define MyAppExeName "PhotoCurator.exe"
+
+[Languages]
+Name: "chinesesimp"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
 
 [Setup]
 AppId={{8B142F6F-E58F-4F7D-97B9-3DA5E82602A4}
@@ -21,6 +24,11 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayName={#MyAppName}
 SetupLogging=yes
+UsePreviousAppDir=yes
+Uninstallable=yes
+ShowLanguageDialog=no
+AppMutex=Local\\PhotoCurator_CN_youzh1701
+VersionInfoVersion=1.4.0.0
 CloseApplications=yes
 RestartApplications=no
 
@@ -28,7 +36,7 @@ RestartApplications=no
 Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "快捷方式"; Flags: unchecked
 
 [Files]
-Source: "..\dist\PhotoCurator\*"; DestDir: "{app}\app"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\dist\PhotoCurator\*"; DestDir: "{app}\app"; Flags: ignoreversion recursesubdirs createallsubdirs restartreplace
 Source: "MicrosoftEdgeWebview2Setup.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall
 
 [Dirs]
