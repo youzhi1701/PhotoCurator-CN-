@@ -9,6 +9,8 @@
     "data/config/library_index.sqlite3",
     "data/config/dedup_features",
     "data/config/recents.json",
+    "data/cache",
+    "data/logs",
     "user_photo_folders",
     "PhotoCurator_Result（照片筛选结果）",
     "custom_output_directories"
@@ -16,5 +18,5 @@
   "replace": [
     "app"
   ],
-  "notes": "v1.4.2 可直接覆盖 v1.4.1 / v1.4.0 / v1.3.0；保留配置、本地分析索引、长期相似特征缓存和用户照片。"
+  "notes": "v1.4.2 可直接覆盖 v1.4.1 / v1.4.0 / v1.3.0；仅替换 app，保留配置、本地分析索引、长期相似特征缓存、运行日志、缓存数据和用户照片。"
 }
