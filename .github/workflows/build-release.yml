@@ -5,6 +5,10 @@ on:
     branches: ["main"]
   workflow_dispatch:
 
+concurrency:
+  group: photocurator-windows-release
+  cancel-in-progress: true
+
 jobs:
   build-windows-installer:
     runs-on: windows-latest
