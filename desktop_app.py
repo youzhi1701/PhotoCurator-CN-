@@ -13,14 +13,14 @@ import urllib.request
 from pathlib import Path
 
 APP_TITLE = "照片筛选 · PhotoCurator 中文版"
-APP_VERSION = "1.2.5-cn.1"
+APP_VERSION = "1.2.6-cn.1"
 HOST = "127.0.0.1"
 DEFAULT_PORT = 5014
 
 
 def _write_early_error_log():
     try:
-        log = Path(__file__).with_name("启动错误.log")
+        log = Path(__file__).with_name("startup-error.log")
         log.write_text(
             "\n".join([
                 f"照片筛选 {APP_VERSION}",
@@ -232,7 +232,7 @@ def main():
 
 
 def write_error_log(exc):
-    log = Path(__file__).with_name("启动错误.log")
+    log = Path(__file__).with_name("startup-error.log")
     details = [
         f"照片筛选 {APP_VERSION}",
         f"Python: {sys.version}",
