@@ -1729,10 +1729,23 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   .workspace-nav .step{color:var(--text);background:transparent;border:0}
   .workspace-nav .step:hover{background:rgba(255,255,255,.7)}
   .workspace-nav .step.active{background:rgba(255,255,255,.9);color:var(--accent);box-shadow:0 4px 14px rgba(65,90,160,.10)}
+  .dedup-quick{display:flex;gap:6px;flex-wrap:wrap;margin:-2px 0 10px}
+  .dedup-quick button{border:1px solid var(--border);border-radius:8px;background:rgba(255,255,255,.72);color:var(--text);padding:5px 9px;font-size:10px;font-weight:700;cursor:pointer}
+  .dedup-quick button:hover{border-color:var(--accent);color:var(--accent)}
+  .task-center{position:fixed;right:18px;top:72px;width:300px;z-index:180;display:none;padding:12px;border-radius:16px;
+    background:rgba(255,255,255,.72);border:1px solid rgba(255,255,255,.86);box-shadow:0 18px 48px rgba(45,62,120,.18);
+    backdrop-filter:blur(26px) saturate(150%);-webkit-backdrop-filter:blur(26px) saturate(150%)}
+  .task-center.open{display:block}
+  .task-center-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+  .task-center-head button{border:0;background:transparent;font-size:20px;color:var(--muted);cursor:pointer}
+  .task-row{display:flex;justify-content:space-between;gap:12px;padding:8px 4px;border-top:1px solid rgba(120,135,170,.12);font-size:12px}
+  .task-row b{color:var(--accent);font-weight:700}
+  .task-tip{font-size:10px;color:var(--muted);line-height:1.5;padding-top:7px}
 </style></head><body>
 <div class="top">
   <div class="brand">🖼️ PhotoCurator <small>照片整理工作区 · v{{ app_version }}</small></div>
   <div class="top-right">
+    <button class="theme" id="taskToggle" title="任务中心" aria-label="任务中心">◉</button>
     <button class="theme" id="themeToggle" title="切换浅色 / 深色主题" aria-label="切换浅色 / 深色主题">🌙</button>
     <div class="window-controls">
       <button id="winMin" title="最小化">—</button>
@@ -1825,6 +1838,13 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   <div class="lb-shortcuts" style="position:absolute;left:16px;bottom:10px;color:rgba(255,255,255,.55);font-size:10px;z-index:21;pointer-events:none">大图快捷键：← → 切换 · Esc 关闭 · B 壁纸 · X 移除</div>
 </div>
 
+<aside class="task-center" id="taskCenter">
+  <div class="task-center-head"><b>任务中心</b><button id="taskClose">×</button></div>
+  <div class="task-row"><span>清晰度分析</span><b id="taskCull">待开始</b></div>
+  <div class="task-row"><span>相似分析</span><b id="taskDedup">待开始</b></div>
+  <div class="task-row"><span>精选评分</span><b id="taskRank">待开始</b></div>
+  <div class="task-tip">分析过程中可以切换结果视图，已经完成的结果可继续复核。</div>
+</aside>
 <div class="toast-wrap" id="toastWrap"></div>
 <div id="cn-build-badge" style="position:fixed;right:10px;bottom:8px;z-index:50;font-size:10px;color:var(--muted);opacity:.55;pointer-events:none">照片筛选 · 中文桌面版 v{{ app_version }}</div>
 
@@ -1980,6 +2000,24 @@ document.getElementById('winMin').onclick=()=>nativeWindow('minimize');
 document.getElementById('winMax').onclick=()=>nativeWindow('toggle_maximize');
 document.getElementById('winClose').onclick=()=>nativeWindow('close');
 setTimeout(()=>{if(!(window.pywebview&&window.pywebview.api))document.querySelector('.window-controls').style.display='none';},900);
+
+const taskCenter=document.getElementById('taskCenter');
+document.getElementById('taskToggle').onclick=()=>taskCenter.classList.toggle('open');
+document.getElementById('taskClose').onclick=()=>taskCenter.classList.remove('open');
+function taskLabel(d){if(!d)return '待开始';if(d.running)return Math.max(0,Math.min(100,Number(d.progress)||0))+'% · 处理中';if((d.progress||0)>=100)return '已完成';return (d.status&&d.status!=='待开始')?'已暂停':'待开始';}
+async function refreshTaskCenter(){
+  try{
+    const rows=await Promise.all(['cull','dedup','rank'].map(k=>fetch('/api/progress/'+k).then(r=>r.json()).catch(()=>null)));
+    document.getElementById('taskCull').textContent=taskLabel(rows[0]);
+    document.getElementById('taskDedup').textContent=taskLabel(rows[1]);
+    document.getElementById('taskRank').textContent=taskLabel(rows[2]);
+    const any=rows.some(x=>x&&x.running);
+    document.getElementById('taskToggle').textContent=any?'●':'◉';
+    if(any)document.getElementById('taskToggle').title='分析任务正在运行';
+  }catch(_){}
+}
+setInterval(refreshTaskCenter,1200);
+refreshTaskCenter();
 
 /* settings panels per step */
 function settingsHTML(step){
@@ -2508,6 +2546,7 @@ function renderDedupGroups(groups){
       const kept=members.filter(p=>p.selected).length;
       html+='<div class="dedup-group" data-group="'+group.group_id+'">';
       html+='<div class="dedup-group-head"><b>相似组 '+seq+' · '+members.length+' 张</b><span>已选择 '+kept+' / '+members.length+' 张保留</span></div>';
+      html+='<div class="dedup-quick"><button data-dmode="best1" data-group="'+group.group_id+'">保留最佳 1 张</button><button data-dmode="best2" data-group="'+group.group_id+'">保留最佳 2 张</button><button data-dmode="all" data-group="'+group.group_id+'">全部保留</button></div>';
       html+='<div class="dedup-choices">';
       members.forEach(p=>{
         const sel=!!p.selected;
@@ -2526,6 +2565,15 @@ function renderDedupGroups(groups){
   g.innerHTML=html;
   updateResultTools();
 }
+document.getElementById('gallery').addEventListener('click',e=>{
+  const b=e.target.closest('.dedup-quick button');
+  if(!b)return;
+  e.stopPropagation();
+  fetch('/api/dedup-group-action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({group_id:Number(b.dataset.group),mode:b.dataset.dmode})})
+    .then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;})
+    .then(d=>renderDedupGroups(d.photos||[]))
+    .catch(err=>toast('相似组选优失败：'+(err.message||'未知错误'),'bad'));
+});
 function selectDedupPhoto(groupId,path){
   fetch('/api/dedup-select',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({group_id:Number(groupId),path})})
     .then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;})
@@ -3591,6 +3639,39 @@ def api_dedup_select():
     s['photos'] = [g for g in s.get('groups_data', []) if g.get('count', 0) > 1]
     return jsonify({'ok': True, 'photos': s['photos'],
                     'kept': len(s['kept_paths']), 'selected': now_selected})
+
+
+@app.route('/api/dedup-group-action', methods=['POST'])
+def api_dedup_group_action():
+    """Fast keeper presets for one similarity group."""
+    blocked = _reject_mutation_while_running()
+    if blocked:
+        return blocked
+    data = request.get_json() or {}
+    try:
+        gid = int(data.get('group_id'))
+    except (TypeError, ValueError):
+        return jsonify({'error': '相似组编号无效'}), 400
+    mode = str(data.get('mode') or 'best1')
+    if mode not in ('best1', 'best2', 'all'):
+        return jsonify({'error': '无效保留方式'}), 400
+    s = state['dedup']
+    group = next((g for g in s.get('groups_data', []) if g.get('group_id') == gid), None)
+    if not group:
+        return jsonify({'error': '未找到这个相似组'}), 404
+    members = list(group.get('members') or [])
+    if not members:
+        return jsonify({'error': '相似组为空'}), 409
+    keep_n = len(members) if mode == 'all' else (2 if mode == 'best2' else 1)
+    selected = [m.get('path') for m in members[:keep_n] if m.get('path')]
+    group['selected_paths'] = selected
+    selected_set = set(selected)
+    for m in members:
+        m['selected'] = m.get('path') in selected_set
+    s['kept_paths'] = [p for g in s.get('groups_data', []) for p in (g.get('selected_paths') or [])]
+    s['photos'] = [g for g in s.get('groups_data', []) if g.get('count', 0) > 1]
+    _activity('相似组选优', '', f'组 {gid} · {mode} · 保留 {len(selected)} 张')
+    return jsonify({'ok': True, 'photos': s['photos'], 'kept': len(s['kept_paths'])})
 
 
 @app.route('/api/dedup-apply', methods=['POST'])
