@@ -1706,7 +1706,7 @@ function settingsHTML(step){
       <input type="range" id="opt" min="0.6" max="1.6" step="0.05" value="1.0">
       <div class="slider-value">数值越低保留越多，越高筛选越严格</div></div>
       <label class="check"><input type="checkbox" id="cAdaptive" checked> 根据当前文件夹自适应阈值</label>
-      <label class="check" style="margin-top:6px"><input type="checkbox" id="cRescue" checked> 质量保护：保留轻微软但构图优秀的照片</label>`;
+      <label class="check" style="margin-top:6px"><input type="checkbox" id="cRescue" checked> 质量保护：保留轻微软但构图优秀的照片</label>${librarySettingsHTML(step)}`;
   if(step==='dedup') return `<div class="wgroup"><label>相似度阈值</label>
       <input type="range" id="opt" min="0.5" max="0.95" step="0.05" value="0.8">
       <div class="slider-value">相似度达到或高于 <b id="optVal">0.80</b> 时归为一组 · 数值越低合并越激进</div></div>
@@ -1717,13 +1717,13 @@ function settingsHTML(step){
         <option value="jpg">仅保留 JPG 图片</option>
       </select>
       <div class="slider-value">同名 RAW/JPG（如 IMG_0001.CR2 + .JPG）会在去重前合并为一张</div></div>
-      <div class="slider-value" style="margin-top:10px;line-height:1.55">先完成筛选和分组，不会立即移动文件。筛选后可逐组对比并切换“保留”照片，最后再统一确认处理。</div>`;
+      <div class="slider-value" style="margin-top:10px;line-height:1.55">先完成筛选和分组，不会立即移动文件。筛选后可逐组对比并切换“保留”照片，最后再统一确认处理。</div>${librarySettingsHTML(step)}`;
   // rank
   return `<div class="sidebar-title" style="margin-bottom:4px">⚖️ 评分权重</div>
     <div class="panel-box" id="weightPanel"></div>
     <button class="btn-ghost" id="resetWeights" style="margin-top:8px">↺ 恢复推荐权重</button>
     <div class="wgroup" style="margin-top:10px"><label>候选展示数量</label><input type="number" id="topn" min="1" max="500" value="50">
-      <div class="slider-value">仅决定筛选完成后首轮展示多少张候选照片，不会直接移动、删除或导出文件。筛选后可继续手动移除 / 恢复，再确认导出。</div></div>`;
+      <div class="slider-value">仅决定筛选完成后首轮展示多少张候选照片，不会直接移动、删除或导出文件。筛选后可继续手动移除 / 恢复，再确认导出。</div></div>${librarySettingsHTML(step)}`;
 }
 function renderWeights(){
   const wp=document.getElementById('weightPanel'); if(!wp)return;
@@ -1750,6 +1750,20 @@ function renderSettings(){
   if(opt&&val)opt.oninput=()=>{val.textContent=(currentStep==='dedup'||currentStep==='cull')?parseFloat(opt.value).toFixed(2):opt.value;};
   const pm=document.getElementById('pairMode');
   if(pm){pm.value=pairMode;pm.onchange=()=>{pairMode=pm.value;};}
+  const ss=document.getElementById('scanScope');
+  if(ss){ss.value=recursiveScan?'recursive':'current';ss.onchange=()=>{recursiveScan=ss.value==='recursive';saveLibrarySettings();};}
+  const cs=document.getElementById('compareScope');
+  if(cs){cs.value=compareScope;cs.onchange=()=>{compareScope=cs.value;saveLibrarySettings();};}
+  const om=document.getElementById('outputMode'),co=document.getElementById('customOutput');
+  if(om){
+    om.value=outputMode;
+    om.onchange=()=>{outputMode=om.value;if(co)co.style.display=outputMode==='custom'?'block':'none';saveLibrarySettings();};
+  }
+  if(co){
+    co.value=customOutput;
+    co.style.display=outputMode==='custom'?'block':'none';
+    co.oninput=()=>{customOutput=co.value;saveLibrarySettings();};
+  }
   if(currentStep==='rank'){renderWeights();
     const rw=document.getElementById('resetWeights');if(rw)rw.onclick=()=>{weights={...DEFAULTS};renderWeights();scheduleReweight();};}
 }
@@ -1951,6 +1965,10 @@ async function startStep(step){
         rescue:rs?rs.checked:true,
         ftype:step==='cull'?'all':cullType,
         pair:step==='cull'?'both':pairMode,
+        recursive:recursiveScan,
+        compare_scope:compareScope,
+        output_mode:outputMode,
+        custom_output:customOutput,
         topn:parseInt((document.getElementById('topn')||{}).value)||50
       })
     });
@@ -1996,15 +2014,11 @@ async function godRun(){
     for(const step of ['cull','dedup','rank']){
       if(godAbort)break;
       activateStep(step);
-      // Lock the auto-move checkbox during a God-mode run (only present on the
-      // Dedup step) so it can't be toggled mid-pipeline.
-      {const ao=document.getElementById('autoOrg'); if(ao)ao.disabled=true;}
       await new Promise(res=>{ godResolve=res; startStep(step); });
     }
     if(!godAbort)toast('✨ 一键全流程完成，优选照片已排序','good');
   } finally {
     godMode=false;setGodBtn(false);startBtn.disabled=false;
-    const ao=document.getElementById('autoOrg'); if(ao)ao.disabled=false;  // re-enable
   }
 }
 godBtn.onclick=()=>{
