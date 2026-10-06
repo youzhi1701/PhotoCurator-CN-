@@ -184,7 +184,29 @@ try:
 except Exception:
     logger.warning("library index unavailable", exc_info=True)
 
-APP_VERSION = "1.4.0"
+def _prune_index_db():
+    """Keep long-lived local indexes bounded without touching source photos."""
+    try:
+        cutoff = time.time() - 180 * 86400
+        with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=20) as db:
+            db.execute("DELETE FROM cull_cache WHERE updated_at < ?", (cutoff,))
+            db.execute("DELETE FROM rank_cache WHERE updated_at < ?", (cutoff,))
+            db.execute("DELETE FROM geocode_cache WHERE updated_at < ?", (cutoff,))
+            # Hard caps protect users with very large rotating libraries.
+            db.execute("""DELETE FROM cull_cache WHERE path NOT IN
+                          (SELECT path FROM cull_cache ORDER BY updated_at DESC LIMIT 250000)""")
+            db.execute("""DELETE FROM rank_cache WHERE path NOT IN
+                          (SELECT path FROM rank_cache ORDER BY updated_at DESC LIMIT 250000)""")
+            db.execute("""DELETE FROM geocode_cache WHERE key NOT IN
+                          (SELECT key FROM geocode_cache ORDER BY updated_at DESC LIMIT 20000)""")
+            db.commit()
+    except Exception:
+        logger.debug("index prune skipped", exc_info=True)
+
+threading.Thread(target=_prune_index_db, daemon=True,
+                 name='photocurator-index-prune').start()
+
+APP_VERSION = "1.4.1"
 IS_CODESPACES = os.environ.get('CODESPACES', '').strip().lower() == 'true'
 CODESPACE_NAME = os.environ.get('CODESPACE_NAME', '').strip()
 _CODESPACES_DOMAIN_RAW = os.environ.get(
@@ -1201,6 +1223,43 @@ def _relocate_for_status(path, now_kept):
         return path
 
 
+def _request_rank_score(path):
+    """Keep downstream ranking consistent with manual Cull review."""
+    try:
+        p = str(path or '')
+        if not p or not Path(p).is_file():
+            return
+        rank = state['rank']
+        if any(getattr(sc, 'path', None) == p for sc in rank.get('scores', [])):
+            rank['preview_at'] = 0.0
+            return
+        if rank.get('running'):
+            rank.setdefault('pending_paths', set()).add(p)
+            return
+
+        def worker():
+            try:
+                sc = _cached_rank_score(p)
+                if sc is None:
+                    sc = AdvancedPhotoAnalyzer().analyze_image(p)
+                    if sc:
+                        _save_rank_score(p, sc)
+                if sc and p in set(state['cull'].get('sharp_paths') or []):
+                    if not any(getattr(x, 'path', None) == p for x in rank.get('scores', [])):
+                        rank.setdefault('scores', []).append(sc)
+                    rank['analyzed'] = len(rank.get('scores', []))
+                    rank['total'] = max(int(rank.get('total', 0) or 0), rank['analyzed'])
+                    rank['preview'] = build_topn()
+                    rank['preview_at'] = time.time()
+            except Exception:
+                logger.debug("incremental rank refresh failed", exc_info=True)
+
+        threading.Thread(target=worker, daemon=True,
+                         name='photocurator-rank-refresh').start()
+    except Exception:
+        logger.debug("rank refresh request failed", exc_info=True)
+
+
 # --------------------------------------------------------------------------- #
 #  DEDUP
 # --------------------------------------------------------------------------- #
@@ -1353,7 +1412,30 @@ def build_topn(weights=None, topn=None):
     weights = weights or state['weights']
     topn = topn or state['topn']
     excluded = state['excluded']
-    scores = [s for s in state['rank']['scores'] if s.path not in excluded]
+    rank_state = state['rank']
+    folder = str(rank_state.get('src_folder') or state.get('folder') or '')
+    recursive = bool(rank_state.get('recursive', False))
+
+    allowed = None
+    cull = state['cull']
+    if (cull.get('complete') and cull.get('src_folder') == folder
+            and bool(cull.get('recursive', False)) == recursive):
+        allowed = set(cull.get('sharp_paths') or [])
+
+    dedup = state['dedup']
+    if (dedup.get('complete') and dedup.get('src_folder') == folder
+            and bool(dedup.get('recursive', False)) == recursive):
+        dedup_allowed = set(dedup.get('kept_paths') or [])
+        allowed = dedup_allowed if allowed is None else (allowed & dedup_allowed)
+
+    scores = []
+    for score in rank_state.get('scores', []):
+        p = score.path
+        if p in excluded or not Path(p).is_file():
+            continue
+        if allowed is not None and p not in allowed:
+            continue
+        scores.append(score)
     ranked = sorted(scores, key=lambda s: weighted_overall(s, weights), reverse=True)[:topn]
     out = []
     for rank, s in enumerate(ranked, 1):
@@ -1379,20 +1461,17 @@ def run_rank(folder, ftype='all', pair='both', recursive=True):
     s = state['rank']
     s.update({'running': True, 'cancel': False, 'progress': 0, 'status': '正在准备…',
               'scores': [], 'total': 0, 'analyzed': 0, 'preview': [], 'preview_at': 0.0,
-              'cache_hits': 0, 'src_folder': str(folder), 'recursive': bool(recursive)})
+              'cache_hits': 0, 'pending_paths': set(),
+              'src_folder': str(folder), 'recursive': bool(recursive)})
     state['excluded'] = set()
     try:
-        # Prefer a COMPLETED Dedup on this folder, then a COMPLETED Cull on this
-        # folder; otherwise rank the whole folder. Never chain off a partial run.
-        dd, cull = state['dedup'], state['cull']
-        if (dd.get('complete') and dd.get('kept_paths') and dd.get('src_folder') == str(folder)
-                and bool(dd.get('recursive', False)) == bool(recursive)):
-            paths = [Path(p) for p in dd['kept_paths']]
-            chain = '去重后保留照片'
-        elif (cull.get('complete') and cull.get('sharp_paths') and cull.get('src_folder') == str(folder)
-                  and bool(cull.get('recursive', False)) == bool(recursive)):
-            paths = [Path(p) for p in cull['sharp_paths']]
-            chain = '模糊筛选后保留照片'
+        # Rank every Cull survivor so later manual changes inside similarity
+        # groups can update recommendations instantly without recomputing scores.
+        cull = state['cull']
+        if (cull.get('complete') and cull.get('sharp_paths') and cull.get('src_folder') == str(folder)
+                and bool(cull.get('recursive', False)) == bool(recursive)):
+            paths = [Path(p) for p in cull['sharp_paths'] if Path(p).is_file()]
+            chain = '清晰度复核后照片'
         else:
             paths = list_images(folder, recursive=recursive)
             chain = '全部照片（含子文件夹）' if recursive else '当前文件夹全部照片'
@@ -1445,6 +1524,28 @@ def run_rank(folder, ftype='all', pair='both', recursive=True):
             if sc:
                 s['scores'].append(sc)
             s['analyzed'] = len(s['scores'])
+        # Manual Cull review may add newly-kept photos while ranking is running.
+        # Score those additions before declaring the task complete.
+        while not s.get('cancel'):
+            pending = list(s.get('pending_paths') or set())
+            if not pending:
+                break
+            s['pending_paths'].clear()
+            known = {getattr(x, 'path', None) for x in s['scores']}
+            allowed_now = set(state['cull'].get('sharp_paths') or [])
+            for raw in pending:
+                if raw in known or raw not in allowed_now or not Path(raw).is_file():
+                    continue
+                sc = _cached_rank_score(raw)
+                if sc is None:
+                    sc = analyzer.analyze_image(raw)
+                    if sc:
+                        _save_rank_score(raw, sc)
+                if sc:
+                    s['scores'].append(sc)
+                    known.add(raw)
+            s['analyzed'] = len(s['scores'])
+
         s['progress'] = 100
         s['status'] = (f"完成 · 已评分 {len(s['scores'])} 张 · 来源：{chain} · 用时 {_fmt(time.time()-t0)}"
                        + (f" · 已复用 {s.get('cache_hits',0)} 张历史评分" if s.get('cache_hits') else ""))
@@ -2067,7 +2168,15 @@ document.getElementById('appExit').onclick=()=>{
   if(isRunning&&runningStep)fetch('/api/stop/'+runningStep,{method:'POST'}).finally(()=>setTimeout(()=>nativeWindow('exit'),250));
   else nativeWindow('exit');
 };
-function taskLabel(d){if(!d)return '待开始';if(d.running)return Math.max(0,Math.min(100,Number(d.progress)||0))+'% · 处理中';if((d.progress||0)>=100)return '已完成';return (d.status&&d.status!=='待开始')?'已暂停':'待开始';}
+function taskLabel(d){
+  if(!d)return '待开始';
+  if(d.running)return Math.max(0,Math.min(100,Number(d.progress)||0))+'% · 处理中';
+  const st=String(d.status||'');
+  if(st.includes('错误')||st.includes('失败'))return '需要处理';
+  if(st.includes('停止'))return '已停止';
+  if((d.progress||0)>=100||st.startsWith('完成')||st.includes('筛选完成'))return '已完成';
+  return st&&st!=='待开始'?'待继续':'待开始';
+}
 async function refreshTaskCenter(){
   try{
     const rows=await Promise.all(['cull','dedup','rank'].map(k=>fetch('/api/progress/'+k).then(r=>r.json()).catch(()=>null)));
@@ -2125,6 +2234,20 @@ function applyStepStats(){
     row.style.display=row.dataset.steps.split(' ').includes(currentStep)?'':'none';
   });
 }
+function updateVisibleStepStatus(step,d){
+  if(step!==currentStep)return;
+  const st=d.stats||{};
+  document.getElementById('progressWrap').style.display='block';
+  document.getElementById('progressFill').style.width=(d.progress||0)+'%';
+  document.getElementById('progressText').textContent=d.status||'';
+  if('images'in st)document.getElementById('sImages').textContent=st.images;
+  if('sharp'in st)document.getElementById('sSharp').textContent=st.sharp;
+  if('blurry'in st)document.getElementById('sBlurry').textContent=st.blurry;
+  if('soft'in st)document.getElementById('sSoft').textContent=st.soft;
+  if(st.folder_status)folderStatus=st.folder_status;
+  if('duplicate_groups'in st)document.getElementById('sGroups').textContent=st.duplicate_groups;
+  else if('groups'in st)document.getElementById('sGroups').textContent=st.groups;
+}
 function renderSettings(){
   applyStepStats();
   document.getElementById('settingsPanel').innerHTML=settingsHTML(currentStep);
@@ -2174,9 +2297,7 @@ document.querySelectorAll('.step').forEach(t=>t.onclick=()=>{
     if(currentStep==='cull')renderCullStep(d.photos||[]);
     else if(currentStep==='dedup')renderDedupGroups(d.photos||[]);
     else renderRank(d.photos||[]);
-    document.getElementById('progressWrap').style.display='block';
-    document.getElementById('progressFill').style.width=(d.progress||0)+'%';
-    document.getElementById('progressText').textContent=d.status||'';
+    updateVisibleStepStatus(currentStep,d);
   }).catch(()=>{});
 });
 renderSettings();
@@ -2418,16 +2539,7 @@ function poll(step){
     .then(r=>{if(!r.ok)throw new Error('HTTP '+r.status);return r.json();})
     .then(d=>{
       pollFailures=0;
-      document.getElementById('progressFill').style.width=d.progress+'%';
-      document.getElementById('progressText').textContent=d.status;
-      const st=d.stats||{};
-      if('images'in st)document.getElementById('sImages').textContent=st.images;
-      if('sharp'in st)document.getElementById('sSharp').textContent=st.sharp;
-      if('blurry'in st)document.getElementById('sBlurry').textContent=st.blurry;
-      if('soft'in st)document.getElementById('sSoft').textContent=st.soft;
-      if(st.folder_status)folderStatus=st.folder_status;
-      if('duplicate_groups'in st)document.getElementById('sGroups').textContent=st.duplicate_groups;
-      else if('groups'in st)document.getElementById('sGroups').textContent=st.groups;
+      updateVisibleStepStatus(step,d);
       if(step===currentStep){
         if(step==='rank')renderRank(d.photos||[]);
         else if(step==='cull')renderCullStep(d.photos||[]);
@@ -2444,7 +2556,7 @@ function poll(step){
         toast('本次已完整分析 '+(d.result_total||0)+' 张照片。为保持界面流畅，当前界面只展示前 5000 条结果；统计和后续处理仍使用完整结果。','info');
       }
 
-      document.getElementById('progressFill').style.width='100%';
+      if(step===currentStep)document.getElementById('progressFill').style.width='100%';
       setStartBtn(false);runningStep=null;
       if(step==='rank'&&photos.length)document.getElementById('exportBtn').style.display='block';
       if(step==='cull'){
@@ -2467,7 +2579,7 @@ function poll(step){
       }
       const msg='无法读取处理进度：'+(err&&err.message?err.message:'本地服务连接失败');
       toast(msg,'bad');
-      document.getElementById('progressText').textContent=msg;
+      if(step===currentStep)document.getElementById('progressText').textContent=msg;
       setStartBtn(false);runningStep=null;
       if(godMode){
         godAbort=true;
@@ -2803,7 +2915,7 @@ function cullCardHtml(p,idx){const path=escHtml(p.path);
     ${moveSel}
     <button class="badge ${p.badgeType} badge-tier" data-path="${path}" data-tier="${p.tier}" title="点击切换：清晰 → 轻微软 → 模糊">⇄ ${p.badge}</button>
     <img class="photo-img" src="${p.thumb}" loading="lazy" decoding="async">
-    <div class="photo-info"><div class="pi-row"><span class="photo-name">${escHtml(p.name)}</span><span class="ftype${p.raw?'':(p.heic?' heic':' jpg')}">${p.fmt||(p.raw?'RAW':p.heic?'HEIC':'JPG')}</span><button class="delete-btn" data-step="cull" data-path="${path}" title="移入 Windows 回收站">🗑 删除</button></div><div class="photo-score">清晰度技术值 ${p.score}</div><div class="source-path">${escHtml(p.rel_dir||'当前文件夹')}</div></div></div>`;}
+    <div class="photo-info"><div class="pi-row"><span class="photo-name">${escHtml(p.name)}</span><span class="ftype${p.raw?'':(p.heic?' heic':' jpg')}">${p.fmt||(p.raw?'RAW':p.heic?'HEIC':'JPG')}</span><button class="delete-btn" data-step="cull" data-path="${path}" title="移入 Windows 回收站">🗑 删除</button></div><div class="source-path">${escHtml(p.rel_dir||'当前文件夹')}</div></div></div>`;}
 
 function syncCullCardNode(node,p,idx){
   const moveOn=p.move_selected!==false;
@@ -3699,6 +3811,8 @@ def api_dedup_select():
         for p in (g.get('selected_paths') or [])
     ]
     s['photos'] = [g for g in s.get('groups_data', []) if g.get('count', 0) > 1]
+    state['rank']['preview_at'] = 0.0
+    _activity('相似组选优', path, '保留' if now_selected else '取消保留')
     return jsonify({'ok': True, 'photos': s['photos'],
                     'kept': len(s['kept_paths']), 'selected': now_selected})
 
@@ -3708,6 +3822,8 @@ def api_dedup_group_action():
     """Fast keeper presets for one similarity group."""
     if state['dedup'].get('running'):
         return jsonify({'error': '相似分析仍在运行，请等待分析完成'}), 409
+    if not state['dedup'].get('complete'):
+        return jsonify({'error': '请先完成相似照片筛选'}), 409
     data = request.get_json() or {}
     try:
         gid = int(data.get('group_id'))
@@ -3731,6 +3847,7 @@ def api_dedup_group_action():
         m['selected'] = m.get('path') in selected_set
     s['kept_paths'] = [p for g in s.get('groups_data', []) for p in (g.get('selected_paths') or [])]
     s['photos'] = [g for g in s.get('groups_data', []) if g.get('count', 0) > 1]
+    state['rank']['preview_at'] = 0.0
     _activity('相似组选优', '', f'组 {gid} · {mode} · 保留 {len(selected)} 张')
     return jsonify({'ok': True, 'photos': s['photos'], 'kept': len(s['kept_paths'])})
 
@@ -4006,6 +4123,9 @@ def api_toggle_status():
             sp.remove(old)
     if now_kept:
         sp.append(new_path)
+        _request_rank_score(new_path)
+    else:
+        state['rank']['preview_at'] = 0.0
     s['sharp'] = sum(1 for p in s['photos'] if p['tier'] == 'sharp')
     s['soft'] = sum(1 for p in s['photos'] if p['tier'] == 'soft')
     s['blurry'] = sum(1 for p in s['photos'] if p['tier'] == 'blurry')
