@@ -3244,6 +3244,7 @@ document.getElementById('gallery').addEventListener('click',e=>{
     .then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;})
     .then(d=>{
       (d.photos||[]).forEach(g=>{if(g&&g.group_id!=null)dedupLiveStore.set(String(g.group_id),g);});
+      if(d.changed_group&&d.changed_group.group_id!=null)dedupLiveStore.set(String(d.changed_group.group_id),d.changed_group);
       renderDedupGroups(Array.from(dedupLiveStore.values()));
     })
     .catch(err=>toast('相似组选优失败：'+(err.message||'未知错误'),'bad'));
@@ -3253,6 +3254,7 @@ function selectDedupPhoto(groupId,path){
     .then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;})
     .then(d=>{
       (d.photos||[]).forEach(g=>{if(g&&g.group_id!=null)dedupLiveStore.set(String(g.group_id),g);});
+      if(d.changed_group&&d.changed_group.group_id!=null)dedupLiveStore.set(String(d.changed_group.group_id),d.changed_group);
       renderDedupGroups(Array.from(dedupLiveStore.values()));
       toast(d.selected?'已加入保留':'已取消保留','good');
     })
@@ -3264,8 +3266,11 @@ function applyDedupSelection(){
   fetch('/api/dedup-apply',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})
     .then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;})
     .then(d=>{
-      const remain=(d.photos||[]).length;
-      renderDedupGroups(d.photos||[]);
+      const first=(d.photos||[]);
+      dedupLiveStore.clear();first.forEach(g=>{if(g&&g.group_id!=null)dedupLiveStore.set(String(g.group_id),g);});
+      const remain=Number(d.result_total!=null?d.result_total:first.length);
+      renderDedupGroups(first);
+      if(d.truncated)loadRemainingDedup(remain,first.length);
       if(remain===0){
         btn.style.display='none';
         document.getElementById('gallery').innerHTML='<div class="empty"><div class="icon">✓</div><div class="title">相似照片处理完成</div><p>未保留照片已按当前设置处理。</p></div>';
@@ -4352,7 +4357,9 @@ def api_dedup_select():
     s['photos'] = [g for g in s.get('groups_data', []) if g.get('count', 0) > 1]
     state['rank']['preview_at'] = 0.0
     _activity('相似组选优', path, '保留' if now_selected else '取消保留')
-    return jsonify({'ok': True, 'photos': s['photos'],
+    return jsonify({'ok': True, 'photos': s['photos'][:UI_RESULT_CHUNK],
+                    'changed_group': group,
+                    'result_total': len(s['photos']),
                     'kept': len(s['kept_paths']), 'selected': now_selected})
 
 
@@ -4392,7 +4399,10 @@ def api_dedup_group_action():
     s['photos'] = [g for g in s.get('groups_data', []) if g.get('count', 0) > 1]
     state['rank']['preview_at'] = 0.0
     _activity('相似组选优', '', f'组 {gid} · {mode} · 保留 {len(selected)} 张')
-    return jsonify({'ok': True, 'photos': s['photos'], 'kept': len(s['kept_paths'])})
+    return jsonify({'ok': True, 'photos': s['photos'][:UI_RESULT_CHUNK],
+                    'changed_group': group,
+                    'result_total': len(s['photos']),
+                    'kept': len(s['kept_paths'])})
 
 
 @app.route('/api/dedup-apply', methods=['POST'])
@@ -4466,7 +4476,9 @@ def api_dedup_apply():
             + (f" · {failed} 张失败，可再次尝试" if failed else '')
         )
         return jsonify({'ok': not unresolved, 'moved': moved, 'failed': failed,
-                        'photos': s['photos'],
+                        'photos': s['photos'][:UI_RESULT_CHUNK],
+                        'result_total': len(s['photos']),
+                        'truncated': len(s['photos']) > UI_RESULT_CHUNK,
                         'duplicate_groups': len(s['photos']),
                         'dest': '按当前“处理文件存放位置”规则'})
     except Exception as e:
