@@ -1971,6 +1971,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   .task-exit{width:100%;margin-top:10px;padding:8px;border:1px solid rgba(220,38,38,.18);border-radius:9px;background:rgba(255,255,255,.5);color:#b91c1c;font-size:11px;font-weight:700;cursor:pointer}
   .task-exit:hover{background:rgba(254,226,226,.8)}
   .top button,.top input,.top .theme,.top .window-controls{position:relative;z-index:2}
+  .folder-grid .photo-card{content-visibility:auto;contain-intrinsic-size:190px 240px}
 </style></head><body>
 <div class="top pywebview-drag-region">
   <div class="brand">🖼️ PhotoCurator <small>照片整理工作区 · v{{ app_version }}</small></div>
@@ -2370,6 +2371,7 @@ document.querySelectorAll('.step').forEach(t=>t.onclick=()=>{
     else if(currentStep==='dedup')renderDedupGroups(d.photos||[]);
     else renderRank(d.photos||[]);
     updateVisibleStepStatus(currentStep,d);
+    if(currentStep==='cull')maybeLoadAllCull(d);
   }).catch(()=>{});
 });
 renderSettings();
@@ -2606,6 +2608,36 @@ async function godRun(){
 }
 godBtn.onclick=()=>{};
 startBtn.onclick=()=>{if(godMode||isRunning){godAbort=true;doStop();toast('正在停止当前分析…','info');}else godRun();};
+let cullChunkToken=0;
+async function loadRemainingCull(total,offset){
+  const token=++cullChunkToken;
+  const merged=new Map((photos||[]).map(p=>[p.path,p]));
+  let pos=offset||merged.size;
+  while(currentStep==='cull' && token===cullChunkToken && pos<total){
+    try{
+      const d=await fetch('/api/results/cull?offset='+pos+'&limit=5000').then(r=>{
+        if(!r.ok)throw new Error('HTTP '+r.status);return r.json();
+      });
+      const rows=d.photos||[];
+      if(!rows.length)break;
+      rows.forEach(p=>merged.set(p.path,p));
+      pos=d.next_offset||pos+rows.length;
+      const combined=Array.from(merged.values());
+      renderCullStep(combined);
+      document.getElementById('progressText').textContent='结果载入 '+combined.length+' / '+total+' · 可继续浏览和复核';
+      await new Promise(res=>setTimeout(res,0));
+    }catch(err){
+      toast('继续载入结果失败，可切换视图后重试：'+(err.message||'未知错误'),'bad');
+      break;
+    }
+  }
+}
+function maybeLoadAllCull(d){
+  if(currentStep!=='cull'||d.running)return;
+  const have=(d.photos||[]).length,total=Number(d.result_total||have);
+  if(total>have)loadRemainingCull(total,have);
+}
+
 function poll(step){
   fetch('/api/progress/'+step)
     .then(r=>{if(!r.ok)throw new Error('HTTP '+r.status);return r.json();})
@@ -2619,14 +2651,15 @@ function poll(step){
       }
 
       if(d.running){
-        setTimeout(()=>poll(step),350);
+        setTimeout(()=>poll(step),800);
         return;
       }
 
       if(d.truncated&&!largeResultWarned){
         largeResultWarned=true;
-        toast('本次已完整分析 '+(d.result_total||0)+' 张照片。为保持界面流畅，当前界面只展示前 5000 条结果；统计和后续处理仍使用完整结果。','info');
+        toast('本次已完整分析 '+(d.result_total||0)+' 张照片，完整结果正在后台分批载入。','info');
       }
+      if(step==='cull'&&step===currentStep)maybeLoadAllCull(d);
 
       if(step===currentStep)document.getElementById('progressFill').style.width='100%';
       setStartBtn(false);runningStep=null;
@@ -3262,7 +3295,7 @@ function showLb(){
   }else{
     const label=currentStep==='cull'?(p.badge||TIER_NAME[p.tier]||'清晰度结果'):'照片';
     side.style.display='block';
-    side.innerHTML=`<h3>${currentStep==='cull'?'清晰度':'照片'}</h3><div style="font-size:13px;opacity:.9">${escHtml(p.name)}</div><div style="font-size:18px;font-weight:700;margin-top:8px">${escHtml(label)}</div>${p.score!=null?`<div style="font-size:11px;opacity:.5;margin-top:3px">技术值 ${p.score}</div>`:''}`;
+    side.innerHTML=`<h3>${currentStep==='cull'?'清晰度':'照片'}</h3><div style="font-size:13px;opacity:.9">${escHtml(p.name)}</div><div style="font-size:18px;font-weight:700;margin-top:8px">${escHtml(label)}</div>${currentStep==='rank'&&p.score!=null?`<div style="font-size:11px;opacity:.58;margin-top:4px">综合评分 ${p.score}</div>`:''}`;
   }
   loadExif(p.path,side);
 }
