@@ -247,14 +247,33 @@ def main():
 
 def self_test():
     """Headless packaged-runtime smoke test used by release CI."""
+    import json
+    import raw_loader
+
+    if not raw_loader.HAS_RAWPY:
+        raise RuntimeError("packaged RAW support is unavailable")
+    if not raw_loader.HAS_HEIF:
+        raise RuntimeError("packaged HEIC support is unavailable")
+
     server = LocalServer()
     server.start()
     try:
         if not wait_until_ready(timeout=20.0):
             raise RuntimeError("self-test local server did not become ready")
+
         with urllib.request.urlopen(URL, timeout=3.0) as response:
             if response.status != 200:
                 raise RuntimeError(f"self-test HTTP status: {response.status}")
+
+        with urllib.request.urlopen(URL + "/vendor/maplibre-gl.css", timeout=3.0) as response:
+            if response.status != 200:
+                raise RuntimeError("packaged vendor resources are unavailable")
+
+        with urllib.request.urlopen(URL + "/api/shortcuts", timeout=5.0) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+            if payload.get("demo_count") != 12:
+                raise RuntimeError(f"packaged writable data test failed: {payload}")
+
         return 0
     finally:
         server.stop()
