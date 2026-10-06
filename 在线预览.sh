@@ -172,11 +172,37 @@ if [[ "${1:-}" == "stop" ]]; then
   exit 0
 fi
 
-# Reuse any healthy process already serving the preview port.
-if curl -fsS --max-time 2 "http://127.0.0.1:${PHOTOCURATOR_PORT}/" >/dev/null 2>&1; then
-  echo "[4/4] 检测到在线预览已经在运行。"
-  show_ready
-  exit 0
+# Reuse the running preview only when it is serving the SAME build that is
+# currently checked out. After git pull, an older Python process would otherwise
+# keep serving stale code forever, which makes the page appear to ignore updates.
+SOURCE_VERSION="$(grep -E '^APP_VERSION = ' "$ROOT/photo_curator.py" | head -n 1 | sed -E 's/.*"([^"]+)".*/\1/' || true)"
+RUNNING_HTML=""
+if RUNNING_HTML="$(curl -fsS --max-time 2 "http://127.0.0.1:${PHOTOCURATOR_PORT}/" 2>/dev/null)"; then
+  if [[ -n "$SOURCE_VERSION" ]] && grep -Fq "$SOURCE_VERSION" <<<"$RUNNING_HTML"; then
+    echo "[4/4] 在线预览已是当前版本：$SOURCE_VERSION"
+    show_ready
+    exit 0
+  fi
+
+  echo "[4/4] 检测到旧版在线预览，正在自动重启..."
+  if [[ -f "$PID_FILE" ]]; then
+    OLD_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
+    if [[ -n "$OLD_PID" ]] && kill -0 "$OLD_PID" >/dev/null 2>&1; then
+      kill "$OLD_PID" >/dev/null 2>&1 || true
+      sleep 0.5
+      kill -9 "$OLD_PID" >/dev/null 2>&1 || true
+    fi
+    rm -f "$PID_FILE"
+  fi
+
+  # If the PID metadata was lost but the old preview still owns the port,
+  # terminate only the process listening on the PhotoCurator preview port.
+  if curl -fsS --max-time 1 "http://127.0.0.1:${PHOTOCURATOR_PORT}/" >/dev/null 2>&1; then
+    if command -v fuser >/dev/null 2>&1; then
+      fuser -k "${PHOTOCURATOR_PORT}/tcp" >/dev/null 2>&1 || true
+      sleep 0.5
+    fi
+  fi
 fi
 
 # Remove stale PID metadata from an earlier stopped session.
