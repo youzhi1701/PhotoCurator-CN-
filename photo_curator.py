@@ -1632,7 +1632,42 @@ const catColor=(i,n)=>`hsl(${Math.round(i*360/(n||CATS.length))},80%,62%)`;
 const CATCOLORS=CATS.map((_,i)=>catColor(i,CATS.length));
 const DEFAULTS={aesthetic:30,composition:22,technical:20,sharpness:16,color:12};
 let weights={...DEFAULTS};
-let autoDedup=false;
+let recursiveScan=true;
+let compareScope='folder';
+let outputMode='source';
+let customOutput='';
+try{
+  const saved=JSON.parse(localStorage.getItem('pc-library-settings')||'{}');
+  if(typeof saved.recursive==='boolean')recursiveScan=saved.recursive;
+  if(['folder','global'].includes(saved.compareScope))compareScope=saved.compareScope;
+  if(['source','root','custom'].includes(saved.outputMode))outputMode=saved.outputMode;
+  if(typeof saved.customOutput==='string')customOutput=saved.customOutput;
+}catch(_){}
+function saveLibrarySettings(){
+  try{localStorage.setItem('pc-library-settings',JSON.stringify({
+    recursive:recursiveScan,compareScope,outputMode,customOutput
+  }));}catch(_){}
+}
+function librarySettingsHTML(step){
+  let h='<div class="settings-subtitle">📂 扫描范围</div>'
+    +'<div class="wgroup"><select id="scanScope">'
+    +'<option value="recursive">当前文件夹 + 所有子文件夹</option>'
+    +'<option value="current">仅当前文件夹</option></select>'
+    +'<div class="slider-value">递归扫描会自动跳过 Blurred、Duplicates、TOP_*、PhoneBG* 和 PhotoCurator_Result。</div></div>';
+  if(step==='dedup')h+='<div class="settings-subtitle">🔎 相似照片对比范围</div>'
+    +'<div class="wgroup"><select id="compareScope">'
+    +'<option value="folder">各子文件夹独立对比（推荐）</option>'
+    +'<option value="global">整个所选范围全局对比</option></select>'
+    +'<div class="slider-value">全局对比可以发现分散在不同文件夹里的重复照片，但耗时会更长。</div></div>';
+  h+='<div class="settings-subtitle">📦 处理文件存放位置</div>'
+    +'<div class="wgroup"><select id="outputMode">'
+    +'<option value="source">跟随原照片所在文件夹（推荐）</option>'
+    +'<option value="root">统一放到当前所选大文件夹</option>'
+    +'<option value="custom">自定义输出目录</option></select>'
+    +'<input id="customOutput" type="text" placeholder="例如 D:\\照片筛选结果" style="margin-top:7px">'
+    +'<div class="slider-value">默认在每个原文件夹内建立 PhotoCurator_Result，再分别存放 Blurred / Duplicates。</div></div>';
+  return h;
+}
 
 /* theme */
 const tt=document.getElementById('themeToggle');
@@ -3427,7 +3462,6 @@ def api_move_blurry():
                     'dest': '按当前“处理文件存放位置”规则'})
 
 
-@app.route('/api/export', methods=['POST'])
 @app.route('/api/export', methods=['POST'])
 def api_export():
     blocked = _reject_mutation_while_running()
