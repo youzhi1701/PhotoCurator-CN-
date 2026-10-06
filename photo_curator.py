@@ -72,7 +72,7 @@ except Exception:
 
 app = Flask(__name__)
 
-APP_VERSION = "1.2.2-cn.4"
+APP_VERSION = "1.2.3-cn.1"
 IS_CODESPACES = os.environ.get('CODESPACES', '').strip().lower() == 'true'
 CODESPACE_NAME = os.environ.get('CODESPACE_NAME', '').strip()
 _CODESPACES_DOMAIN_RAW = os.environ.get(
@@ -778,7 +778,12 @@ def run_cull(folder, strictness, adaptive, rescue_on):
                                'badge': badge, 'badgeType': bt, 'tier': tier,
                                'raw': is_raw(it['path']), 'fmt': fmt_of(it['path']),
                                'heic': is_heif(it['path']),
-                               'kept': tier != 'blurry', 'rejected': tier == 'blurry'})
+                               'kept': tier != 'blurry', 'rejected': tier == 'blurry',
+                               # File-action selection is separate from the
+                               # classification itself. Blurry frames start
+                               # selected, but the user may uncheck any of them
+                               # before the explicit Move action.
+                               'move_selected': tier == 'blurry'})
             # Newest-processed first in the live grid (no scrolling to bottom).
             # Only the display order is reversed; `kept` stays in capture order
             # so Dedup/Rank still receive survivors in their natural sequence.
@@ -1187,6 +1192,13 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   .rank-num{position:absolute;top:6px;left:6px;background:var(--accent);color:#fff;min-width:24px;height:24px;padding:0 6px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;z-index:5}
   .badge{position:absolute;top:6px;right:6px;color:#fff;padding:2px 7px;border-radius:4px;font-size:10px;font-weight:700;z-index:5}
   .badge.good{background:var(--good)} .badge.bad{background:var(--bad)}
+  .move-select{position:absolute;top:6px;left:6px;z-index:8;width:25px;height:25px;border:2px solid #fff;border-radius:6px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;padding:0;font-size:15px;font-weight:900;cursor:pointer;box-shadow:0 1px 6px rgba(0,0,0,.28)}
+  .move-select:hover{transform:scale(1.06)}
+  .move-select.off{background:rgba(20,25,35,.42);color:transparent}
+  .move-select.off:hover{color:#fff;background:rgba(37,99,235,.75)}
+  .move-summary{display:inline-flex;align-items:center;gap:4px;padding:5px 8px;border-radius:8px;background:var(--panel2);font-size:11px;color:var(--muted)}
+  .move-summary b{color:var(--accent);font-size:12px}
+  .chip.move-bulk{padding-left:9px;padding-right:9px}
   .status-toggle{position:absolute;bottom:34px;right:6px;z-index:6;border:none;border-radius:5px;padding:4px 8px;font-size:10px;font-weight:700;cursor:pointer;background:rgba(0,0,0,.62);color:#fff}
   .status-toggle:hover{background:rgba(0,0,0,.85)}
   .photo-card.pbg{border-color:#e8632a!important;box-shadow:0 0 0 2px #e8632a}
@@ -1245,6 +1257,8 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   body.processing .remove-btn,
   body.processing .status-toggle,
   body.processing .badge-tier,
+  body.processing .move-select,
+  body.processing .move-bulk,
   body.processing #restoreAll,
   body.processing #exportBtn,
   body.processing #exportPbgBtn,
@@ -1402,6 +1416,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
     <div><div id="lbName">—</div><div style="font-size:12px;opacity:.7" id="lbCount"></div></div>
     <div class="lb-actions">
       <button class="lb-btn pbg" id="lbPhoneBg" style="display:none">📱 手机壁纸</button>
+      <button class="lb-btn restore" id="lbMoveSelect" style="display:none">☑ 加入移动</button>
       <button class="lb-btn toggle" id="lbToggle" style="display:none">→ 标记为模糊</button>
       <button class="lb-btn restore" id="lbRestore" style="display:none">↺ 全部恢复</button>
       <button class="lb-btn remove" id="lbRemove" style="display:none">✕ 移除</button>
@@ -1552,6 +1567,7 @@ function activateStep(step){
   lastRankSig='';renderedCount=0;photoIdx=0;lastStep=null;
   gPage=0;lastGallerySig='';gItems=[];document.getElementById('pager').style.display='none';
   setupFilterBar();
+  if(step==='cull')updateCullMoveButton();
 }
 /* step tabs (blocked while a step is running) */
 document.querySelectorAll('.step').forEach(t=>t.onclick=()=>{
@@ -1574,15 +1590,22 @@ function setupFilterBar(){
       ...(rawFmts.length>1?rawFmts.map(f=>['ext:'+f.toLowerCase(),'仅 '+f]):[])];
     if(!types.some(([k])=>k===cullType))cullType='all';
     bar.style.display='flex';
+    const blurry=photos.filter(p=>p.tier==='blurry');
+    const moveSelected=blurry.filter(p=>p.move_selected!==false).length;
     bar.innerHTML=opts.map(([k,l])=>`<button class="chip${k===cullFilter?' active':''}" data-f="${k}">${l}</button>`).join('')
       +`<span class="chip-sep"></span>`
-      +types.map(([k,l])=>`<button class="chip${k===cullType?' active':''}" data-t="${k}">${l}</button>`).join('');
+      +types.map(([k,l])=>`<button class="chip${k===cullType?' active':''}" data-t="${k}">${l}</button>`).join('')
+      +(blurry.length?`<span class="chip-sep"></span><span class="move-summary">待移动 <b id="cullMoveCount">${moveSelected}/${blurry.length}</b></span><button class="chip move-bulk" id="moveSelAll">全选</button><button class="chip move-bulk" id="moveSelNone">全不选</button>`:'');
     bar.querySelectorAll('.chip[data-f]').forEach(c=>c.onclick=()=>{cullFilter=c.dataset.f;gPage=0;
       bar.querySelectorAll('.chip[data-f]').forEach(x=>x.classList.toggle('active',x.dataset.f===cullFilter));
       renderCullStep(photos);});
     bar.querySelectorAll('.chip[data-t]').forEach(c=>c.onclick=()=>{cullType=c.dataset.t;gPage=0;
       bar.querySelectorAll('.chip[data-t]').forEach(x=>x.classList.toggle('active',x.dataset.t===cullType));
       renderCullStep(photos);});
+    const ma=document.getElementById('moveSelAll'),mn=document.getElementById('moveSelNone');
+    if(ma)ma.onclick=()=>setAllBlurryMoveSelection(true);
+    if(mn)mn.onclick=()=>setAllBlurryMoveSelection(false);
+    updateCullMoveButton();
     return;
   }
   if(currentStep==='rank'){
@@ -1689,6 +1712,7 @@ function setStartBtn(running){
 }
 async function startStep(step){
   runningStep=step;
+  if(step==='cull')cullReady=false;
   pollFailures=0;largeResultWarned=false;
   document.getElementById('progressWrap').style.display='block';
   document.getElementById('gallery').innerHTML='';
@@ -1809,10 +1833,9 @@ function poll(step){
       document.getElementById('progressFill').style.width='100%';
       setStartBtn(false);runningStep=null;
       if(step==='rank'&&photos.length)document.getElementById('exportBtn').style.display='block';
-      if(!godMode&&step==='cull'&&(st.blurry||0)>0){
-        const mb=document.getElementById('moveBlurryBtn');
-        mb.style.display='block';mb.classList.remove('btn-ghost');mb.classList.add('btn','cta');
-        startBtn.classList.add('secondary');
+      if(step==='cull'){
+        cullReady=true;
+        updateCullMoveButton();
       }
       if(godResolve){const r=godResolve;godResolve=null;r();}
     })
@@ -2023,12 +2046,17 @@ function togglePhoneBg(path){
 }
 
 /* ---- cull (3-tier, reconciling, filterable) ---- */
-let cullView=[], rankView=[], lastCullSig='';
+let cullView=[], rankView=[], lastCullSig='', lastCullMoveSig='';
+let cullReady=false;
 const TIER_NAME={sharp:'清晰',soft:'轻微软',blurry:'模糊'};
 const NEXT_TIER={sharp:'soft',soft:'blurry',blurry:'sharp'};
 function cullCardHtml(p,idx){const path=escHtml(p.path);
   const cls=p.tier==='sharp'?'kept':p.tier==='soft'?'soft':'rejected';
+  const moveSel=p.tier==='blurry'
+    ?`<button class="move-select${p.move_selected===false?' off':''}" data-path="${path}" data-selected="${p.move_selected===false?'0':'1'}" title="${p.move_selected===false?'未加入本次移动，点击重新选择':'已加入本次移动，点击保留在原位置'}">${p.move_selected===false?'':'✓'}</button>`
+    :'';
   return `<div class="photo-card ${cls}" data-i="${idx}" data-path="${path}" data-tier="${p.tier}">
+    ${moveSel}
     <button class="badge ${p.badgeType} badge-tier" data-path="${path}" data-tier="${p.tier}" title="点击切换：清晰 → 轻微软 → 模糊">⇄ ${p.badge}</button>
     <img class="photo-img" src="${p.thumb}" loading="lazy" decoding="async">
     <div class="photo-info"><div class="pi-row"><span class="photo-name">${escHtml(p.name)}</span><span class="ftype${p.raw?'':(p.heic?' heic':' jpg')}">${p.fmt||(p.raw?'RAW':p.heic?'HEIC':'JPG')}</span></div><div class="photo-score">${p.score}</div></div></div>`;}
@@ -2058,7 +2086,10 @@ function renderCullStep(items){
     return;
   }
 
-  const sig=gPage+'#'+cullView.map(p=>p.path+':'+p.tier).join('|');
+  const moveSig=items.filter(p=>p.tier==='blurry')
+    .map(p=>p.path+':'+(p.move_selected===false?'0':'1')).join('|');
+  if(moveSig!==lastCullMoveSig){lastCullMoveSig=moveSig;setupFilterBar();}
+  const sig=gPage+'#'+cullView.map(p=>p.path+':'+p.tier+':'+(p.move_selected===false?'0':'1')).join('|');
   if(sig===lastCullSig&&lastStep===currentStep){
     document.getElementById('sShowing').textContent=filtered.length;
     updatePager();
@@ -2083,14 +2114,67 @@ function renderCullStep(items){
   document.getElementById('sShowing').textContent=filtered.length;
   updatePager();
 }
+function cullMoveCounts(){
+  const blurry=photos.filter(p=>p.tier==='blurry');
+  return {total:blurry.length,selected:blurry.filter(p=>p.move_selected!==false).length};
+}
+function updateCullMoveButton(){
+  const mb=document.getElementById('moveBlurryBtn');if(!mb)return;
+  const n=cullMoveCounts();
+  const count=document.getElementById('cullMoveCount');if(count)count.textContent=n.selected+'/'+n.total;
+  if(currentStep!=='cull'||!cullReady||!n.total||godMode){
+    mb.style.display='none';mb.disabled=false;mb.classList.remove('cta','btn');mb.classList.add('btn-ghost');
+    startBtn.classList.remove('secondary');return;
+  }
+  mb.style.display='block';
+  if(n.selected>0){
+    mb.disabled=false;
+    mb.textContent='🗂️ 移动 '+n.selected+' 张 → 模糊照片（Blurred）';
+    mb.classList.remove('btn-ghost');mb.classList.add('btn','cta');
+    startBtn.classList.add('secondary');
+  }else{
+    mb.disabled=true;
+    mb.textContent='🗂️ 未选择需要移动的模糊照片';
+    mb.classList.remove('btn','cta');mb.classList.add('btn-ghost');
+    startBtn.classList.remove('secondary');
+  }
+}
+function applyMoveSelectionResponse(path,d){
+  if(path){
+    const pp=photos.find(x=>x.path===path);
+    if(pp)pp.move_selected=!!d.move_selected;
+  }
+  lastCullSig='';lastCullMoveSig='';
+  renderCullStep(photos);
+  updateCullMoveButton();
+  if(document.getElementById('lightbox').classList.contains('open')&&currentStep==='cull')showLb();
+}
+function setBlurryMoveSelection(path,selected){
+  fetch('/api/select-blurry',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({path,selected})})
+    .then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;})
+    .then(d=>applyMoveSelectionResponse(path,d))
+    .catch(err=>toast('移动选择修改失败：'+(err.message||'未知错误'),'bad'));
+}
+function setAllBlurryMoveSelection(selected){
+  fetch('/api/select-blurry',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({all:selected})})
+    .then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;})
+    .then(d=>{
+      photos.forEach(p=>{if(p.tier==='blurry')p.move_selected=selected;});
+      lastCullSig='';lastCullMoveSig='';renderCullStep(photos);updateCullMoveButton();
+      toast(selected?'已选择全部模糊照片':'已取消全部模糊照片的移动选择','good');
+    }).catch(err=>toast('批量选择失败：'+(err.message||'未知错误'),'bad'));
+}
+
 function cullSetTier(path,tier){
   fetch('/api/toggle-status',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path,tier})})
     .then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;})
     .then(d=>{
       document.getElementById('sSharp').textContent=d.sharp;document.getElementById('sSoft').textContent=d.soft;document.getElementById('sBlurry').textContent=d.blurry;
       const pp=photos.find(x=>x.path===path||x.path===d.path);
-      if(pp){pp.tier=d.tier;pp.badge=d.badge;pp.badgeType=d.badgeType;pp.kept=d.kept;pp.rejected=!d.kept;if(d.path)pp.path=d.path;if(d.thumb)pp.thumb=d.thumb;}
-      lastCullSig='';renderCullStep(photos);
+      if(pp){pp.tier=d.tier;pp.badge=d.badge;pp.badgeType=d.badgeType;pp.kept=d.kept;pp.rejected=!d.kept;pp.move_selected=!!d.move_selected;if(d.path)pp.path=d.path;if(d.thumb)pp.thumb=d.thumb;}
+      lastCullSig='';lastCullMoveSig='';renderCullStep(photos);updateCullMoveButton();
     }).catch(err=>toast('分类修改失败：'+(err.message||'未知错误'),'bad'));
 }
 
@@ -2116,6 +2200,8 @@ document.getElementById('gallery').addEventListener('click',e=>{
   const rm=e.target.closest('.remove-btn');if(rm){e.stopPropagation();removePhoto(rm.dataset.path);return;}
   const pb=e.target.closest('.pbg-toggle');
   if(pb){e.stopPropagation();togglePhoneBg(pb.dataset.path);return;}
+  const ms=e.target.closest('.move-select');
+  if(ms){e.stopPropagation();setBlurryMoveSelection(ms.dataset.path,ms.dataset.selected!=='1');return;}
   const tg=e.target.closest('.status-toggle,.badge-tier');
   if(tg){e.stopPropagation();cullSetTier(tg.dataset.path,NEXT_TIER[tg.dataset.tier||'sharp']);return;}
   const c=e.target.closest('.photo-card');if(!c)return;
@@ -2147,11 +2233,17 @@ function showLb(){
     ? ((p.group>1)?('   ·   同组最佳 · 共 '+p.group+' 张（'+(p.group-1)+' 张相似照片已归组）'):'   ·   原始照片')
     : (p.score!=null?'   ·   '+p.score:'');
   document.getElementById('lbCount').textContent=(lbIndex+1)+' / '+lbList.length+extra;
-  const rm=document.getElementById('lbRemove'),rs=document.getElementById('lbRestore'),tg=document.getElementById('lbToggle');
+  const rm=document.getElementById('lbRemove'),rs=document.getElementById('lbRestore'),tg=document.getElementById('lbToggle'),ms=document.getElementById('lbMoveSelect');
   rm.style.display=currentStep==='rank'?'inline-block':'none';
   rs.style.display=(currentStep==='rank'&&removedCount>0)?'inline-block':'none';
   tg.style.display=currentStep==='cull'?'inline-block':'none';
+  ms.style.display=(currentStep==='cull'&&p.tier==='blurry')?'inline-block':'none';
   if(currentStep==='cull')tg.textContent='⇄ '+(TIER_NAME[p.tier]||'清晰')+' → '+(TIER_NAME[NEXT_TIER[p.tier||'sharp']]);
+  if(currentStep==='cull'&&p.tier==='blurry'){
+    const on=p.move_selected!==false;
+    ms.textContent=on?'☑ 本次移动':'☐ 保留原位';
+    ms.classList.toggle('toggle',on);ms.classList.toggle('restore',!on);
+  }
   const pbg=document.getElementById('lbPhoneBg');
   pbg.style.display=currentStep==='rank'?'inline-block':'none';
   if(currentStep==='rank'){pbg.classList.toggle('on',!!p.phonebg);pbg.textContent=p.phonebg?'📱 手机壁纸 ✓':'📱 手机壁纸';}
@@ -2266,10 +2358,11 @@ document.getElementById('lbToggle').onclick=()=>{const p=lbList[lbIndex];if(!p)r
     if(d.error){toast(d.error,'bad');return;}
     document.getElementById('sSharp').textContent=d.sharp;document.getElementById('sSoft').textContent=d.soft;document.getElementById('sBlurry').textContent=d.blurry;
     const pp=photos.find(x=>x.path===p.path||x.path===d.path);
-    if(pp){pp.tier=d.tier;pp.badge=d.badge;pp.badgeType=d.badgeType;pp.kept=d.kept;pp.rejected=!d.kept;if(d.path)pp.path=d.path;if(d.thumb)pp.thumb=d.thumb;}
-    p.tier=d.tier;if(d.path)p.path=d.path;
-    lastCullSig='';renderCullStep(photos);showLb();});};
+    if(pp){pp.tier=d.tier;pp.badge=d.badge;pp.badgeType=d.badgeType;pp.kept=d.kept;pp.rejected=!d.kept;pp.move_selected=!!d.move_selected;if(d.path)pp.path=d.path;if(d.thumb)pp.thumb=d.thumb;}
+    p.tier=d.tier;p.move_selected=!!d.move_selected;if(d.path)p.path=d.path;
+    lastCullSig='';lastCullMoveSig='';renderCullStep(photos);updateCullMoveButton();showLb();});};
 document.getElementById('lbPhoneBg').onclick=()=>{const p=lbList[lbIndex];if(p)togglePhoneBg(p.path);};
+document.getElementById('lbMoveSelect').onclick=()=>{const p=lbList[lbIndex];if(p&&p.tier==='blurry')setBlurryMoveSelection(p.path,p.move_selected===false);};
 document.addEventListener('keydown',e=>{
   if(!document.getElementById('lightbox').classList.contains('open'))return;
   if(e.key==='Escape')closeLb();
@@ -2321,24 +2414,29 @@ document.getElementById('exportPbgBtn').onclick=async function(){
 };
 
 document.getElementById('moveBlurryBtn').onclick=async function(){
-  if(!confirm('是否将已审核为“模糊”的照片移动到“模糊照片（Blurred）”子文件夹？\n\n只会移动，不会删除原文件；移动后可手动移回。'))return;
-  const old='🗂️ 移动模糊照片 → 模糊照片（Blurred）';
-  this.disabled=true;this.textContent='正在移动…';
+  const before=cullMoveCounts();
+  if(!before.selected)return;
+  if(!confirm('是否将已选择的 '+before.selected+' 张“模糊”照片移动到“模糊照片（Blurred）”子文件夹？\n\n未勾选的模糊照片会保留在原位置；只会移动，不会删除原文件。'))return;
+  this.disabled=true;this.textContent='正在移动 '+before.selected+' 张…';
   try{
     const r=await fetch('/api/move-blurry',{method:'POST'});
     const d=await r.json();
     if(!r.ok||d.error)throw new Error(d.error||('HTTP '+r.status));
     const extra=d.failed?('；'+d.failed+' 张失败'):'';
     toast('✓ 已移动 '+d.moved+' 张'+extra+'\n'+d.dest,d.failed?'bad':'good');
-    if(!d.failed){
-      this.style.display='none';
-      this.classList.remove('cta');
-      startBtn.classList.remove('secondary');
+
+    // Pull the authoritative paths/selections back after files were moved so
+    // thumbnails, large-image viewing and later actions never keep stale paths.
+    const pr=await fetch('/api/progress/cull');
+    if(pr.ok){
+      const snap=await pr.json();
+      photos=snap.photos||[];
+      lastCullSig='';lastCullMoveSig='';renderCullStep(photos);
     }
   }catch(err){
     toast('移动失败：'+(err.message||'未知错误'),'bad');
   }finally{
-    this.disabled=false;this.textContent=old;
+    this.disabled=false;updateCullMoveButton();
   }
 };
 </script></body></html>'''
@@ -2635,7 +2733,11 @@ def api_progress(step):
                         'truncated': (not s['running'] and len(all_photos) > len(photos)),
                         'result_total': len(all_photos),
                         'stats': {'images': len(all_photos), 'sharp': s['sharp'],
-                                  'soft': s['soft'], 'blurry': s['blurry']}})
+                                  'soft': s['soft'], 'blurry': s['blurry'],
+                                  'move_selected': sum(
+                                      1 for p in all_photos
+                                      if p.get('tier') == 'blurry' and p.get('move_selected', True)
+                                  )}})
     if step == 'dedup':
         s = state['dedup']
         all_photos = s['photos']
@@ -2752,7 +2854,11 @@ def api_toggle_status():
     badge, bt = _badge_for(tier, False)
     photo.update({'path': new_path, 'thumb': thumb_url(new_path), 'tier': tier,
                   'kept': now_kept, 'rejected': not now_kept,
-                  'badge': badge, 'badgeType': bt})
+                  'badge': badge, 'badgeType': bt,
+                  # Moving is a separate user choice. Entering Blurry selects
+                  # the photo by default; leaving Blurry removes it from the
+                  # pending-move set.
+                  'move_selected': tier == 'blurry'})
     sp = s['sharp_paths']
     for old in (path, new_path):
         if old in sp:
@@ -2762,9 +2868,63 @@ def api_toggle_status():
     s['sharp'] = sum(1 for p in s['photos'] if p['tier'] == 'sharp')
     s['soft'] = sum(1 for p in s['photos'] if p['tier'] == 'soft')
     s['blurry'] = sum(1 for p in s['photos'] if p['tier'] == 'blurry')
+    move_total = sum(1 for p in s['photos'] if p.get('tier') == 'blurry')
+    move_selected = sum(
+        1 for p in s['photos']
+        if p.get('tier') == 'blurry' and p.get('move_selected', True)
+    )
     return jsonify({'ok': True, 'tier': tier, 'kept': now_kept, 'badge': badge,
                     'badgeType': bt, 'path': new_path, 'thumb': photo['thumb'],
+                    'move_selected': photo.get('move_selected', False),
+                    'move_selected_count': move_selected, 'move_total': move_total,
                     'sharp': s['sharp'], 'soft': s['soft'], 'blurry': s['blurry']})
+
+
+def _blurry_move_counts():
+    photos = state['cull'].get('photos', [])
+    blurry = [p for p in photos if p.get('tier') == 'blurry']
+    selected = [p for p in blurry if p.get('move_selected', True)]
+    return len(selected), len(blurry)
+
+
+@app.route('/api/select-blurry', methods=['POST'])
+def api_select_blurry():
+    """Select/unselect reviewed blurry photos for the next explicit Move action.
+
+    Classification and file movement are intentionally separate: unselecting a
+    blurry photo keeps its Blurry badge but leaves the source file in place.
+    """
+    blocked = _reject_mutation_while_running()
+    if blocked:
+        return blocked
+
+    data = request.get_json() or {}
+    photos = state['cull'].get('photos', [])
+
+    if 'all' in data:
+        selected = bool(data.get('all'))
+        for photo in photos:
+            if photo.get('tier') == 'blurry':
+                photo['move_selected'] = selected
+        count, total = _blurry_move_counts()
+        return jsonify({'ok': True, 'selected': count, 'total': total})
+
+    path = str(data.get('path') or '')
+    photo = next((p for p in photos if p.get('path') == path), None)
+    if not photo:
+        return jsonify({'error': '未找到照片'}), 404
+    if photo.get('tier') != 'blurry':
+        return jsonify({'error': '只有“模糊”照片可以加入移动列表'}), 400
+
+    photo['move_selected'] = bool(data.get('selected', True))
+    count, total = _blurry_move_counts()
+    return jsonify({
+        'ok': True,
+        'path': photo.get('path'),
+        'move_selected': photo['move_selected'],
+        'selected': count,
+        'total': total,
+    })
 
 
 @app.route('/api/move-blurry', methods=['POST'])
@@ -2777,8 +2937,10 @@ def api_move_blurry():
     if not folder or not Path(folder).is_dir():
         return jsonify({'error': '未选择有效的照片文件夹'}), 400
 
-    blurry_photos = [pp for pp in state['cull'].get('photos', [])
-                     if pp.get('tier') == 'blurry']
+    blurry_photos = [
+        pp for pp in state['cull'].get('photos', [])
+        if pp.get('tier') == 'blurry' and pp.get('move_selected', True)
+    ]
     if not blurry_photos:
         return jsonify({'ok': True, 'moved': 0,
                         'dest': str(Path(folder) / 'Blurred')})
@@ -2793,6 +2955,7 @@ def api_move_blurry():
             failed += 1
             continue
         if src.parent.resolve() == dest_dir.resolve():
+            photo['move_selected'] = False
             continue
 
         dst = dest_dir / src.name
@@ -2811,6 +2974,7 @@ def api_move_blurry():
             new = str(dst)
             photo['path'] = new
             photo['thumb'] = thumb_url(new)
+            photo['move_selected'] = False
             moved += 1
             # Keep downstream survivor references coherent if the user changed
             # tiers after a completed cull.
@@ -2820,7 +2984,9 @@ def api_move_blurry():
             failed += 1
             logger.warning(f"move-blurry failed {src}: {e}")
 
+    selected_left, blurry_total = _blurry_move_counts()
     return jsonify({'ok': failed == 0, 'moved': moved, 'failed': failed,
+                    'selected': selected_left, 'total': blurry_total,
                     'dest': str(dest_dir)})
 
 @app.route('/api/export', methods=['POST'])
