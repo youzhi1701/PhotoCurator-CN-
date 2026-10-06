@@ -4463,6 +4463,35 @@ def api_dedup_apply():
         )
         moved = int(result.get('moved', 0) or 0)
         failed = int(result.get('failed', 0) or 0)
+        moved_old = {row.get('old') for row in result.get('destinations', []) if row.get('old')}
+
+        if moved_old:
+            # Processed duplicates leave the active source workspace. Keeping
+            # stale old paths in Cull/Rank made cards point at files that had
+            # already moved into PhotoCurator_Result.
+            for old in moved_old:
+                _delete_review_override(old)
+                state['excluded'].discard(old)
+                state['phone_bg'].discard(old)
+
+            cull = state['cull']
+            cull['photos'] = [p for p in cull.get('photos', [])
+                              if p.get('path') not in moved_old]
+            cull['sharp_paths'] = [p for p in cull.get('sharp_paths', [])
+                                   if p not in moved_old]
+            cull.setdefault('removed_paths', set()).update(moved_old)
+            cull['sharp'] = sum(1 for p in cull['photos'] if p.get('tier') == 'sharp')
+            cull['soft'] = sum(1 for p in cull['photos'] if p.get('tier') == 'soft')
+            cull['blurry'] = sum(1 for p in cull['photos'] if p.get('tier') == 'blurry')
+
+            rank = state['rank']
+            rank['scores'] = [sc for sc in rank.get('scores', [])
+                              if getattr(sc, 'path', None) not in moved_old]
+            rank['total'] = len(rank['scores'])
+            rank['preview_at'] = 0.0
+
+            if isinstance(s.get('seen_paths'), set):
+                s['seen_paths'].difference_update(moved_old)
 
         # Remove successfully moved (or externally missing) non-kept members
         # from the review state. Failed files that still exist remain visible,
@@ -4479,6 +4508,9 @@ def api_dedup_apply():
             group['count'] = len(remaining)
 
         s['groups_data'] = [g for g in s.get('groups_data', []) if g.get('members')]
+        _sync_dedup_with_cull()
+        state['rank']['preview'] = build_topn()
+        state['rank']['preview_at'] = time.time()
         unresolved = []
         allowed_after = _cull_allowed_for_dedup()
         for group in s['groups_data']:
@@ -4804,19 +4836,28 @@ def api_move_blurry():
         prefs.get('output_mode', 'source'), prefs.get('custom_output', '')
     )
     moved_map = {row['old']: row['new'] for row in result.get('destinations', [])}
+    moved_old = set(moved_map)
 
-    for photo in blurry_photos:
-        old = photo.get('path')
-        if old in moved_map:
+    if moved_old:
+        for old in moved_old:
             _delete_review_override(old)
-            new = moved_map[old]
-            photo['path'] = new
-            photo['thumb'] = thumb_url(new)
-            photo['rel_dir'] = relative_folder(new, folder)
-            photo['move_selected'] = False
-            state['cull']['sharp_paths'] = [
-                new if p == old else p for p in state['cull'].get('sharp_paths', [])
-            ]
+            state['excluded'].discard(old)
+            state['phone_bg'].discard(old)
+        cull = state['cull']
+        cull['photos'] = [p for p in cull.get('photos', []) if p.get('path') not in moved_old]
+        cull['sharp_paths'] = [p for p in cull.get('sharp_paths', []) if p not in moved_old]
+        cull.setdefault('removed_paths', set()).update(moved_old)
+        cull['sharp'] = sum(1 for p in cull['photos'] if p.get('tier') == 'sharp')
+        cull['soft'] = sum(1 for p in cull['photos'] if p.get('tier') == 'soft')
+        cull['blurry'] = sum(1 for p in cull['photos'] if p.get('tier') == 'blurry')
+
+        rank = state['rank']
+        rank['scores'] = [sc for sc in rank.get('scores', [])
+                          if getattr(sc, 'path', None) not in moved_old]
+        rank['total'] = len(rank['scores'])
+        rank['preview'] = build_topn()
+        rank['preview_at'] = time.time()
+        _sync_dedup_with_cull()
 
     selected_left, blurry_total = _blurry_move_counts()
     return jsonify({'ok': result.get('failed', 0) == 0,
