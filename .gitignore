@@ -21,6 +21,10 @@ Thumbs.db
 desktop.ini
 
 # User output folders (when repository itself is used as a test folder)
+PhotoCurator_Result/
+PhotoCurator_Result（照片筛选结果）/
+Blurred（模糊照片）/
+Duplicates（重复照片）/
 Blurred/
 Duplicates/
 TOP_*/
