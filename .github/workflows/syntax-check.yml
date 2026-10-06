@@ -151,10 +151,14 @@ jobs:
               "data-view=\"small\"",
               "data-view=\"list\"",
               "collapsedFolders",
-              "send2trash",
+              "software_trash",
+              "PhotoCurator_RecycleBin（软件回收站）",
+              "data-step=\"trash\"",
+              "trashRestoreOne",
+              "trashPurgeOne",
               "library_index.sqlite3",
               "Ctrl + mouse wheel changes thumbnail density only",
-              "移入 Windows 回收站",
+              "移入软件回收站",
           ]
           missing = [x for x in required if x not in source]
           if missing:
@@ -207,6 +211,8 @@ jobs:
               "ftype:step==='cull'?'all':cullType",
               "Download Simplified Chinese installer language",
               "raw.githubusercontent.com/kira-96/Inno-Setup-Chinese-Simplified-Translation",
+              "send2trash",
+              "移入 Windows 回收站",
           ]
           leftovers = [x for x in banned if x in (source + workflow)]
           if leftovers:
