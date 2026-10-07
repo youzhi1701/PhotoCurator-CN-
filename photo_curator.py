@@ -3718,6 +3718,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
     border:0;background:transparent;color:var(--accent);font-size:10px;font-weight:800;cursor:pointer
   }
   .activity-log{max-height:300px!important;overflow:auto!important;padding:0!important;font-size:11px!important;gap:7px!important}
+  .catalog-load-more{display:block;margin:14px auto 20px;padding:9px 16px;border:1px solid var(--border);border-radius:10px;background:rgba(255,255,255,.86);color:var(--accent);font-weight:800;cursor:pointer}
   .activity-item{padding:8px 9px!important;border:1px solid rgba(124,139,192,.10);line-height:1.45;background:rgba(248,250,255,.72)!important}
   .drawer-scrim{display:none!important}
   #settingsQuick,#taskToggle,#toolboxOpen{display:none!important}
@@ -4954,44 +4955,78 @@ function renderSources(){
   });
 }
 
-async function loadCatalogRoot(rootId){
+let catalogRootLoading=false;
+function catalogCardHtml(item){
+  const missing=item.state==='missing';
+  const life=String(item.lifecycle||'normal');
+  const lifeBadge=life==='normal'?'':('<span class="lifecycle-badge trash">'+escHtml(
+    life==='trashed'?'软件回收站':life==='permanently_deleted'?'已永久删除':'处理中'
+  )+'</span>');
+  const badge=missing?'<span class="lifecycle-badge trash">原文件缺失</span>':lifeBadge;
+  const preview=item.thumb
+    ?'<img class="photo-img" src="'+escHtml(item.thumb)+'" loading="lazy" decoding="async" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'grid\'">'
+      +'<div class="offline-preview-fallback" style="display:none">离线预览未缓存</div>'
+    :'<div class="offline-preview-fallback">离线预览未缓存</div>';
+  return '<div class="photo-card catalog-card">'+badge+preview
+    +'<div class="photo-info"><div class="photo-name">'+escHtml(item.name)+'</div>'
+    +'<div class="source-path">'+escHtml(item.relative_path)+'</div>'
+    +'<div class="catalog-meta">'+(item.has_cull_cache?'已分析':'仅索引')+' · '+formatBytes(item.size)+'</div></div></div>';
+}
+async function loadCatalogRoot(rootId,{append=false}={}){
+  if(catalogRootLoading)return;
+  catalogRootLoading=true;
   showPhotoView();
   try{
-    const r=await fetch('/api/catalog-root/'+encodeURIComponent(rootId));
+    const offset=append&&catalogRootView?Number(catalogRootView.loaded||0):0;
+    const r=await fetch('/api/catalog-root/'+encodeURIComponent(rootId)+'?limit=400&offset='+offset);
     const d=await r.json();
     if(!r.ok||d.error)throw new Error(d.error||('HTTP '+r.status));
-    catalogRootView=d;
-    folder=null;
-    updateStartAvailability();
-    updateSourceUi();
-    const fi=document.getElementById('folderInput');
-    fi.value=(d.root&&d.root.original_root)||'';
-    document.getElementById('progressWrap').style.display='none';
-    document.getElementById('filterBar').style.display='none';
-    document.getElementById('resultTools').style.display='none';
-    document.getElementById('workspaceTitle').textContent=(d.source&&d.source.display_name)||'离线图库';
-    document.getElementById('workspaceHint').textContent='数据源未连接 · 历史索引仍可查看，重新插入原设备后可继续增量分析。';
-    const items=d.items||[];
-    const g=document.getElementById('gallery');
-    g.className='gallery catalog-history';
-    g.innerHTML=items.length?items.map(item=>{
-      const missing=item.state==='missing';
-      const badge=missing?'<span class="lifecycle-badge trash">原文件缺失</span>':'';
-      const preview=item.thumb
-        ?'<img class="photo-img" src="'+escHtml(item.thumb)+'" loading="lazy" decoding="async" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'grid\'">'
-          +'<div class="offline-preview-fallback" style="display:none">离线预览未缓存</div>'
-        :'<div class="offline-preview-fallback">离线预览未缓存</div>';
-      return '<div class="photo-card catalog-card">'+badge+preview
-        +'<div class="photo-info"><div class="photo-name">'+escHtml(item.name)+'</div>'
-        +'<div class="source-path">'+escHtml(item.relative_path)+'</div>'
-        +'<div class="catalog-meta">'+(item.has_cull_cache?'已分析':'仅索引')+' · '+formatBytes(item.size)+'</div></div></div>';
-    }).join(''):'<div class="empty"><div class="icon">🗄️</div><div class="title">这个图库还没有持久化媒体索引</div><p>重新连接数据源并完成一次扫描后会建立历史目录。</p></div>';
-    document.getElementById('sShowing').textContent=String(items.length);
-    document.getElementById('sImages').textContent=String(d.total||items.length);
+    const incoming=d.items||[];
+    if(!append){
+      catalogRootView={...d,items:incoming.slice(),loaded:incoming.length};
+      folder=null;
+      updateStartAvailability();
+      updateSourceUi();
+      const fi=document.getElementById('folderInput');
+      fi.value=(d.root&&d.root.original_root)||'';
+      document.getElementById('progressWrap').style.display='none';
+      document.getElementById('filterBar').style.display='none';
+      document.getElementById('resultTools').style.display='none';
+      document.getElementById('workspaceTitle').textContent=(d.source&&d.source.display_name)||'离线图库';
+      document.getElementById('workspaceHint').textContent='历史索引分批加载；设备未连接时仍可查看已生成的离线预览。';
+      const g=document.getElementById('gallery');
+      g.className='gallery catalog-history';
+      g.innerHTML=incoming.length
+        ?incoming.map(catalogCardHtml).join('')
+        :'<div class="empty"><div class="icon">🗄️</div><div class="title">这个图库还没有持久化媒体索引</div><p>重新连接数据源并完成一次扫描后会建立历史目录。</p></div>';
+    }else{
+      catalogRootView.items.push(...incoming);
+      catalogRootView.loaded+=incoming.length;
+      catalogRootView.has_more=!!d.has_more;
+      document.getElementById('gallery').insertAdjacentHTML('beforeend',incoming.map(catalogCardHtml).join(''));
+    }
+    catalogRootView.has_more=!!d.has_more;
+    catalogRootView.total=Number(d.total||catalogRootView.total||0);
+    const loaded=Number(catalogRootView.loaded||incoming.length);
+    document.getElementById('sShowing').textContent=String(loaded);
+    document.getElementById('sImages').textContent=String(catalogRootView.total||loaded);
+
+    let more=document.getElementById('catalogLoadMore');
+    if(more)more.remove();
+    if(catalogRootView.has_more){
+      more=document.createElement('button');
+      more.id='catalogLoadMore';more.className='catalog-load-more';
+      more.textContent='继续加载 · '+loaded+' / '+catalogRootView.total;
+      more.onclick=()=>loadCatalogRoot(rootId,{append:true});
+      document.getElementById('photoView').appendChild(more);
+    }
   }catch(err){
     toast('读取离线图库失败：'+(err.message||'未知错误'),'bad');
+  }finally{
+    catalogRootLoading=false;
   }
 }
+
 let lastStorageSummaryAt=0;
 function loadStorageSummary(force=false){
   const now=Date.now();
