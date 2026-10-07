@@ -1,3 +1,13 @@
+## v1.5.7
+
+### Windows 启动约 5 秒后“Python 未响应”
+- v1.5.6 已恢复 v1.5.0 的窗口壳仍然复现卡死，说明窗口壳不是唯一触发点。
+- 继续对照 v1.5.0 后新增启动链路，定位到前端在首屏 5 秒后固定调用 `/api/environment-refresh`。
+- 旧实现会枚举所有逻辑磁盘，并对每个卷执行路径解析、卷信息、容量读取，同时再次扫描各磁盘 `DCIM` 目录；慢速/休眠/异常 USB 硬盘或映射盘可能让 Python 宿主长期阻塞。
+- v1.5.7 的自动刷新改为纯“设备存在性”检查：只使用 `GetLogicalDrives`、`GetDriveTypeW` 和卷 GUID，不读取容量、不解析目录、不扫描照片。
+- 自动环境刷新不再调用 `detect_sd_cards()`；相机卡内容扫描改为用户明确选择数据源后再进行。
+- CI 增加防回归：周期卷探测禁止重新引入 `volume_info_for_path`、`Path.resolve`、`disk_usage`、`os.stat`、`os.scandir` 等磁盘 I/O。
+
 ## v1.5.6
 
 ### Windows 实机未响应：回退到已验证稳定的桌面壳
