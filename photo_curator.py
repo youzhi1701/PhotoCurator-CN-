@@ -3532,7 +3532,7 @@ document.addEventListener('keydown',e=>{
   else if(e.key==='Enter'){e.preventDefault();closeDeleteDialog('trash');}
   else if(e.key==='p'||e.key==='P'){e.preventDefault();closeDeleteDialog('permanent');}
 });
-let folder=null, photos=[], lbList=[], lbIndex=0, currentStep='cull', folderStatus={};
+let folder=null, photos=[], lbList=[], lbIndex=0, currentStep='cull', currentSurface='dashboard', folderStatus={};
 const cullLiveStore=new Map();
 const dedupLiveStore=new Map();
 let isRunning=false, runningStep=null, codespacesMode=false;
@@ -3679,10 +3679,6 @@ function applyThumbSize(v){thumbSize=Math.min(340,Math.max(120,Math.round(v/10)*
 applyThumbSize(thumbSize);
 document.querySelector('.main').addEventListener('wheel',e=>{if(!e.ctrlKey||document.getElementById('lightbox').classList.contains('open'))return;e.preventDefault();applyThumbSize(thumbSize+(e.deltaY<0?20:-20));},{passive:false});
 function nativeWindow(action){if(window.pywebview&&window.pywebview.api&&window.pywebview.api.window_action){window.pywebview.api.window_action(action).catch(()=>{});}}
-document.getElementById('winMin').onclick=()=>nativeWindow('minimize');
-document.getElementById('winMax').onclick=()=>nativeWindow('toggle_maximize');
-document.getElementById('winClose').onclick=()=>nativeWindow('close');
-setTimeout(()=>{if(!(window.pywebview&&window.pywebview.api))document.querySelector('.window-controls').style.display='none';},900);
 
 const WORKSPACE_COPY={
   cull:['模糊废片','快速复核模糊与失焦照片，后台分析不会打断当前操作。'],
@@ -3695,6 +3691,39 @@ function updateWorkspaceHeading(){
   document.getElementById('workspaceTitle').textContent=c[0];
   document.getElementById('workspaceHint').textContent=c[1];
 }
+const dashboardView=document.getElementById('dashboardView');
+const galleryView=document.getElementById('galleryView');
+function setSurface(name){
+  currentSurface=name==='gallery'?'gallery':'dashboard';
+  dashboardView.hidden=currentSurface!=='dashboard';
+  galleryView.hidden=currentSurface!=='gallery';
+  document.getElementById('homeNav').classList.toggle('active',currentSurface==='dashboard');
+  document.querySelectorAll('.step').forEach(x=>{
+    if(currentSurface==='dashboard')x.classList.remove('active');
+    else x.classList.toggle('active',x.dataset.step===currentStep);
+  });
+  if(currentSurface==='dashboard')refreshDashboard();
+}
+function refreshDashboard(){
+  fetch('/api/bootstrap').then(r=>r.json()).then(d=>{
+    document.getElementById('dashIndexed').textContent=Number(d.indexed||0);
+    document.getElementById('dashGroups').textContent=Number(d.similarity_groups||0);
+    document.getElementById('dashReviewed').textContent=Number(d.reviewed||0);
+    document.getElementById('dashTrash').textContent=Number(d.trash||0);
+    const last=d.last_activity||null;
+    document.getElementById('dashActivity').textContent=last
+      ?('最近操作：'+(last.action||'记录')+(last.detail?(' · '+last.detail):''))
+      :'本地索引已就绪。选择照片文件夹后进入筛选工作区。';
+  }).catch(()=>{});
+}
+document.getElementById('homeNav').onclick=()=>setSurface('dashboard');
+document.getElementById('dashboardPickFolder').onclick=()=>{
+  if(document.body.classList.contains('sidebar-collapsed'))setSidebarCollapsed(false);
+  const details=document.getElementById('sourceDetails');
+  details.open=true;
+  setTimeout(()=>document.getElementById('browseBtn').click(),0);
+};
+refreshDashboard();
 const sidebarCollapse=document.getElementById('sidebarCollapse');
 function setSidebarCollapsed(on){
   document.body.classList.toggle('sidebar-collapsed',!!on);
@@ -3924,6 +3953,7 @@ function renderSettings(){
 /* Switch the visible step (used by tab clicks AND God mode). */
 function activateStep(step){
   currentStep=step;
+  setSurface('gallery');
   document.querySelectorAll('.step').forEach(x=>x.classList.toggle('active',x.dataset.step===step));
   updateWorkspaceHeading();
   renderSettings();
@@ -4061,6 +4091,8 @@ function selectFolderValue(value){
   const next=String(value||'').trim();
   if(next===folder)return;
   folder=next||null;
+  const pathLabel=document.getElementById('toolbarPath');
+  if(pathLabel)pathLabel.textContent=folder||'未选择照片库';
   resetWorkspaceForFolder();
 }
 
@@ -4221,6 +4253,7 @@ async function startStep(step,config=null){
 }
 function doStart(){
   if(!folder){toast('请先选择照片文件夹','bad');return;}
+  setSurface('gallery');
   startStep(currentStep);
 }
 function doStop(){
