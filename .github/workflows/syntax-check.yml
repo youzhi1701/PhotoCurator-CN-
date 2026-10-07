@@ -162,6 +162,18 @@ jobs:
           install_delete = installer.split("[InstallDelete]", 1)[1].split("[Files]", 1)[0]
           if 'Type: filesandordirs; Name: "{localappdata}\\PhotoCurator\\data' in install_delete:
               raise SystemExit("Cover upgrade must never delete the per-user runtime data directory")
+          if 'AppMutex=' in installer:
+              raise SystemExit("Installer must not block upgrades with AppMutex; it should auto-close the running app")
+          auto_close_required = [
+              'function PrepareToInstall(var NeedsRestart: Boolean): String;',
+              "CheckForMutexes(PhotoCuratorMutex)",
+              "taskkill.exe",
+              '/F /T /IM "{#MyAppExeName}"',
+              "CloseApplications=no",
+          ]
+          missing_auto_close = [x for x in auto_close_required if x not in installer]
+          if missing_auto_close:
+              raise SystemExit("Installer auto-close upgrade contract regression: " + repr(missing_auto_close))
           if 'INSTALL_ROOT = (' not in desktop or 'Path(sys.executable).resolve().parent.parent' not in desktop:
               raise SystemExit("Frozen desktop root no longer matches {app}/app executable layout")
           if 'DATA_ROOT = resolve_data_root(frozen=IS_FROZEN)' not in desktop:
