@@ -1,8 +1,8 @@
 {
   "product": "PhotoCurator",
   "channel": "stable",
-  "version": "1.4.2",
-  "installer": "PhotoCurator-Setup-v1.4.2.exe",
+  "version": "1.5.0",
+  "installer": "PhotoCurator-Setup-v1.5.0.exe",
   "upgrade_mode": "in_place",
   "same_app_id": true,
   "preserve": [
@@ -19,5 +19,5 @@
   "replace": [
     "app"
   ],
-  "notes": "v1.4.2 可直接覆盖 v1.4.1 / v1.4.0 / v1.3.0；仅替换 app，保留配置、本地分析索引、长期相似特征缓存、运行日志、缓存数据、用户照片及 PhotoCurator 软件回收站。"
+  "notes": "v1.5.0 可直接覆盖 v1.4.2 / v1.4.1 / v1.4.0 / v1.3.0；仅替换 app，保留配置、本地分析索引、长期相似特征缓存、运行日志、缓存数据、用户照片及 PhotoCurator 软件回收站。"
 }
