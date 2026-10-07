@@ -2532,18 +2532,8 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
          opacity:0;transform:translateY(12px);transition:opacity .25s,transform .25s;white-space:pre-line;text-align:center}
   .toast.show{opacity:1;transform:translateY(0)}
   .toast.good{border-left-color:var(--good)} .toast.bad{border-left-color:var(--bad)} .toast.info{border-left-color:var(--accent)}
-  body.processing .pbg-toggle,
-  body.processing .remove-btn,
-  body.processing .delete-btn,
-  body.processing .status-toggle,
-  body.processing .badge-tier,
-  body.processing .move-select,
-  body.processing .move-bulk,
-  body.processing #restoreAll,
-  body.processing #exportBtn,
-  body.processing #exportPbgBtn,
-  body.processing #moveBlurryBtn,
-  body.processing #dedupApplyBtn{pointer-events:none;opacity:.45;filter:grayscale(.25)}
+  /* v1.5: foreground review stays interactive while background engines run.
+     Only settings are frozen by the processing rule below; photo decisions are not. */
   .dedup-review{display:flex;flex-direction:column;gap:14px;width:100%;grid-column:1/-1}
   .dedup-group{border:1px solid var(--border);border-radius:12px;background:var(--panel);padding:12px}
   .dedup-group-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px;font-size:12px}
@@ -2865,6 +2855,33 @@ function escHtml(v){
     '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
   })[ch]);
 }
+
+let deleteDialogResolve=null;
+function closeDeleteDialog(choice=null){
+  const modal=document.getElementById('deleteModal');
+  modal.classList.remove('open');modal.setAttribute('aria-hidden','true');
+  const done=deleteDialogResolve;deleteDialogResolve=null;
+  if(done)done(choice);
+}
+function askDeleteMode(name){
+  if(deleteDialogResolve)closeDeleteDialog(null);
+  const modal=document.getElementById('deleteModal');
+  document.getElementById('deleteModalFile').textContent=name||'当前照片';
+  modal.classList.add('open');modal.setAttribute('aria-hidden','false');
+  setTimeout(()=>document.getElementById('deleteTrash').focus(),0);
+  return new Promise(resolve=>{deleteDialogResolve=resolve;});
+}
+document.getElementById('deleteCancel').onclick=()=>closeDeleteDialog(null);
+document.getElementById('deleteTrash').onclick=()=>closeDeleteDialog('trash');
+document.getElementById('deletePermanent').onclick=()=>closeDeleteDialog('permanent');
+document.getElementById('deleteModal').addEventListener('click',e=>{if(e.target.id==='deleteModal')closeDeleteDialog(null);});
+document.addEventListener('keydown',e=>{
+  const modal=document.getElementById('deleteModal');
+  if(!modal.classList.contains('open'))return;
+  if(e.key==='Escape'){e.preventDefault();closeDeleteDialog(null);}
+  else if(e.key==='Enter'){e.preventDefault();closeDeleteDialog('trash');}
+  else if(e.key==='p'||e.key==='P'){e.preventDefault();closeDeleteDialog('permanent');}
+});
 let folder=null, photos=[], lbList=[], lbIndex=0, currentStep='cull', folderStatus={};
 const cullLiveStore=new Map();
 const dedupLiveStore=new Map();
@@ -4224,42 +4241,51 @@ function cullSetTier(path,tier){
 }
 
 /* ---- move to PhotoCurator software recycle bin (three review steps) ---- */
-function deletePhoto(step,path,fromLightbox=false){
-  const p=(photos||[]).find(x=>x.path===path)||((lbList||[]).find(x=>x.path===path));
+async function deletePhoto(step,path,fromLightbox=false){
+  const p=(photos||[]).find(x=>x.path===path)
+    ||((lbList||[]).find(x=>x.path===path));
   const name=p&&p.name?p.name:path.split(/[\\/]/).pop();
-  if(!confirm('确认将这张照片移入软件回收站？\n\n'+name+'\n\n之后可在“回收站复核”中再次查看、恢复或永久删除。'))return;
-  fetch('/api/delete-photo',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({step,path})})
-    .then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;})
-    .then(d=>{
-      toast('已移入软件回收站：'+name,'good');
-      if(d.trash_count!=null){const tc=document.getElementById('sTrash');if(tc)tc.textContent=d.trash_count;}
-      if(step==='cull'){
-        cullChunkToken++;cullLiveStore.clear();
-        const snap={photos:d.photos||[],running:false,result_total:Number(d.result_total||0)};
-        photos=cullRowsForPayload(snap);
-        document.getElementById('sSharp').textContent=d.sharp||0;
-        document.getElementById('sSoft').textContent=d.soft||0;
-        document.getElementById('sBlurry').textContent=d.blurry||0;
-        lastCullSig='';lastCullMoveSig='';renderCullStep(photos);updateCullMoveButton();
-        maybeLoadAllCull(snap);
-      }else if(step==='dedup'){
-        dedupChunkToken++;dedupLiveStore.clear();
-        const snap={photos:d.photos||[],running:false,result_total:Number(d.result_total||0)};
-        photos=dedupRowsForPayload(snap);
-        renderDedupGroups(photos);
-        document.getElementById('sGroups').textContent=d.duplicate_groups||0;
-        maybeLoadAllDedup(snap);
-      }else{
-        renderRank(d.photos||[]);
-        setRemoved(d.removed||0);
-      }
-      if(fromLightbox){
-        lbList=(step==='cull')?cullView.slice():(step==='dedup'?[]:photos.slice());
-        if(!lbList.length){closeLb();return;}
-        if(lbIndex>=lbList.length)lbIndex=lbList.length-1;
-        showLb();
-      }
-    }).catch(err=>toast('移入软件回收站失败：'+(err.message||'未知错误'),'bad'));
+  const mode=await askDeleteMode(name);
+  if(!mode)return;
+  try{
+    const r=await fetch('/api/delete-photo',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({step,path,mode})
+    });
+    const d=await r.json();
+    if(!r.ok)throw new Error(d.error||('HTTP '+r.status));
+    const lifecycle=mode==='trash'?'pending_trash':'pending_permanent_delete';
+    const applyPending=row=>{
+      if(!row||row.path!==path)return;
+      row.original_path=row.original_path||path;
+      row.lifecycle=lifecycle;
+      row.selected=false;
+    };
+    if(step==='cull'){
+      (photos||[]).forEach(applyPending);
+      lastCullSig='';lastCullMoveSig='';renderCullStep(photos);updateCullMoveButton();
+    }else if(step==='dedup'){
+      (photos||[]).forEach(group=>{
+        (group.members||[]).forEach(applyPending);
+        const active=(group.members||[]).filter(m=>!['pending_trash','pending_permanent_delete','trashed','permanently_deleted'].includes(m.lifecycle));
+        group.active_count=active.length;
+        group.deleted_count=(group.members||[]).length-active.length;
+        if(active.length===1){active[0].selected=true;group.selected_paths=[active[0].path];group.status='reviewed';}
+      });
+      renderDedupGroups(photos);
+    }else if(step==='rank'){
+      const row=(photos||[]).find(x=>x.path===path);if(row)row.lifecycle=lifecycle;
+      renderRank(photos);
+    }
+    toast(mode==='trash'
+      ?'已提交后台：移入软件回收站 · '+name
+      :'已提交后台：彻底删除 · '+name,
+      mode==='trash'?'good':'info');
+    refreshTaskCenter();
+    if(fromLightbox)showLb();
+  }catch(err){
+    toast((mode==='trash'?'移入软件回收站':'彻底删除')+'失败：'+(err.message||'未知错误'),'bad');
+  }
 }
 function lbDeleteCurrent(){
   const p=lbList[lbIndex];if(p)deletePhoto(currentStep,p.path,true);
