@@ -6,6 +6,7 @@ import os
 import sqlite3
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -173,6 +174,82 @@ def main():
 
         # Verify the local HTTP endpoints also survive Unicode/special paths.
         client = photo_curator.app.test_client()
+
+        # Analysis admission is atomic at the HTTP boundary: Cull + Dedup are
+        # the two allowed parallel core engines, duplicate starts are rejected,
+        # Rank stays exclusive, and malformed input never reserves a run slot.
+        original_run_cull = photo_curator.run_cull
+        original_run_dedup = photo_curator.run_dedup
+        release_core = threading.Event()
+        entered_cull = threading.Event()
+        entered_dedup = threading.Event()
+
+        def _blocking_cull(folder, strictness, adaptive, rescue_on, recursive=True):
+            entered_cull.set()
+            release_core.wait(timeout=5)
+            photo_curator.state["cull"]["running"] = False
+
+        def _blocking_dedup(folder, threshold, ftype="all", pair="both",
+                            recursive=True, compare_scope="folder"):
+            entered_dedup.set()
+            release_core.wait(timeout=5)
+            photo_curator.state["dedup"]["running"] = False
+
+        photo_curator.run_cull = _blocking_cull
+        photo_curator.run_dedup = _blocking_dedup
+        try:
+            bad_start = client.post(
+                "/api/run/cull",
+                json={"folder": str(root), "opt": "not-a-number"},
+                headers={"Host": f"127.0.0.1:{photo_curator.PORT}"},
+            )
+            assert_true(bad_start.status_code == 400
+                        and not photo_curator.state["cull"].get("running"),
+                        "无效分析参数不应预占运行状态")
+
+            cull_start = client.post(
+                "/api/run/cull",
+                json={"folder": str(root), "opt": 1.0, "recursive": True},
+                headers={"Host": f"127.0.0.1:{photo_curator.PORT}"},
+            )
+            assert_true(cull_start.status_code == 200 and entered_cull.wait(2),
+                        f"Cull 启动门禁异常：{cull_start.get_json()}")
+
+            duplicate_cull = client.post(
+                "/api/run/cull",
+                json={"folder": str(root), "opt": 1.0, "recursive": True},
+                headers={"Host": f"127.0.0.1:{photo_curator.PORT}"},
+            )
+            assert_true(duplicate_cull.status_code == 409,
+                        "同一个 Cull 任务运行中不应允许重复启动")
+
+            dedup_start = client.post(
+                "/api/run/dedup",
+                json={"folder": str(root), "opt": 0.8, "recursive": True},
+                headers={"Host": f"127.0.0.1:{photo_curator.PORT}"},
+            )
+            assert_true(dedup_start.status_code == 200 and entered_dedup.wait(2),
+                        f"Dedup 不应被正在运行的 Cull 阻塞：{dedup_start.get_json()}")
+
+            rank_during_core = client.post(
+                "/api/run/rank",
+                json={"folder": str(root), "recursive": True},
+                headers={"Host": f"127.0.0.1:{photo_curator.PORT}"},
+            )
+            assert_true(rank_during_core.status_code == 409,
+                        "核心分析运行时 Rank 必须保持互斥")
+        finally:
+            release_core.set()
+            deadline = time.time() + 3
+            while time.time() < deadline and (
+                    photo_curator.state["cull"].get("running")
+                    or photo_curator.state["dedup"].get("running")):
+                time.sleep(0.02)
+            photo_curator.run_cull = original_run_cull
+            photo_curator.run_dedup = original_run_dedup
+            photo_curator.state["cull"]["running"] = False
+            photo_curator.state["dedup"]["running"] = False
+
         sample = str(found[0])
         thumb = client.get("/api/thumb", query_string={"path": sample},
                            headers={"Host": f"127.0.0.1:{photo_curator.PORT}"})
