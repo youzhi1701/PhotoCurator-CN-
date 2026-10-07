@@ -15,6 +15,11 @@ from db_runtime import connect_db
 
 logger = logging.getLogger(__name__)
 
+# Lower numeric priority runs first. Only direct user file operations should
+# pre-empt analysis; maintenance such as offline-preview generation uses high
+# numeric priorities and must never throttle Cull/Dedup merely by existing.
+FOREGROUND_PRIORITY_MAX = 50
+
 class BackgroundTaskManager:
     def __init__(self, db_path, workers=2):
         self.db_path = Path(db_path)
@@ -69,7 +74,7 @@ class BackgroundTaskManager:
             for task_id, priority in rows:
                 self._seq += 1
                 heapq.heappush(self._heap, (int(priority), self._seq, int(task_id)))
-            if rows:
+            if any(int(priority) <= FOREGROUND_PRIORITY_MAX for _, priority in rows):
                 self._foreground_pressure.set()
 
     def register(self, kind, handler):
@@ -96,7 +101,8 @@ class BackgroundTaskManager:
         with self._cv:
             self._seq += 1
             heapq.heappush(self._heap, (int(priority), self._seq, task_id))
-            self._foreground_pressure.set()
+            if int(priority) <= FOREGROUND_PRIORITY_MAX:
+                self._foreground_pressure.set()
             self._cv.notify()
         return task_id, True
 
@@ -161,7 +167,9 @@ class BackgroundTaskManager:
         try:
             with self._connect() as db:
                 active = db.execute(
-                    "SELECT COUNT(*) FROM background_task WHERE state IN ('queued','running')"
+                    """SELECT COUNT(*) FROM background_task
+                       WHERE state IN ('queued','running') AND priority<=?""",
+                    (FOREGROUND_PRIORITY_MAX,),
                 ).fetchone()[0]
             if int(active or 0) > 0:
                 self._foreground_pressure.set()
