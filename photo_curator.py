@@ -3009,6 +3009,17 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   <div class="lb-shortcuts" style="position:absolute;left:16px;bottom:10px;color:rgba(255,255,255,.55);font-size:10px;z-index:21;pointer-events:none">大图快捷键：← → 切换 · Esc 关闭 · B 壁纸 · X 移除</div>
 </div>
 
+<div class="pc-modal-backdrop" id="confirmModal" aria-hidden="true">
+  <div class="pc-modal" role="dialog" aria-modal="true" aria-labelledby="confirmModalTitle">
+    <h3 id="confirmModalTitle">确认操作</h3>
+    <p id="confirmModalText">—</p>
+    <div class="pc-modal-actions">
+      <button id="confirmCancel">取消</button>
+      <button class="primary" id="confirmOk">确认</button>
+    </div>
+  </div>
+</div>
+
 <div class="pc-modal-backdrop" id="deleteModal" aria-hidden="true">
   <div class="pc-modal" role="dialog" aria-modal="true" aria-labelledby="deleteModalTitle">
     <h3 id="deleteModalTitle">删除照片</h3>
@@ -3055,6 +3066,33 @@ function escHtml(v){
     '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
   })[ch]);
 }
+
+let confirmDialogResolve=null;
+function closeConfirmDialog(choice=false){
+  const modal=document.getElementById('confirmModal');
+  modal.classList.remove('open');modal.setAttribute('aria-hidden','true');
+  const done=confirmDialogResolve;confirmDialogResolve=null;
+  if(done)done(!!choice);
+}
+function askBatchConfirm(title,text,okText='确认'){
+  if(confirmDialogResolve)closeConfirmDialog(false);
+  document.getElementById('confirmModalTitle').textContent=title||'确认操作';
+  document.getElementById('confirmModalText').textContent=text||'';
+  document.getElementById('confirmOk').textContent=okText;
+  const modal=document.getElementById('confirmModal');
+  modal.classList.add('open');modal.setAttribute('aria-hidden','false');
+  setTimeout(()=>document.getElementById('confirmOk').focus(),0);
+  return new Promise(resolve=>{confirmDialogResolve=resolve;});
+}
+document.getElementById('confirmCancel').onclick=()=>closeConfirmDialog(false);
+document.getElementById('confirmOk').onclick=()=>closeConfirmDialog(true);
+document.getElementById('confirmModal').addEventListener('click',e=>{if(e.target.id==='confirmModal')closeConfirmDialog(false);});
+document.addEventListener('keydown',e=>{
+  const modal=document.getElementById('confirmModal');
+  if(!modal.classList.contains('open'))return;
+  if(e.key==='Escape'){e.preventDefault();closeConfirmDialog(false);}
+  else if(e.key==='Enter'){e.preventDefault();closeConfirmDialog(true);}
+});
 
 let deleteDialogResolve=null;
 function closeDeleteDialog(choice=null){
