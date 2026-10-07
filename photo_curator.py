@@ -3440,6 +3440,15 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   .content-toolbar{display:flex;align-items:center;justify-content:space-between;gap:8px}.filter-bar{flex-wrap:nowrap!important;overflow-x:auto}.result-tools{margin:0!important}
   .gallery{min-height:calc(100% - 88px)}
   .empty-start{min-height:420px;display:flex!important;flex-direction:column;align-items:center;justify-content:center;text-align:center}.empty-start .icon{font-size:42px}.empty-start .title{font-size:17px;font-weight:800;color:#39445a}.empty-start p{max-width:520px;margin:8px auto 16px;color:var(--muted);font-size:11px;line-height:1.6}.empty-add-source{height:36px;padding:0 14px;border:0;border-radius:10px;background:#5b72df;color:white;font-weight:800;cursor:pointer}
+
+  .workspace-overview{display:block!important;min-height:100%;padding:2px 0 10px}.overview-hero{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(260px,.75fr);gap:12px;margin-bottom:12px}.overview-card{border:1px solid rgba(124,139,192,.16);border-radius:16px;background:rgba(255,255,255,.62);backdrop-filter:blur(18px);box-shadow:0 8px 24px rgba(70,83,140,.06)}.overview-primary{padding:18px 20px;display:flex;align-items:center;justify-content:space-between;gap:18px;background:linear-gradient(135deg,rgba(225,241,255,.78),rgba(240,231,255,.78))}.overview-primary-copy{min-width:0}.overview-primary-copy .eyebrow{font-size:10px;font-weight:800;color:#6677c7;letter-spacing:.08em;text-transform:uppercase}.overview-primary-copy h2{margin:5px 0 6px;font-size:22px;color:#35405a}.overview-primary-copy p{margin:0;max-width:680px;font-size:11px;line-height:1.65;color:var(--muted)}.overview-primary-actions{display:flex;flex-direction:column;gap:7px;flex:0 0 auto}.overview-primary-actions button{min-width:126px;height:36px;border-radius:10px;border:1px solid rgba(91,113,220,.22);background:rgba(255,255,255,.72);color:#4b5fc3;font-size:10px;font-weight:800;cursor:pointer}.overview-primary-actions .primary{border:0;background:linear-gradient(135deg,#5a79ef,#7367e0);color:#fff;box-shadow:0 7px 18px rgba(79,94,207,.18)}
+  .overview-metrics{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;padding:12px}.metric{padding:12px;border-radius:11px;background:rgba(246,249,255,.78);border:1px solid rgba(124,139,192,.10)}.metric span{display:block;font-size:9px;color:var(--muted);margin-bottom:4px}.metric b{font-size:18px;color:#374151}.metric small{display:block;margin-top:3px;font-size:8px;color:#8a94a8}
+  .overview-grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:12px}.overview-section{padding:14px}.overview-section h3{margin:0 0 3px;font-size:12px;color:#3c465c}.overview-section>p{margin:0 0 10px;font-size:9px;color:var(--muted)}.overview-section.sources{grid-column:span 7}.overview-section.storage{grid-column:span 5}.overview-section.guide{grid-column:span 7}.overview-section.demo{grid-column:span 5}.overview-list{display:grid;gap:6px}.overview-source-row{display:grid;grid-template-columns:9px minmax(0,1fr) auto;align-items:center;gap:8px;padding:9px 10px;border-radius:10px;background:rgba(247,249,255,.78);border:1px solid rgba(124,139,192,.10)}.overview-source-row .copy{min-width:0}.overview-source-row b,.overview-source-row small{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.overview-source-row b{font-size:10px}.overview-source-row small{margin-top:2px;font-size:8px;color:var(--muted)}.overview-source-row button{height:28px;padding:0 9px;border:1px solid rgba(124,139,192,.15);border-radius:8px;background:#fff;color:#5062bb;font-size:9px;font-weight:800;cursor:pointer}.overview-source-row button:disabled{cursor:default;color:#98a1b3;background:#f3f5f8}
+  .overview-storage-list{display:grid;gap:6px}.overview-storage-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 10px;border-radius:9px;background:rgba(247,249,255,.72);font-size:9px}.overview-storage-row span{color:var(--muted)}.overview-storage-row b{font-size:10px}.workflow-guide{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}.guide-step{padding:10px;border-radius:10px;background:rgba(247,249,255,.72);border:1px solid rgba(124,139,192,.10)}.guide-step b{display:block;font-size:10px;margin-bottom:3px}.guide-step small{font-size:8px;line-height:1.5;color:var(--muted)}
+  .source-ready{display:grid!important;grid-template-columns:minmax(0,1.45fr) minmax(250px,.7fr);gap:12px;min-height:0}.source-ready-main,.source-ready-side{padding:16px}.source-ready-head{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:14px}.source-ready-head h2{margin:0;font-size:19px}.source-ready-head p{margin:4px 0 0;font-size:10px;color:var(--muted);word-break:break-all}.source-ready-badge{display:flex;align-items:center;gap:6px;white-space:nowrap;padding:6px 9px;border-radius:999px;background:rgba(34,197,94,.09);color:#27834a;font-size:9px;font-weight:800}.source-ready-facts{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px}.source-ready-fact{padding:11px;border-radius:10px;background:rgba(247,249,255,.76);border:1px solid rgba(124,139,192,.10)}.source-ready-fact span{display:block;font-size:8px;color:var(--muted);margin-bottom:4px}.source-ready-fact b{font-size:11px;color:#384257}.source-ready-actions{display:flex;gap:8px;flex-wrap:wrap}.source-ready-actions button{height:36px;padding:0 13px;border-radius:10px;border:1px solid rgba(124,139,192,.16);background:#fff;color:#4859ac;font-size:10px;font-weight:800;cursor:pointer}.source-ready-actions .primary{border:0;background:linear-gradient(135deg,#5b79ef,#7465df);color:#fff;box-shadow:0 7px 18px rgba(76,91,206,.18)}.source-ready-side h3{margin:0 0 10px;font-size:12px}.source-ready-check{display:flex;align-items:flex-start;gap:8px;padding:9px 0;border-bottom:1px solid rgba(124,139,192,.09)}.source-ready-check:last-child{border-bottom:0}.source-ready-check .dot{width:7px;height:7px;border-radius:50%;background:#78a1ef;margin-top:4px;flex:0 0 auto}.source-ready-check b{display:block;font-size:9px}.source-ready-check small{display:block;margin-top:2px;font-size:8px;line-height:1.45;color:var(--muted)}
+  .source-card{display:block!important;padding:0!important;overflow:hidden}.source-card>summary{list-style:none;display:grid;grid-template-columns:10px minmax(0,1fr) 16px;gap:8px;align-items:center;padding:9px 10px;cursor:pointer}.source-card>summary::-webkit-details-marker{display:none}.source-card>summary::after{content:'›';color:#9aa4b7;font-size:15px;transition:transform .15s}.source-card[open]>summary::after{transform:rotate(90deg)}.source-card .source-summary-copy{min-width:0}.source-card .source-summary-copy b,.source-card .source-summary-copy small{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.source-card .source-summary-copy b{font-size:11px}.source-card .source-summary-copy small{font-size:8px;color:var(--muted);margin-top:2px}.source-roots{display:grid;gap:5px;padding:0 9px 9px 27px}.source-card.current{border-color:rgba(86,108,222,.42);box-shadow:0 0 0 2px rgba(86,108,222,.06)}
+  @media(max-width:1050px){.overview-hero,.source-ready{grid-template-columns:1fr}.overview-grid{grid-template-columns:1fr}.overview-section.sources,.overview-section.storage,.overview-section.guide,.overview-section.demo{grid-column:auto}.overview-primary{align-items:flex-start}.overview-primary-actions{flex-direction:row}.workflow-guide{grid-template-columns:1fr 1fr 1fr}}
+  @media(max-width:760px){.overview-primary{flex-direction:column}.overview-primary-actions{width:100%;flex-direction:row}.overview-primary-actions button{flex:1}.overview-metrics{grid-template-columns:1fr 1fr}.workflow-guide{grid-template-columns:1fr}.source-ready-facts{grid-template-columns:1fr 1fr}}
   .inspector-drawer{position:fixed!important;right:10px!important;top:62px!important;bottom:44px!important;width:320px!important;z-index:90!important;display:flex!important;flex-direction:column!important;background:rgba(250,252,255,.96)!important;border:1px solid rgba(124,139,192,.18)!important;border-radius:16px!important;box-shadow:0 20px 54px rgba(54,65,115,.20)!important;backdrop-filter:blur(24px) saturate(150%)!important;transform:translateX(calc(100% + 24px));opacity:0;pointer-events:none;transition:transform .18s ease,opacity .18s ease}
   body.inspector-open .inspector-drawer{transform:translateX(0);opacity:1;pointer-events:auto}.inspector-head{padding:12px!important}.inspector-scroll{padding:10px!important}.drawer-scrim{position:fixed;inset:52px 0 34px 0;z-index:80;background:rgba(25,33,56,.10);backdrop-filter:blur(1px);opacity:0;pointer-events:none;transition:opacity .18s ease}body.inspector-open .drawer-scrim{opacity:1;pointer-events:auto}
   .statusbar{height:34px!important;padding:0 10px 0 12px!important;z-index:70!important}
@@ -3531,14 +3540,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
     </div>
 
     <div class="pager" id="pager" style="display:none!important"></div>
-    <div class="gallery" id="gallery">
-      <div class="empty empty-start">
-        <div class="icon">🗂️</div>
-        <div class="title">选择一个数据源开始整理照片</div>
-        <p>左侧添加硬盘、U盘或照片文件夹；已建立索引的数据源即使断开也会保留历史记录。</p>
-        <button class="empty-add-source" id="emptyAddSource">＋ 添加数据源</button>
-      </div>
-    </div>
+    <div class="gallery" id="gallery"></div>
   </main>
 </div>
 
@@ -3755,6 +3757,7 @@ document.addEventListener('keydown',e=>{
 });
 let folder=null, photos=[], lbList=[], lbIndex=0, currentStep='cull', folderStatus={};
 let sourceCatalog=[], selectedSource=null, catalogRootView=null;
+let latestStorageSummary=null, demoShortcutPath='', demoShortcutCount=0;
 const cullLiveStore=new Map();
 const dedupLiveStore=new Map();
 let isRunning=false, runningStep=null, codespacesMode=false;
@@ -4193,7 +4196,12 @@ function activateStep(step){
   document.getElementById('dedupApplyBtn').style.display='none';
   document.getElementById('progressWrap').style.display='none';  // clear stale summary
   document.getElementById('resultTools').style.display='none';
-  document.getElementById('gallery').innerHTML=emptyHTML(currentStep);
+  if(folder&&!photos.length&&!isRunning&&!coreRunning&&!catalogRootView){
+    document.getElementById('gallery').innerHTML=sourceReadyHTML();
+    bindWorkspaceLanding();
+  }else{
+    document.getElementById('gallery').innerHTML=emptyHTML(currentStep);
+  }
   lastRankSig='';lastStep=null;
   gPage=0;lastGallerySig='';gItems=[];document.getElementById('pager').style.display='none';
   setupFilterBar();
@@ -4321,7 +4329,7 @@ function resetWorkspaceForFolder(){
   document.getElementById('exportPbgBtn').style.display='none';
   document.getElementById('moveBlurryBtn').style.display='none';
   document.getElementById('dedupApplyBtn').style.display='none';
-  document.getElementById('gallery').innerHTML=emptyHTML(currentStep);
+  renderWorkspaceLanding();
 }
 function updateStartAvailability(){
   if(!startBtn)return;
@@ -4372,6 +4380,7 @@ function updateSourceUi(){
     dot.classList.toggle('online',connected);
     dot.classList.toggle('offline',!connected);
   });
+  if(!isRunning&&!coreRunning&&!photos.length&&!catalogRootView)renderWorkspaceLanding();
 }
 function selectFolderValue(value){
   const next=String(value||'').trim();
@@ -4381,6 +4390,144 @@ function selectFolderValue(value){
   resetWorkspaceForFolder();
   updateStartAvailability();
   updateSourceUi();
+}
+
+function fmtDate(ts){
+  const n=Number(ts)||0;
+  if(!n)return '尚未扫描';
+  try{return new Date(n*1000).toLocaleString('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'});}catch(_){return '已有记录';}
+}
+function sourceTotals(){
+  let roots=0,indexed=0,online=0,offline=0;
+  for(const source of sourceCatalog||[]){
+    if(source.connected)online++;else offline++;
+    for(const root of source.roots||[]){
+      roots++;indexed+=Number(root.photo_count||0);
+    }
+  }
+  return {roots,indexed,online,offline,total:(sourceCatalog||[]).length};
+}
+function currentRootInfo(){
+  if(!folder)return null;
+  const match=sourceForPath(folder);
+  return match&&match.root?match:null;
+}
+function overviewSourceRows(){
+  const rows=[];
+  for(const source of sourceCatalog||[]){
+    for(const root of source.roots||[]){
+      rows.push({source,root});
+    }
+  }
+  rows.sort((a,b)=>{
+    const ac=a.source.connected?1:0,bc=b.source.connected?1:0;
+    if(ac!==bc)return bc-ac;
+    return Number(b.root.last_scan_at||0)-Number(a.root.last_scan_at||0);
+  });
+  return rows.slice(0,5);
+}
+function workspaceOverviewHTML(){
+  const t=sourceTotals();
+  const rows=overviewSourceRows();
+  const storage=latestStorageSummary||{};
+  const recent=rows.length?rows.map(({source,root})=>{
+    const current=root.current_root||root.original_root||'';
+    const canOpen=!!source.connected;
+    return '<div class="overview-source-row">'
+      +'<span class="source-dot '+(canOpen?'online':'offline')+'"></span>'
+      +'<div class="copy"><b>'+escHtml(root.display_name||source.display_name||'照片库')+'</b>'
+      +'<small>'+escHtml(source.display_name||'数据源')+' · '+Number(root.photo_count||0)+' 张 · '+(canOpen?'已连接':'未连接')+'</small></div>'
+      +'<button data-overview-root="'+escHtml(root.root_id||'')+'" data-overview-path="'+escHtml(current)+'" data-overview-connected="'+(canOpen?'1':'0')+'">'+(canOpen?'打开':'看历史')+'</button>'
+      +'</div>';
+  }).join(''):'<div class="source-empty">还没有建立过图库索引，先添加一个数据源。</div>';
+
+  return '<div class="workspace-overview">'
+    +'<div class="overview-hero">'
+      +'<section class="overview-card overview-primary"><div class="overview-primary-copy">'
+      +'<div class="eyebrow">PHOTO LIBRARY</div><h2>照片整理工作台</h2>'
+      +'<p>连接硬盘、U盘或照片文件夹后，PhotoCurator 会保留来源、扫描结果和人工复核记录。设备断开后，历史图库仍然可查。</p>'
+      +'</div><div class="overview-primary-actions">'
+      +'<button class="primary" data-overview-action="add">＋ 添加数据源</button>'
+      +(demoShortcutPath?'<button data-overview-action="demo">打开演示图库</button>':'')
+      +'</div></section>'
+      +'<section class="overview-card overview-metrics">'
+      +'<div class="metric"><span>数据源</span><b>'+t.total+'</b><small>'+t.online+' 已连接 · '+t.offline+' 未连接</small></div>'
+      +'<div class="metric"><span>已索引照片</span><b>'+t.indexed.toLocaleString('zh-CN')+'</b><small>'+t.roots+' 个图库根目录</small></div>'
+      +'<div class="metric"><span>图库数据库</span><b>'+formatBytes(storage.database_bytes||0)+'</b><small>分析与人工复核记录</small></div>'
+      +'<div class="metric"><span>离线预览</span><b>'+formatBytes(storage.persistent_preview_bytes||0)+'</b><small>拔盘后仍可浏览</small></div>'
+      +'</section></div>'
+    +'<div class="overview-grid">'
+      +'<section class="overview-card overview-section sources"><h3>最近图库</h3><p>在线数据源优先，离线数据源仍保留历史。</p><div class="overview-list">'+recent+'</div></section>'
+      +'<section class="overview-card overview-section storage"><h3>软件占用</h3><p>持久数据与可清理缓存分开显示。</p><div class="overview-storage-list">'
+      +'<div class="overview-storage-row"><span>数据库</span><b>'+formatBytes(storage.database_bytes||0)+'</b></div>'
+      +'<div class="overview-storage-row"><span>离线预览</span><b>'+formatBytes(storage.persistent_preview_bytes||0)+'</b></div>'
+      +'<div class="overview-storage-row"><span>临时缓存</span><b>'+formatBytes(storage.preview_cache_bytes||0)+'</b></div>'
+      +'<div class="overview-storage-row"><span>相似特征</span><b>'+formatBytes(storage.dedup_feature_bytes||0)+'</b></div>'
+      +'</div></section>'
+      +'<section class="overview-card overview-section guide"><h3>整理流程</h3><p>常用流程一直可见，高级参数只在“筛选”抽屉里出现。</p>'
+      +'<div class="workflow-guide">'
+      +'<div class="guide-step"><b>1 · 连接数据源</b><small>识别硬盘/U盘身份，建立可追溯图库。</small></div>'
+      +'<div class="guide-step"><b>2 · 开始分析</b><small>默认递归子文件夹，同时执行清晰度与相似分析。</small></div>'
+      +'<div class="guide-step"><b>3 · 人工复核</b><small>先筛选、再处理；删除默认进入软件回收站。</small></div>'
+      +'</div></section>'
+      +'<section class="overview-card overview-section demo"><h3>演示图库</h3><p>用于测试子目录、模糊识别和近似连拍。</p>'
+      +'<div class="overview-storage-list"><div class="overview-storage-row"><span>测试照片</span><b>'+Number(demoShortcutCount||36)+' 张</b></div>'
+      +'<div class="overview-storage-row"><span>子文件夹</span><b>6 个</b></div>'
+      +'<div class="overview-storage-row"><span>内容</span><b>清晰 / 模糊 / 连拍</b></div></div></section>'
+      +'</div></div>';
+}
+function sourceReadyHTML(){
+  const match=currentRootInfo();
+  const source=match||selectedSource;
+  const root=match&&match.root?match.root:null;
+  const indexed=Number(root&&root.photo_count||0);
+  const lastScan=Number(root&&root.last_scan_at||0);
+  const connected=source?!!source.connected:true;
+  return '<div class="source-ready">'
+    +'<section class="overview-card source-ready-main"><div class="source-ready-head"><div>'
+    +'<h2>'+escHtml(root&&root.display_name||source&&source.display_name||'当前照片来源')+'</h2>'
+    +'<p>'+escHtml(folder||'')+'</p></div><span class="source-ready-badge"><span class="source-dot '+(connected?'online':'offline')+'"></span>'+(connected?'已连接':'路径已选择')+'</span></div>'
+    +'<div class="source-ready-facts">'
+    +'<div class="source-ready-fact"><span>已索引照片</span><b>'+indexed.toLocaleString('zh-CN')+' 张</b></div>'
+    +'<div class="source-ready-fact"><span>上次扫描</span><b>'+escHtml(fmtDate(lastScan))+'</b></div>'
+    +'<div class="source-ready-fact"><span>扫描范围</span><b>'+(recursiveScan?'当前文件夹 + 所有子文件夹':'仅当前文件夹')+'</b></div>'
+    +'</div><div class="source-ready-actions">'
+    +'<button class="primary" data-ready-action="start">▶ 开始分析</button>'
+    +'<button data-ready-action="settings">筛选设置</button>'
+    +'</div></section>'
+    +'<aside class="overview-card source-ready-side"><h3>本次分析</h3>'
+    +'<div class="source-ready-check"><span class="dot"></span><div><b>清晰度筛选</b><small>识别清晰、轻微软和明显模糊照片。</small></div></div>'
+    +'<div class="source-ready-check"><span class="dot"></span><div><b>相似照片分组</b><small>识别连拍与近似照片，先复核再处理。</small></div></div>'
+    +'<div class="source-ready-check"><span class="dot"></span><div><b>增量复用</b><small>已经扫描且没有变化的文件优先复用历史数据。</small></div></div>'
+    +'</aside></div>';
+}
+function bindWorkspaceLanding(){
+  const g=document.getElementById('gallery');
+  g.querySelectorAll('[data-overview-action="add"]').forEach(b=>b.onclick=()=>document.getElementById('browseBtn').click());
+  g.querySelectorAll('[data-overview-action="demo"]').forEach(b=>b.onclick=()=>{
+    if(!demoShortcutPath)return;
+    selectFolderValue(demoShortcutPath);
+    document.getElementById('folderInput').value=demoShortcutPath;
+  });
+  g.querySelectorAll('[data-overview-root]').forEach(b=>b.onclick=()=>{
+    if(b.dataset.overviewConnected==='1'){
+      selectFolderValue(b.dataset.overviewPath);
+      document.getElementById('folderInput').value=folder||'';
+    }else if(b.dataset.overviewRoot){
+      loadCatalogRoot(b.dataset.overviewRoot);
+    }
+  });
+  const start=g.querySelector('[data-ready-action="start"]');
+  if(start)start.onclick=()=>document.getElementById('startBtn').click();
+  const settings=g.querySelector('[data-ready-action="settings"]');
+  if(settings)settings.onclick=()=>document.getElementById('settingsQuick').click();
+}
+function renderWorkspaceLanding(){
+  if(isRunning||coreRunning||photos.length||catalogRootView)return;
+  const g=document.getElementById('gallery');
+  g.className='gallery';
+  g.innerHTML=folder?sourceReadyHTML():workspaceOverviewHTML();
+  bindWorkspaceLanding();
 }
 
 /* shortcuts */
@@ -4403,23 +4550,26 @@ function renderSources(){
     return;
   }
   box.innerHTML=sourceCatalog.map(source=>{
-    const state=source.connected?'已连接':'未连接 · 历史数据保留';
+    const current=!!(selectedSource&&selectedSource.source_id===source.source_id);
+    const open=source.connected||current;
+    const state=source.connected?'已连接':'未连接 · 历史保留';
     const roots=(source.roots||[]).map(root=>{
-      const current=root.current_root||root.original_root||'';
-      const title=(root.display_name||current||'照片库')+' · '+Number(root.photo_count||0)+' 张';
-      return '<button class="source-root-btn" data-source-root="'+escHtml(current)+'"'
+      const path=root.current_root||root.original_root||'';
+      const title=(root.display_name||path||'照片库')+' · '+Number(root.photo_count||0)+' 张';
+      return '<button class="source-root-btn" data-source-root="'+escHtml(path)+'"'
         +' data-root-id="'+escHtml(root.root_id)+'" data-source-id="'+escHtml(source.source_id)+'"'
-        +' data-connected="'+(source.connected?'1':'0')+'" title="'+escHtml(current)+'">'+escHtml(title)+'</button>';
+        +' data-connected="'+(source.connected?'1':'0')+'" title="'+escHtml(path)+'">'+escHtml(title)+'</button>';
     }).join('');
-    return '<div class="source-card '+(source.connected?'connected':'offline')+'">'
-      +'<span class="source-dot '+(source.connected?'online':'offline')+'"></span>'
-      +'<div><b>'+escHtml(source.display_name)+'</b>'
+    return '<details class="source-card '+(source.connected?'connected':'offline')+(current?' current':'')+'" '+(open?'open':'')+'>'
+      +'<summary><span class="source-dot '+(source.connected?'online':'offline')+'"></span>'
+      +'<span class="source-summary-copy"><b>'+escHtml(source.display_name)+'</b>'
       +'<small>'+escHtml(formatSourceKind(source.kind))+' · '+escHtml(state)
-      +(source.capacity_bytes?' · '+formatBytes(source.capacity_bytes):'')+'</small>'
-      +roots+'</div></div>';
+      +(source.capacity_bytes?' · '+formatBytes(source.capacity_bytes):'')+'</small></span></summary>'
+      +'<div class="source-roots">'+(roots||'<div class="source-empty">暂无已索引目录</div>')+'</div></details>';
   }).join('');
   box.querySelectorAll('.source-root-btn').forEach(btn=>{
-    btn.onclick=()=>{
+    btn.onclick=e=>{
+      e.preventDefault();e.stopPropagation();
       if(btn.dataset.connected==='1'){
         selectFolderValue(btn.dataset.sourceRoot);
         document.getElementById('folderInput').value=folder||'';
@@ -4429,6 +4579,7 @@ function renderSources(){
     };
   });
 }
+
 async function loadCatalogRoot(rootId){
   try{
     const r=await fetch('/api/catalog-root/'+encodeURIComponent(rootId));
@@ -4479,6 +4630,8 @@ function loadStorageSummary(force=false){
     document.getElementById('featureUsage').textContent=formatBytes(d.dedup_feature_bytes);
     document.getElementById('logUsage').textContent=formatBytes(d.log_bytes);
     document.getElementById('dataRootText').textContent='数据目录：'+(d.data_root||'—');
+    latestStorageSummary=d;
+    if(!folder&&!catalogRootView&&!isRunning&&!coreRunning&&!photos.length)renderWorkspaceLanding();
   }).catch(()=>{lastStorageSummaryAt=0;});
 }
 
@@ -4525,6 +4678,8 @@ function loadShortcuts(){
       fi.placeholder='选择或粘贴照片文件夹路径';
     }
 
+    demoShortcutPath=d.demo_folder||'';
+    demoShortcutCount=Number(d.demo_count||36);
     if(d.demo_folder){
       const p=d.demo_folder;
       const n=d.demo_count||36;
@@ -4554,10 +4709,10 @@ function loadShortcuts(){
       };
     });
     loadStorageSummary();
+    if(!folder&&!catalogRootView&&!isRunning&&!coreRunning&&!photos.length)renderWorkspaceLanding();
   }).catch(()=>{});
 }
 loadShortcuts();
-document.getElementById('emptyAddSource').onclick=()=>document.getElementById('browseBtn').click();
 setInterval(()=>{if(!document.hidden&&!isRunning&&!coreRunning)loadShortcuts();},30000);
 document.getElementById('folderInput').onchange=e=>selectFolderValue(e.target.value);
 document.getElementById('folderInput').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();selectFolderValue(e.target.value);}};
