@@ -4836,8 +4836,11 @@ function resetWorkspaceForFolder(){
   cullLiveStore.clear();dedupLiveStore.clear();
   cullReady=false;
   photos=[];lbList=[];folderStatus={};
-  lastRankSig='';lastCullSig='';lastCullMoveSig='';lastGallerySig='';
+  lastRankSig='';lastCullSig='';lastDedupSig='';lastCullMoveSig='';lastGallerySig='';
   gItems=[];gPage=0;
+  ['catalogLoadEarlier','catalogLoadMore'].forEach(id=>{
+    const node=document.getElementById(id);if(node)node.remove();
+  });
   ['sImages','sSharp','sSoft','sBlurry','sGroups','sShowing','sTrash'].forEach(id=>{
     const el=document.getElementById(id);if(el)el.textContent='0';
   });
