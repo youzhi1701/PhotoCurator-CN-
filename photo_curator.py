@@ -2272,6 +2272,10 @@ def run_cull(folder, strictness, adaptive, rescue_on, recursive=True):
         # button (mirrors the TOP-N export flow).
         s['progress'] = 100
         s['complete'] = True   # full pass finished — survivors are safe to chain
+        # Cull and Dedup run concurrently. If Dedup finished first, its last
+        # eligibility sync saw Cull as incomplete. Reconcile once at Cull's
+        # commit point so blurry photos cannot remain active duplicate keepers.
+        _sync_dedup_with_cull()
         s['status'] = (f"完成 · 用时 {_fmt(time.time()-t0)} · {_tiers(total)}"
                        + (f" · 已复用 {s.get('cache_hits',0)} 张历史分析" if s.get('cache_hits') else "")
                        + (" · 请确认后再移动模糊照片" if s['blurry'] else ""))
