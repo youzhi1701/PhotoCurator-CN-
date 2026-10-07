@@ -62,6 +62,8 @@ class BackgroundTaskManager:
             for task_id, priority in rows:
                 self._seq += 1
                 heapq.heappush(self._heap, (int(priority), self._seq, int(task_id)))
+            if rows:
+                self._foreground_pressure.set()
 
     def register(self, kind, handler):
         self.handlers[str(kind)] = handler
