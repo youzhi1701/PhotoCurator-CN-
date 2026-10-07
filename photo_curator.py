@@ -1090,25 +1090,31 @@ def _is_output_dir_name(name):
             or low.startswith('phonebg'))
 
 
-def list_images(folder, recursive=False):
-    """Enumerate supported images; optionally scan the entire directory tree.
+def iter_images(folder, recursive=False):
+    """Yield supported image paths without preloading the whole library.
 
-    Recursive mode prunes hidden/system-ish folders and every PhotoCurator
-    output folder so processed files are never fed back into a later run.
+    Recursive os.walk already tells us which entries are files, so extension
+    filtering happens before any extra stat/open call.  This matters on slow
+    multi-terabyte USB disks.
     """
     root = Path(folder)
     if not root.is_dir():
-        return []
+        return
 
-    def valid_file(p):
-        return (p.is_file() and p.suffix.lower() in IMG_EXTS
-                and not p.name.startswith('._')
-                and not p.name.startswith('.'))
+    def supported_name(name):
+        if not name or name.startswith('.') or name.startswith('._'):
+            return False
+        return Path(name).suffix.lower() in IMG_EXTS
 
     if not recursive:
-        return sorted(p for p in root.iterdir() if valid_file(p))
+        try:
+            for p in root.iterdir():
+                if supported_name(p.name) and p.is_file():
+                    yield p
+        except OSError:
+            return
+        return
 
-    out = []
     custom_cmp = None
     try:
         scan = state.get('scan') or {}
@@ -1119,10 +1125,6 @@ def list_images(folder, recursive=False):
         custom_cmp = None
 
     for cur, dirs, files in os.walk(root):
-        # Prune in-place so os.walk never descends into generated/hidden dirs.
-        # If the user chose a custom result directory inside the selected tree,
-        # prune that exact directory too; otherwise next run would re-import
-        # files that PhotoCurator itself moved there.
         base = Path(cur)
         kept_dirs = []
         for d in dirs:
@@ -1138,10 +1140,14 @@ def list_images(folder, recursive=False):
             kept_dirs.append(d)
         dirs[:] = kept_dirs
         for name in files:
-            p = base / name
-            if valid_file(p):
-                out.append(p)
-    return sorted(out, key=lambda p: os.path.normcase(str(p)))
+            if supported_name(name):
+                yield base / name
+
+
+def list_images(folder, recursive=False):
+    """Compatibility materialization for operations that need a complete list."""
+    return sorted(iter_images(folder, recursive=recursive),
+                  key=lambda p: os.path.normcase(str(p)))
 
 
 def relative_folder(path, root):
