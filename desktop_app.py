@@ -208,16 +208,11 @@ def load_tray_image():
 
 
 class DesktopApi:
-    """Small native bridge used only by the desktop WebView."""
+    """Minimal native bridge. Windows owns all window geometry/state."""
 
     def __init__(self):
-        self._maximized = False
-        self._restore_rect = None
-        self.allow_exit = False
         self.tray = None
         self.window = None
-        self._close_to_tray_lock = threading.Lock()
-        self._close_to_tray_pending = False
 
     def attach_tray(self, tray):
         self.tray = tray
@@ -250,11 +245,7 @@ class DesktopApi:
             return None
 
     def apply_native_titlebar_theme(self):
-        """Keep native Windows chrome but visually integrate it with the app.
-
-        This intentionally uses DWM attributes only: Windows remains the owner
-        of hit testing, resize, Snap, maximize/restore and taskbar behavior.
-        """
+        """Theme native chrome without taking over Windows hit-testing."""
         if os.name != 'nt':
             return False
         hwnd = self._native_hwnd()
@@ -271,7 +262,6 @@ class DesktopApi:
                 return ctypes.c_uint32(r | (g << 8) | (b << 16))
 
             dwm = ctypes.windll.dwmapi
-            # Windows 11+: border / caption / text colors and rounded corners.
             attrs = (
                 (34, colorref('#D8E3F7')),  # DWMWA_BORDER_COLOR
                 (35, colorref('#EEF4FF')),  # DWMWA_CAPTION_COLOR
@@ -306,180 +296,6 @@ class DesktopApi:
         except Exception:
             return False
 
-    def _set_windows_rect(self, rect):
-        if os.name != 'nt' or not rect:
-            return False
-        try:
-            import ctypes
-            hwnd = self._native_hwnd()
-            if not hwnd:
-                return False
-            left, top, right, bottom = map(int, rect)
-            width = max(1, right - left)
-            height = max(1, bottom - top)
-            SWP_NOZORDER = 0x0004
-            SWP_NOACTIVATE = 0x0010
-            ok = ctypes.windll.user32.SetWindowPos(
-                hwnd, 0, left, top, width, height,
-                SWP_NOZORDER | SWP_NOACTIVATE
-            )
-            return bool(ok)
-        except Exception:
-            return False
-
-    def maximize_to_work_area(self):
-        """Maximize a frameless Windows window to rcWork, never over taskbar."""
-        window = self._window()
-        if window is None:
-            return False
-        if os.name != 'nt':
-            window.maximize()
-            self._maximized = True
-            return True
-
-        try:
-            import ctypes
-            from ctypes import wintypes
-
-            class RECT(ctypes.Structure):
-                _fields_ = [
-                    ('left', wintypes.LONG), ('top', wintypes.LONG),
-                    ('right', wintypes.LONG), ('bottom', wintypes.LONG),
-                ]
-
-            class MONITORINFO(ctypes.Structure):
-                _fields_ = [
-                    ('cbSize', wintypes.DWORD),
-                    ('rcMonitor', RECT),
-                    ('rcWork', RECT),
-                    ('dwFlags', wintypes.DWORD),
-                ]
-
-            hwnd = self._native_hwnd()
-            if not hwnd:
-                return False
-
-            current = RECT()
-            if ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(current)):
-                self._restore_rect = (
-                    int(current.left), int(current.top),
-                    int(current.right), int(current.bottom),
-                )
-
-            MONITOR_DEFAULTTONEAREST = 2
-            monitor = ctypes.windll.user32.MonitorFromWindow(
-                hwnd, MONITOR_DEFAULTTONEAREST
-            )
-            info = MONITORINFO()
-            info.cbSize = ctypes.sizeof(MONITORINFO)
-            if not monitor or not ctypes.windll.user32.GetMonitorInfoW(
-                monitor, ctypes.byref(info)
-            ):
-                return False
-
-            work = info.rcWork
-            if not self._set_windows_rect((
-                work.left, work.top, work.right, work.bottom
-            )):
-                return False
-
-            self._maximized = True
-            return True
-        except Exception:
-            return False
-
-    def hide_to_tray_async(self, delay=0.04):
-        """Hide the native window only after a blocking close event returns.
-
-        pywebview's closing event is synchronous. Calling window.hide()
-        directly from that handler can deadlock the GUI message loop on
-        Windows/WebView2. Always dispatch the window call to a worker.
-        """
-        with self._close_to_tray_lock:
-            if self._close_to_tray_pending:
-                return True
-            self._close_to_tray_pending = True
-
-        def worker():
-            try:
-                if delay:
-                    time.sleep(max(0.0, float(delay)))
-                window = self._window()
-                if window is not None:
-                    window.hide()
-            except Exception:
-                _write_early_error_log()
-            finally:
-                with self._close_to_tray_lock:
-                    self._close_to_tray_pending = False
-
-        threading.Thread(
-            target=worker,
-            daemon=True,
-            name="photocurator-hide-to-tray",
-        ).start()
-        return True
-
-    def native_close_decision(self, has_tray):
-        """Return the synchronous closing-event decision without UI calls."""
-        if self.allow_exit or not has_tray:
-            return True
-        self.hide_to_tray_async()
-        return False
-
-    def restore_from_work_area(self):
-        window = self._window()
-        if window is None:
-            return False
-        if os.name != 'nt':
-            window.restore()
-            self._maximized = False
-            return True
-
-        rect = self._restore_rect
-        if not rect:
-            try:
-                window.resize(1180, 760)
-                self._maximized = False
-                return True
-            except Exception:
-                return False
-
-        ok = self._set_windows_rect(rect)
-        if ok:
-            self._maximized = False
-        return ok
-
-    def window_action(self, action):
-        window = self._window()
-        if window is None:
-            return False
-        if action == 'minimize':
-            window.minimize()
-            return True
-        if action == 'close':
-            # Never block the WebView bridge waiting on the native GUI thread.
-            return self.hide_to_tray_async(delay=0.0)
-        if action == 'exit':
-            self.allow_exit = True
-            stop_analysis_and_wait()
-            try:
-                TASK_MANAGER.shutdown()
-            except Exception:
-                pass
-            try:
-                if self.tray is not None:
-                    self.tray.stop()
-            except Exception:
-                pass
-            window.destroy()
-            return True
-        if action == 'toggle_maximize':
-            if self._maximized:
-                return self.restore_from_work_area()
-            return self.maximize_to_work_area()
-        return False
-
     def pick_folder(self):
         window = self._window()
         if window is None:
@@ -494,6 +310,7 @@ class DesktopApi:
         if not result:
             return None
         return str(result[0])
+
 
 
 class LocalServer(threading.Thread):
@@ -583,7 +400,6 @@ def main():
                 state[key]['cancel'] = True
 
     def exit_from_tray(icon=None, item=None):
-        desktop_api.allow_exit = True
         stop_analysis_and_wait()
         try:
             TASK_MANAGER.shutdown()
