@@ -492,3 +492,56 @@ def storage_summary(data_root, db_path):
         "demo_bytes": demo_bytes,
         "total_bytes": total,
     }
+
+
+def clear_rebuildable_storage(data_root, category):
+    """Clear only rebuildable runtime data; never touch catalog databases."""
+    data_root = Path(data_root)
+    category = str(category or "").strip().lower()
+    targets = {
+        "previews": data_root / "cache" / "thumbnails",
+        "features": data_root / "config" / "dedup_features",
+    }
+    if category == "logs":
+        log_dir = data_root / "logs"
+        removed = 0
+        freed = 0
+        if log_dir.is_dir():
+            for p in log_dir.iterdir():
+                if not p.is_file() or p.name == "photocurator.log":
+                    continue
+                try:
+                    freed += int(p.stat().st_size)
+                    p.unlink()
+                    removed += 1
+                except OSError:
+                    continue
+        return {"category": category, "removed": removed, "freed_bytes": freed}
+
+    target = targets.get(category)
+    if target is None:
+        raise ValueError("unsupported storage cleanup category")
+
+    removed = 0
+    freed = 0
+    if target.is_dir():
+        for p in list(target.rglob("*")):
+            if not p.is_file():
+                continue
+            try:
+                freed += int(p.stat().st_size)
+                p.unlink()
+                removed += 1
+            except OSError:
+                continue
+        for p in sorted(
+            (x for x in target.rglob("*") if x.is_dir()),
+            key=lambda x: len(x.parts),
+            reverse=True,
+        ):
+            try:
+                p.rmdir()
+            except OSError:
+                pass
+    target.mkdir(parents=True, exist_ok=True)
+    return {"category": category, "removed": removed, "freed_bytes": freed}
