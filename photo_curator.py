@@ -6822,8 +6822,10 @@ function preloadFullImage(path){
   const img=new Image();
   img.src='/api/image?path='+encodeURIComponent(path);
   fullImagePreloads.set(path,img);
-  if(fullImagePreloads.size>6){
+  if(fullImagePreloads.size>2){
     const first=fullImagePreloads.keys().next().value;
+    const old=fullImagePreloads.get(first);
+    if(old)old.src='';
     fullImagePreloads.delete(first);
   }
 }
@@ -8181,18 +8183,12 @@ def _analysis_status_snapshot(step):
         }
     elif step == 'dedup':
         groups = s.get('photos') or []
-        counts = {'pending': 0, 'reviewed': 0, 'updated': 0}
-        for group in groups:
-            key = str(group.get('status') or 'pending')
-            if key in counts:
-                counts[key] += 1
+        # Hot status polling must stay O(1). Per-status counts are calculated by
+        # /api/results/dedup only when that filtered result view is requested.
         payload['result_total'] = len(groups)
         payload['stats'] = {
             'groups': int(s.get('groups') or 0),
             'duplicate_groups': len(groups),
-            'pending_groups': counts['pending'],
-            'reviewed_groups': counts['reviewed'],
-            'updated_groups': counts['updated'],
         }
     elif step == 'rank':
         payload['result_total'] = len(s.get('preview') or [])
