@@ -635,7 +635,10 @@ jobs:
 
       - name: Compile Python sources
         run: |
-          python -m py_compile desktop_app.py runtime_paths.py catalog.py photo_curator.py background_tasks.py photo_dedup_batch.py photo_file_organizer.py photo_ranking_engine.py photo_ranking_v3.py raw_loader.py "基础冒烟测试.py" "Codespaces冒烟测试.py" windows_smoke_test.py ui_smoke_test.py
+          python -m py_compile desktop_app.py runtime_paths.py catalog.py photo_curator.py background_tasks.py photo_dedup_batch.py photo_file_organizer.py photo_ranking_engine.py photo_ranking_v3.py raw_loader.py "基础冒烟测试.py" "Codespaces冒烟测试.py" windows_smoke_test.py ui_smoke_test.py desktop_shell_smoke_test.py
+
+      - name: Desktop close-to-tray deadlock smoke test
+        run: python desktop_shell_smoke_test.py
 
       - name: Runtime data path and migration smoke test
         shell: powershell
