@@ -14,10 +14,10 @@ concurrency:
 
 jobs:
   build-candidate:
-    if: github.event_name == 'workflow_dispatch' || github.head_ref == 'fix-v1.5.1'
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request'
     runs-on: windows-latest
     env:
-      CANDIDATE_VERSION: "1.6.0"
+      CANDIDATE_VERSION: "1.7.0"
 
     steps:
       - uses: actions/checkout@v7
@@ -97,7 +97,15 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install -r requirements-optional.txt
-          pip install pyinstaller
+          pip install pyinstaller "selenium>=4.25,<5" "pip-audit>=2.7,<3"
+
+      - name: Release-gate source tests
+        shell: powershell
+        run: |
+          python -m py_compile db_runtime.py desktop_app.py runtime_paths.py catalog.py photo_curator.py background_tasks.py raw_loader.py ui_smoke_test.py windows_smoke_test.py
+          python "基础冒烟测试.py"
+          python ui_smoke_test.py
+          pip-audit -r requirements.txt
 
       - name: Build approved app icon
         shell: powershell
@@ -183,6 +191,37 @@ jobs:
             if ($p.MainWindowTitle -notlike "PhotoCurator*") {
               throw "Unexpected native window title: $($p.MainWindowTitle)"
             }
+
+            Add-Type -TypeDefinition @'
+            using System;
+            using System.Runtime.InteropServices;
+            public static class PhotoCuratorGeometry {
+              [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
+              [StructLayout(LayoutKind.Sequential)] public struct MONITORINFO {
+                public int cbSize; public RECT rcMonitor; public RECT rcWork; public uint dwFlags;
+              }
+              [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+              [DllImport("user32.dll")] public static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint flags);
+              [DllImport("user32.dll")] public static extern bool GetMonitorInfo(IntPtr hMonitor, ref MONITORINFO info);
+            }
+'@
+            $wr = New-Object PhotoCuratorGeometry+RECT
+            if (-not [PhotoCuratorGeometry]::GetWindowRect($p.MainWindowHandle, [ref]$wr)) {
+              throw "Unable to read candidate window geometry"
+            }
+            $mon = [PhotoCuratorGeometry]::MonitorFromWindow($p.MainWindowHandle, 2)
+            $mi = New-Object PhotoCuratorGeometry+MONITORINFO
+            $mi.cbSize = [Runtime.InteropServices.Marshal]::SizeOf($mi)
+            if (-not [PhotoCuratorGeometry]::GetMonitorInfo($mon, [ref]$mi)) {
+              throw "Unable to read monitor work area"
+            }
+            if ($wr.Left -lt $mi.rcWork.Left -or $wr.Top -lt $mi.rcWork.Top -or
+                $wr.Right -gt $mi.rcWork.Right -or $wr.Bottom -gt $mi.rcWork.Bottom) {
+              throw ("Candidate window overlaps reserved desktop/taskbar area. Window=" +
+                     "$($wr.Left),$($wr.Top),$($wr.Right),$($wr.Bottom) Work=" +
+                     "$($mi.rcWork.Left),$($mi.rcWork.Top),$($mi.rcWork.Right),$($mi.rcWork.Bottom)")
+            }
+            Write-Host "Window stays within Windows work area."
           }
           finally {
             if (!$p.HasExited) {
@@ -213,10 +252,10 @@ jobs:
           $installer = "release\PhotoCurator-Setup-v$env:CANDIDATE_VERSION.exe"
           if (!(Test-Path $installer)) { throw "Candidate installer not built: $installer" }
 
-      - name: Upload v1.6.0 test installer
+      - name: Upload v1.7.0 test installer
         uses: actions/upload-artifact@v4
         with:
-          name: PhotoCurator-v1.6.0-test-installer
-          path: release/PhotoCurator-Setup-v1.6.0.exe
+          name: PhotoCurator-v1.7.0-test-installer
+          path: release/PhotoCurator-Setup-v1.7.0.exe
           if-no-files-found: error
           retention-days: 14
