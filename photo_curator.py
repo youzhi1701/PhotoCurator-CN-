@@ -3373,7 +3373,8 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   <div class="task-row"><span>清晰度分析</span><b id="taskCull">待开始</b></div>
   <div class="task-row"><span>相似分析</span><b id="taskDedup">待开始</b></div>
   <div class="task-row"><span>精选评分</span><b id="taskRank">待开始</b></div>
-  <div class="task-tip">分析过程中可以切换结果视图并复核已完成结果；本次分析参数会锁定到任务结束。</div>
+  <div class="task-row"><span>文件操作</span><b id="taskFiles">空闲</b></div>
+  <div class="task-tip" id="taskFileHint">删除、恢复和永久删除在持久化后台队列中执行；异常退出后未完成任务会在下次启动继续。</div>
   <button class="task-exit" id="appExit">退出 PhotoCurator</button>
 </aside>
 <div class="toast-wrap" id="toastWrap"></div>
@@ -3681,7 +3682,11 @@ function taskLabel(d){
   if((d.progress||0)>=100||st.startsWith('完成')||st.includes('筛选完成'))return '已完成';
   return st&&st!=='待开始'?'待继续':'待开始';
 }
-let lastBackgroundActive=0,lastAutoSyncAt=0;
+let lastBackgroundActive=0,lastBackgroundFailed=-1,lastAutoSyncAt=0;
+function fileTaskLabel(kind){
+  return ({move_to_trash:'移入软件回收站',permanent_delete:'永久删除',
+    restore_trash:'恢复照片',purge_trash:'清理软件回收站'})[kind]||'文件操作';
+}
 async function refreshTaskCenter(){
   try{
     const [rows,tasks]=await Promise.all([
@@ -3691,14 +3696,37 @@ async function refreshTaskCenter(){
     document.getElementById('taskCull').textContent=taskLabel(rows[0]);
     document.getElementById('taskDedup').textContent=taskLabel(rows[1]);
     document.getElementById('taskRank').textContent=taskLabel(rows[2]);
-    const analysis=rows.some(x=>x&&x.running),queued=Number(tasks.active||0);
-    document.getElementById('taskToggle').textContent=(analysis||queued)?'●':'◉';
-    document.getElementById('taskToggle').title=(analysis||queued)
-      ?'后台运行中 · '+queued+' 个文件任务':'后台任务空闲';
+    const counts=tasks.counts||{};
+    const analysis=rows.some(x=>x&&x.running),queued=Math.max(0,Number(tasks.active)||0);
+    const failed=Math.max(0,Number(counts.failed)||0);
+    const fileStatus=document.getElementById('taskFiles');
+    const fileHint=document.getElementById('taskFileHint');
+    const latestFailed=(tasks.items||[]).find(x=>x&&x.state==='failed');
+    if(queued){
+      fileStatus.textContent=queued+' 个处理中 / 待处理';
+    }else if(failed){
+      fileStatus.textContent=failed+' 个失败';
+    }else{
+      fileStatus.textContent='空闲';
+    }
+    if(latestFailed){
+      const err=String(latestFailed.error||'未知错误').replace(/\s+/g,' ').slice(0,120);
+      fileHint.textContent='最近失败：'+fileTaskLabel(latestFailed.kind)+' · '+err;
+    }else{
+      fileHint.textContent='删除、恢复和永久删除在持久化后台队列中执行；异常退出后未完成任务会在下次启动继续。';
+    }
+    document.getElementById('taskToggle').textContent=failed?'!':((analysis||queued)?'●':'◉');
+    document.getElementById('taskToggle').title=failed
+      ?'有 '+failed+' 个文件任务失败 · 打开任务中心查看'
+      :((analysis||queued)?'后台运行中 · '+queued+' 个文件任务':'后台任务空闲');
+    if(failed>0&&failed!==lastBackgroundFailed){
+      toast('有 '+failed+' 个后台文件任务失败，请打开任务中心查看','bad');
+    }
     if(lastBackgroundActive>0&&queued===0&&Date.now()-lastAutoSyncAt>800){
       lastAutoSyncAt=Date.now();syncCurrentView();
     }
     lastBackgroundActive=queued;
+    lastBackgroundFailed=failed;
   }catch(_){}
 }
 setInterval(refreshTaskCenter,1400);
