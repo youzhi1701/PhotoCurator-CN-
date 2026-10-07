@@ -263,9 +263,9 @@ class DesktopApi:
 
             dwm = ctypes.windll.dwmapi
             attrs = (
-                (34, colorref('#D8E3F7')),  # DWMWA_BORDER_COLOR
-                (35, colorref('#EEF4FF')),  # DWMWA_CAPTION_COLOR
-                (36, colorref('#334155')),  # DWMWA_TEXT_COLOR
+                (34, colorref('#2A3D68')),  # DWMWA_BORDER_COLOR
+                (35, colorref('#18243C')),  # DWMWA_CAPTION_COLOR
+                (36, colorref('#F8FAFF')),  # DWMWA_TEXT_COLOR
             )
             for attr, value in attrs:
                 try:
@@ -283,11 +283,19 @@ class DesktopApi:
             except Exception:
                 pass
 
+            # Windows 10 does not honor the newer per-window caption-color
+            # attributes consistently, but it does support immersive dark
+            # captions on current builds. This is the compatibility fallback.
             try:
-                dark = ctypes.c_int(0)
-                dwm.DwmSetWindowAttribute(
-                    hwnd, 20, ctypes.byref(dark), ctypes.sizeof(dark)
-                )
+                dark = ctypes.c_int(1)
+                for dark_attr in (20, 19):
+                    try:
+                        if dwm.DwmSetWindowAttribute(
+                            hwnd, dark_attr, ctypes.byref(dark), ctypes.sizeof(dark)
+                        ) == 0:
+                            break
+                    except Exception:
+                        continue
             except Exception:
                 pass
 
