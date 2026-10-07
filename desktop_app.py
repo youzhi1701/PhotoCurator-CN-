@@ -283,7 +283,10 @@ def main():
     def show_window(icon=None, item=None):
         try:
             window.show()
-            window.restore()
+            if desktop_api._maximized:
+                window.maximize()
+            else:
+                window.restore()
         except Exception:
             pass
 
