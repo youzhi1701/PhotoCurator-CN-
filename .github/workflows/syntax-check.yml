@@ -82,19 +82,25 @@ jobs:
           if not re.fullmatch(r"\d+\.\d+\.\d+", dv):
               raise SystemExit(f"APP_VERSION must be numeric semver x.y.z: {dv}")
 
-          # Development/candidate version is allowed to be ahead of the latest
-          # stable release. Stable release metadata remains authoritative for
-          # README direct-download links until the candidate is formally released.
+          # Development/candidate version may be ahead of the latest
+          # actually published Release. Keep build target and public download
+          # metadata separate so README never advertises a nonexistent EXE.
           rv = str(manifest.get("version") or "")
           if not re.fullmatch(r"\d+\.\d+\.\d+", rv):
               raise SystemExit(f"Release manifest version must be semver: {rv!r}")
           expected_installer = f"PhotoCurator-Setup-v{rv}.exe"
           if manifest.get("installer") != expected_installer:
-              raise SystemExit("Release manifest installer name does not match stable release version")
+              raise SystemExit("Release manifest installer name does not match target release version")
+          pv = str(manifest.get("published_version") or "")
+          if not re.fullmatch(r"\d+\.\d+\.\d+", pv):
+              raise SystemExit(f"Published release version must be semver: {pv!r}")
+          expected_published_installer = f"PhotoCurator-Setup-v{pv}.exe"
+          if manifest.get("published_installer") != expected_published_installer:
+              raise SystemExit("Published installer metadata is inconsistent")
           latest_marker = "<!-- LATEST_RELEASE_START -->"
           expected_download = (
               f"https://github.com/youzhi1701/PhotoCurator-CN-/releases/download/"
-              f"v{rv}/{expected_installer}"
+              f"v{pv}/{expected_published_installer}"
           )
           marker_pos = readme.find(latest_marker)
           if marker_pos < 0 or marker_pos > 1200:
@@ -480,8 +486,6 @@ jobs:
               "maximized=True",
               "resizable=True",
               "min_size=(860, 600)",
-              "apply_native_titlebar_theme",
-              "DWMWA_CAPTION_COLOR",
               "webview.start(after_webview_start",
           )
           missing = [item for item in required if item not in desktop]
@@ -492,6 +496,10 @@ jobs:
               "window.events.closing +=",
               "window.events.shown +=",
               "window.events.loaded +=",
+              "window.native",
+              "DwmSetWindowAttribute",
+              "SetWindowTextW",
+              "apply_native_titlebar_theme",
           )
           bad = [item for item in forbidden_desktop if item in desktop]
           if bad:
@@ -523,7 +531,7 @@ jobs:
           )
           missing_ui = [item for item in required_ui if item not in ui]
           if missing_ui:
-              raise SystemExit("v1.5.4 workspace contract missing: " + repr(missing_ui))
+              raise SystemExit("v1.5.5 workspace contract missing: " + repr(missing_ui))
 
           shortcuts = core.split("@app.route('/api/shortcuts')", 1)[1].split(
               "@app.route('/api/sources')", 1
@@ -545,7 +553,7 @@ jobs:
           if "setTimeout(refreshEnvironment,5000)" not in core:
               raise SystemExit("Physical-drive refresh must be deferred after first paint")
 
-          print("Native Windows shell + dashboard/photo split + first-paint contract OK")
+          print("Deadlock-safe Windows shell + dashboard/photo split + first-paint contract OK")
           PY
 
       - name: Check UI boot and state separation
