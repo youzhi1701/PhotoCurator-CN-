@@ -666,7 +666,7 @@ def _prune_index_db():
 threading.Thread(target=_prune_index_db, daemon=True,
                  name='photocurator-index-prune').start()
 
-APP_VERSION = "1.5.0"
+APP_VERSION = "1.5.4"
 IS_CODESPACES = os.environ.get('CODESPACES', '').strip().lower() == 'true'
 CODESPACE_NAME = os.environ.get('CODESPACE_NAME', '').strip()
 _CODESPACES_DOMAIN_RAW = os.environ.get(
@@ -1946,6 +1946,55 @@ def detect_sd_cards(volumes_root=None):
         if not added and _has_images(dcim):
             found.append({'path': str(dcim), 'brand': None})
     return found
+
+
+_DEVICE_SCAN_LOCK = threading.Lock()
+_DEVICE_SCAN_STATE = {
+    'items': [],
+    'updated_at': 0.0,
+    'running': False,
+    'error': '',
+}
+
+
+def _device_scan_snapshot():
+    with _DEVICE_SCAN_LOCK:
+        return {
+            'items': list(_DEVICE_SCAN_STATE.get('items') or []),
+            'updated_at': float(_DEVICE_SCAN_STATE.get('updated_at') or 0.0),
+            'running': bool(_DEVICE_SCAN_STATE.get('running')),
+            'error': str(_DEVICE_SCAN_STATE.get('error') or ''),
+        }
+
+
+def _device_scan_worker():
+    try:
+        items = [] if CODESPACES_PUBLIC_HOST else detect_sd_cards()
+        error = ''
+    except Exception as exc:
+        items = []
+        error = f"{type(exc).__name__}: {exc}"
+        logger.warning("storage device scan failed: %s", error)
+    with _DEVICE_SCAN_LOCK:
+        _DEVICE_SCAN_STATE['items'] = items
+        _DEVICE_SCAN_STATE['updated_at'] = time.time()
+        _DEVICE_SCAN_STATE['running'] = False
+        _DEVICE_SCAN_STATE['error'] = error
+
+
+def request_device_scan():
+    """Start removable/camera storage discovery without blocking a request."""
+    with _DEVICE_SCAN_LOCK:
+        if _DEVICE_SCAN_STATE.get('running'):
+            return False
+        _DEVICE_SCAN_STATE['running'] = True
+        _DEVICE_SCAN_STATE['error'] = ''
+    threading.Thread(
+        target=_device_scan_worker,
+        name='photocurator-device-scan',
+        daemon=True,
+    ).start()
+    return True
 
 
 def native_folder_dialog(prompt="选择照片文件夹"):
@@ -5378,19 +5427,61 @@ def index():
     )
 
 
+def _dashboard_summary():
+    """Read first-screen counters from SQLite only; never touch photo volumes."""
+    summary = {
+        'indexed': 0,
+        'similarity_groups': 0,
+        'reviewed': 0,
+        'trash': 0,
+        'last_activity': None,
+    }
+    try:
+        with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=3) as db:
+            summary['indexed'] = int(db.execute("SELECT COUNT(*) FROM cull_cache").fetchone()[0])
+            summary['similarity_groups'] = int(db.execute("SELECT COUNT(*) FROM similarity_group_state").fetchone()[0])
+            summary['reviewed'] = int(db.execute("SELECT COUNT(*) FROM review_override").fetchone()[0])
+            summary['trash'] = int(db.execute("SELECT COUNT(*) FROM software_trash").fetchone()[0])
+            row = db.execute(
+                "SELECT ts,action,detail FROM activity_log ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            if row:
+                summary['last_activity'] = {
+                    'ts': float(row[0]), 'action': row[1], 'detail': row[2] or ''
+                }
+    except Exception:
+        logger.debug("dashboard summary failed", exc_info=True)
+    return summary
+
+
+@app.route('/api/health')
+def api_health():
+    return jsonify({'ok': True, 'version': APP_VERSION})
+
+
+@app.route('/api/bootstrap')
+def api_bootstrap():
+    payload = _dashboard_summary()
+    payload.update({
+        'ok': True,
+        'version': APP_VERSION,
+        'rawpy': HAS_RAWPY,
+        'heif': HAS_HEIF,
+        'codespaces': bool(CODESPACES_PUBLIC_HOST),
+    })
+    return jsonify(payload)
+
+
 @app.route('/api/shortcuts')
 def api_shortcuts():
-    # Built-in demo is part of the application experience, not a temporary
-    # Codespaces-only fixture. It is available on desktop and online preview.
-    demo_folder = ensure_builtin_demo()
+    include_demo = request.args.get('include_demo', '') == '1'
+    demo_path = DATA_ROOT / '内置测试数据'
+    demo_folder = str(demo_path) if include_demo and demo_path.is_dir() else None
     demo_real = os.path.realpath(demo_folder) if demo_folder else None
     recent = []
     for item in load_recents():
         try:
             real = os.path.realpath(item)
-            # Do not repeat the permanent built-in test entry in "最近";
-            # also hide the obsolete Codespaces sample directory left by older
-            # builds so the sidebar stays compact.
             if demo_real and os.path.normcase(real) == os.path.normcase(demo_real):
                 continue
             if Path(real).name.lower() == '.codespaces_demo':
@@ -5399,8 +5490,12 @@ def api_shortcuts():
         except Exception:
             recent.append(item)
 
+    devices = _device_scan_snapshot()
     return jsonify({
-        'sd': [] if CODESPACES_PUBLIC_HOST else detect_sd_cards(),
+        'sd': [] if CODESPACES_PUBLIC_HOST else devices['items'],
+        'storage_scanning': devices['running'],
+        'storage_scanned_at': devices['updated_at'],
+        'storage_error': devices['error'],
         'recent': recent,
         'rawpy': HAS_RAWPY,
         'heif': HAS_HEIF,
@@ -5408,6 +5503,31 @@ def api_shortcuts():
         'demo_folder': demo_folder,
         'demo_count': 12 if demo_folder else 0,
         'demo_breakdown': {'sharp': 4, 'soft': 4, 'blurry': 4} if demo_folder else {},
+    })
+
+
+@app.route('/api/storage/refresh', methods=['POST'])
+def api_storage_refresh():
+    started = request_device_scan()
+    snapshot = _device_scan_snapshot()
+    return jsonify({
+        'ok': True,
+        'started': started,
+        'running': snapshot['running'],
+        'updated_at': snapshot['updated_at'],
+    })
+
+
+@app.route('/api/demo/prepare', methods=['POST'])
+def api_demo_prepare():
+    demo_folder = ensure_builtin_demo()
+    if not demo_folder:
+        return jsonify({'error': '测试数据准备失败'}), 500
+    return jsonify({
+        'ok': True,
+        'demo_folder': demo_folder,
+        'demo_count': 12,
+        'demo_breakdown': {'sharp': 4, 'soft': 4, 'blurry': 4},
     })
 
 
