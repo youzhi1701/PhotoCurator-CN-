@@ -4621,10 +4621,15 @@ def api_run(step):
         return jsonify({'error': '照片文件夹不存在或无法访问'}), 400
 
     active = [k for k in ('cull', 'dedup', 'rank') if state[k].get('running')]
-    if active:
+    # v1.5 core engines are intentionally independent: cull and dedup may run
+    # together against the same library. Ranking remains a toolbox task and is
+    # kept exclusive because it is CPU-heavy and not part of the cleanup path.
+    if state[step].get('running'):
+        return jsonify({'error': '该分析任务已经在运行', 'active': step}), 409
+    if (step == 'rank' and active) or (step in ('cull', 'dedup') and state['rank'].get('running')):
         return jsonify({
-            'error': '已有照片处理任务正在运行，请先停止或等待完成',
-            'active': active[0]
+            'error': '精选评分正在运行，请先等待或停止评分任务',
+            'active': 'rank'
         }), 409
 
     state['folder'] = folder
@@ -5085,15 +5090,20 @@ def api_trash_restore_all():
 
 @app.route('/api/delete-photo', methods=['POST'])
 def api_delete_photo():
-    """Move one reviewed source photo to PhotoCurator's own recycle bin."""
+    """Queue one file lifecycle operation and return immediately.
+
+    mode=trash (default) moves to PhotoCurator's reversible trash.
+    mode=permanent physically deletes the file and is intentionally separate
+    so the UI can require a stronger confirmation / P shortcut.
+    """
     data = request.get_json() or {}
     step = str(data.get('step') or '')
-    blocked = _reject_mutation_while_running()
-    if blocked:
-        return blocked
+    mode = str(data.get('mode') or 'trash')
     path = str(data.get('path') or '')
     if step not in ('cull', 'dedup', 'rank'):
         return jsonify({'error': '无效板块'}), 400
+    if mode not in ('trash', 'permanent'):
+        return jsonify({'error': '无效删除方式'}), 400
     if path not in _known_step_paths(step):
         return jsonify({'error': '当前结果中未找到这张照片'}), 404
 
@@ -5103,81 +5113,44 @@ def api_delete_photo():
     folder = state.get('folder')
     if not folder or not Path(folder).is_dir():
         return jsonify({'error': '请先选择有效的照片文件夹'}), 400
-    try:
-        trash_id, trash_path = _move_to_software_trash(target, folder, step)
-    except Exception as e:
-        logger.warning(f"software-trash move failed {target}: {e}")
-        return jsonify({'error': f'移入软件回收站失败：{e}'}), 500
 
-    deleted = str(target)
-    _delete_review_override(deleted)
-    state['cull'].setdefault('removed_paths', set()).add(deleted)
-    state['excluded'].discard(deleted)
-    state['phone_bg'].discard(deleted)
+    original = _find_original_for_path(str(target))
+    lifecycle = 'pending_trash' if mode == 'trash' else 'pending_permanent_delete'
+    _apply_media_lifecycle(original, str(target), lifecycle, step)
 
-    # Cull: remove it from review/state and recalculate counters.
-    cull = state['cull']
-    cull['photos'] = [p for p in cull.get('photos', []) if p.get('path') != deleted]
-    cull['sharp_paths'] = [p for p in cull.get('sharp_paths', []) if p != deleted]
-    cull['sharp'] = sum(1 for p in cull['photos'] if p.get('tier') == 'sharp')
-    cull['soft'] = sum(1 for p in cull['photos'] if p.get('tier') == 'soft')
-    cull['blurry'] = sum(1 for p in cull['photos'] if p.get('tier') == 'blurry')
+    kind = 'move_to_trash' if mode == 'trash' else 'permanent_delete'
+    priority = 10 if mode == 'trash' else 5
+    task_id, created = TASK_MANAGER.enqueue(
+        kind,
+        {'path': str(target), 'folder': str(folder), 'step': step},
+        priority=priority,
+        idempotency_key=f"{kind}:{original}",
+    )
+    _activity('提交后台任务', original, f"{kind}#{task_id}")
+    return jsonify({
+        'ok': True,
+        'queued': True,
+        'created': bool(created),
+        'task_id': int(task_id),
+        'mode': mode,
+        'lifecycle': lifecycle,
+        'original_path': original,
+        'path': str(target),
+    }), 202
 
-    # Dedup: remove the member. If the selected keeper was deleted, promote the
-    # best remaining member (members are already quality-sorted in the UI data).
-    dedup = state['dedup']
-    new_groups = []
-    for group in dedup.get('groups_data', []):
-        members = [m for m in group.get('members', []) if m.get('path') != deleted]
-        if not members:
-            continue
-        group['members'] = members
-        group['count'] = len(members)
-        selected = [p for p in (group.get('selected_paths') or []) if p != deleted]
-        if not selected:
-            selected = [members[0].get('path')]
-        group['selected_paths'] = selected
-        selected_set = set(selected)
-        for m in members:
-            m['selected'] = m.get('path') in selected_set
-        new_groups.append(group)
-    dedup['groups_data'] = new_groups
-    dedup['photos'] = [g for g in new_groups if g.get('count', 0) > 1]
-    dedup['groups'] = len(dedup['photos'])
-    dedup['singleton_paths'] = [p for p in dedup.get('singleton_paths', []) if p != deleted]
-    dedup['all_singleton_paths'] = [p for p in dedup.get('all_singleton_paths', []) if p != deleted]
-    if isinstance(dedup.get('seen_paths'), set):
-        dedup['seen_paths'].discard(deleted)
-    dedup['kept_paths'] = list(dedup.get('singleton_paths') or []) + [
-        p for g in new_groups for p in (g.get('selected_paths') or [])
-    ]
-    _sync_dedup_with_cull()
 
-    # Rank: remove score object so deleted files cannot reappear after reweighting.
-    rank = state['rank']
-    rank['scores'] = [sc for sc in rank.get('scores', [])
-                      if getattr(sc, 'path', None) != deleted]
-    rank['total'] = len(rank['scores'])
-    rank['preview'] = build_topn()
-    rank['preview_at'] = time.time()
+@app.route('/api/tasks')
+def api_tasks():
+    """Lightweight task-center snapshot for the desktop UI / tray."""
+    return jsonify(TASK_MANAGER.summary())
 
-    if step == 'cull':
-        first = cull['photos'][:UI_RESULT_CHUNK]
-        return jsonify({'ok': True, 'photos': first, 'trash_id': trash_id,
-                        'trash_count': len(_trash_rows(folder)),
-                        'result_total': len(cull['photos']),
-                        'truncated': len(cull['photos']) > len(first),
-                        'sharp': cull['sharp'], 'soft': cull['soft'], 'blurry': cull['blurry']})
-    if step == 'dedup':
-        first = dedup['photos'][:UI_RESULT_CHUNK]
-        return jsonify({'ok': True, 'photos': first, 'trash_id': trash_id,
-                        'trash_count': len(_trash_rows(folder)),
-                        'result_total': len(dedup['photos']),
-                        'truncated': len(dedup['photos']) > len(first),
-                        'groups': dedup['groups'],
-                        'duplicate_groups': len(dedup['photos'])})
-    return jsonify({'ok': True, 'photos': rank['preview'], 'removed': len(state['excluded']),
-                    'trash_id': trash_id, 'trash_count': len(_trash_rows(folder))})
+
+@app.route('/api/tasks/<int:task_id>')
+def api_task(task_id):
+    row = TASK_MANAGER.get(task_id)
+    if not row:
+        return jsonify({'error': '后台任务不存在'}), 404
+    return jsonify(row)
 
 
 @app.route('/api/weights', methods=['POST'])
