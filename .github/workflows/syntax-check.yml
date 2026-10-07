@@ -42,7 +42,8 @@ jobs:
             "基础冒烟测试.py" \
             "Codespaces冒烟测试.py" \
             windows_smoke_test.py \
-            ui_smoke_test.py
+            ui_smoke_test.py \
+            release_gate_test.py
 
       - name: Parse GitHub Actions YAML
         run: |
@@ -892,6 +893,7 @@ jobs:
       - name: Unicode path and background lifecycle smoke test
         run: |
           python "基础冒烟测试.py"
+          python release_gate_test.py
 
       - name: Real desktop UI interaction smoke test
         run: |
