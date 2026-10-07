@@ -2,6 +2,7 @@
 setlocal EnableExtensions
 cd /d "%~dp0"
 set "PYTHONUTF8=1"
+set "PHOTOCURATOR_DIAGNOSTICS=1"
 
 if "%PHOTOCURATOR_BATCH_PARSE_ONLY%"=="1" exit /b 0
 if not exist "desktop_app.py" goto incomplete
