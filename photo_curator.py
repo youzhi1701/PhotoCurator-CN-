@@ -2356,8 +2356,6 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
 <style>
   :root{--bg:#f4f6fb;--panel:#fff;--panel2:#eef1f7;--text:#1c2330;--muted:#6b7280;
         --accent:#2563eb;--good:#16a34a;--warn:#d97706;--bad:#dc2626;--border:#dde3ec;--shadow:rgba(20,40,80,.10);color-scheme:light}
-  [data-theme=dark]{--bg:#0f141c;--panel:#161d28;--panel2:#1d2633;--text:#e8edf5;--muted:#9aa6b6;
-        --accent:#3b82f6;--border:#27313f;--shadow:rgba(0,0,0,.5);color-scheme:dark}
   *{box-sizing:border-box}
   body{margin:0;font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text)}
   .top{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:58px;padding:12px 20px;background:linear-gradient(90deg,#1e40af,#2563eb);color:#fff}
@@ -2722,7 +2720,6 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   <div class="brand">🖼️ PhotoCurator <small>照片整理工作区 · v{{ app_version }}</small></div>
   <div class="top-right">
     <button class="theme" id="taskToggle" title="任务中心" aria-label="任务中心">◉</button>
-    <button class="theme" id="themeToggle" title="切换浅色 / 深色主题" aria-label="切换浅色 / 深色主题">🌙</button>
     <div class="window-controls">
       <button id="winMin" title="最小化">—</button>
       <button id="winMax" title="最大化/还原">□</button>
@@ -2731,19 +2728,31 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   </div>
 </div>
 <div class="viewport">
-  <div class="sidebar">
+  <div class="sidebar" id="sidebar">
+    <nav class="sidebar-nav" aria-label="核心照片整理">
+      <button class="step active" data-step="cull"><span class="nav-icon">◐</span><span class="nav-label">模糊废片</span></button>
+      <button class="step" data-step="dedup"><span class="nav-icon">▱</span><span class="nav-label">相似照片</span></button>
+      <button class="step" data-step="trash"><span class="nav-icon">♲</span><span class="nav-label">回收站</span></button>
+      <button class="toolbox-open" id="toolboxOpen"><span class="nav-icon">⌘</span><span class="nav-label">工具箱</span></button>
+    </nav>
     <div class="sidebar-scroll">
-      <div class="sidebar-title">📁 照片文件夹</div>
+      <details class="source-panel" open>
+        <summary>📁 照片来源</summary>
       <div class="folder-row">
         <input type="text" id="folderInput" placeholder="请选择或粘贴照片文件夹路径">
         <button class="btn" id="browseBtn">选择文件夹…</button>
       </div>
       <div id="shortcuts"></div>
+      </details>
 
-      <div class="sidebar-title" style="margin-top:6px" id="settingsTitle">⚙️ 当前设置</div>
-      <div id="settingsPanel"></div>
+      <details class="settings-fold" id="settingsDetails">
+        <summary>⚙️ 筛选设置</summary>
+        <div id="settingsPanel" style="margin-top:10px"></div>
+      </details>
 
-      <div class="panel-box">
+      <details class="stats-fold" open>
+        <summary>📊 当前结果</summary>
+        <div class="panel-box" style="margin-top:8px">
         <div class="stat-row" data-steps="cull dedup rank"><span>照片数量</span><span class="v" id="sImages">0</span></div>
         <div class="stat-row" data-steps="cull"><span>清晰</span><span class="v" id="sSharp">0</span></div>
         <div class="stat-row" data-steps="cull"><span>轻微软（可保留）</span><span class="v" id="sSoft" style="color:var(--warn)">0</span></div>
@@ -2752,10 +2761,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
         <div class="stat-row" data-steps="cull dedup rank trash"><span>当前显示</span><span class="v" id="sShowing">0</span></div>
         <div class="stat-row" data-steps="trash"><span>软件回收站</span><span class="v" id="sTrash">0</span></div>
         <div id="removedBox" style="display:none">已移除 <b id="removedN">0</b> 张 · <a id="restoreAll">全部恢复</a></div>
-      </div>
-      <details class="activity-panel" id="activityPanel">
-        <summary>🕘 运行记录与操作日志</summary>
-        <div id="activityLog" class="activity-log">暂无记录</div>
+        </div>
       </details>
     </div>
 
@@ -2766,15 +2772,14 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
       <button class="btn-ghost" id="moveBlurryBtn" style="display:none">🗂️ 移动模糊照片 → Blurred（模糊照片）</button>
       <button class="btn cta" id="dedupApplyBtn" style="display:none">✓ 确认处理未保留照片</button>
       <button class="btn" id="startBtn">▶ 开始分析</button>
+      <button class="btn-ghost sidebar-collapse" id="sidebarCollapse" title="收起/展开侧栏">⇤ 收起侧栏</button>
       <button class="btn god" id="godBtn" style="display:none" aria-hidden="true">内部全流程</button>
     </div>
   </div>
   <div class="main">
-    <div class="workspace-nav steps" aria-label="照片整理结果视图">
-      <div class="step active" data-step="cull">清晰度结果</div>
-      <div class="step" data-step="dedup">相似组选优</div>
-      <div class="step" data-step="rank">精选推荐</div>
-      <div class="step" data-step="trash">回收站复核</div>
+    <div class="workspace-heading">
+      <div><b id="workspaceTitle">模糊废片</b><span id="workspaceHint">快速复核已分析结果，后台扫描不会打断当前操作。</span></div>
+      <button class="chip" id="settingsQuick">筛选设置</button>
     </div>
     <div class="progress-wrap" id="progressWrap">
       <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
@@ -2832,6 +2837,15 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
     </div>
   </div>
 </div>
+
+<aside class="toolbox-panel" id="toolboxPanel">
+  <div class="toolbox-head"><div><b>工具箱</b><span>低频辅助与扩展功能</span></div><button id="toolboxClose">×</button></div>
+  <button class="tool-card" id="openRankTool"><b>✦ 照片评分 / 精选推荐</b><span>独立扩展工具，不参与默认清理主流程。</span></button>
+  <details class="tool-card log-tool" id="toolLog">
+    <summary><b>☷ 系统运行日志</b><span>查看扫描、后台任务和操作记录。</span></summary>
+    <div id="activityLog" class="activity-log">暂无记录</div>
+  </details>
+</aside>
 
 <aside class="task-center" id="taskCenter">
   <div class="task-center-head"><b>任务中心</b><button id="taskClose">×</button></div>
@@ -3009,12 +3023,6 @@ document.getElementById('gallery').addEventListener('click',e=>{
   else renderRank(photos);
 });
 
-/* theme */
-const tt=document.getElementById('themeToggle');
-tt.onclick=()=>{const d=document.documentElement.getAttribute('data-theme')==='dark';
-  document.documentElement.setAttribute('data-theme',d?'light':'dark');tt.textContent=d?'🌙':'☀️';
-  if(exMap){exMapTheme=currentMapStyle();exMap.setStyle(MAP_STYLES[exMapTheme]);}};
-
 function loadActivity(){
   fetch('/api/activity?limit=60').then(r=>r.json()).then(d=>{
     const box=document.getElementById('activityLog'),items=d.items||[];
@@ -3028,7 +3036,7 @@ function loadActivity(){
     }).join('');
   }).catch(()=>{});
 }
-document.getElementById('activityPanel').addEventListener('toggle',e=>{if(e.currentTarget.open)loadActivity();});
+document.getElementById('toolLog').addEventListener('toggle',e=>{if(e.currentTarget.open)loadActivity();});
 
 /* Gallery thumbnail zoom: Ctrl + mouse wheel changes thumbnail density only. */
 let thumbSize=190;
