@@ -738,12 +738,23 @@ def self_test():
             if response.status != 200:
                 raise RuntimeError("packaged vendor resources are unavailable")
 
-        with urllib.request.urlopen(URL + "/api/shortcuts", timeout=15.0) as response:
+        started = time.monotonic()
+        with urllib.request.urlopen(URL + "/api/shortcuts", timeout=3.0) as response:
             payload = json.loads(response.read().decode("utf-8"))
-            if payload.get("demo_count") != 36:
-                raise RuntimeError(f"packaged writable data test failed: {payload}")
             if not isinstance(payload.get("sources"), list):
                 raise RuntimeError("packaged data-source catalog API is unavailable")
+        if time.monotonic() - started > 2.5:
+            raise RuntimeError("first-paint shortcuts API is doing blocking startup work")
+
+        request = urllib.request.Request(
+            URL + "/api/demo-prepare?wait=1",
+            data=b"",
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=35.0) as response:
+            demo = json.loads(response.read().decode("utf-8"))
+            if not demo.get("ready") or int(demo.get("count") or 0) < 36:
+                raise RuntimeError(f"packaged writable demo preparation failed: {demo}")
 
         return 0
     finally:
