@@ -17,7 +17,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || github.head_ref == 'fix-v1.5.1'
     runs-on: windows-latest
     env:
-      CANDIDATE_VERSION: "1.5.8"
+      CANDIDATE_VERSION: "1.5.9"
 
     steps:
       - uses: actions/checkout@v7
@@ -213,10 +213,10 @@ jobs:
           $installer = "release\PhotoCurator-Setup-v$env:CANDIDATE_VERSION.exe"
           if (!(Test-Path $installer)) { throw "Candidate installer not built: $installer" }
 
-      - name: Upload v1.5.8 test installer
+      - name: Upload v1.5.9 test installer
         uses: actions/upload-artifact@v4
         with:
-          name: PhotoCurator-v1.5.8-test-installer
-          path: release/PhotoCurator-Setup-v1.5.8.exe
+          name: PhotoCurator-v1.5.9-test-installer
+          path: release/PhotoCurator-Setup-v1.5.9.exe
           if-no-files-found: error
           retention-days: 14
