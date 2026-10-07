@@ -4315,7 +4315,7 @@ loadActivity();
 /* Gallery thumbnail zoom: Ctrl + wheel changes photo-card size, never page zoom. */
 let thumbSize=260;
 try{
-  const saved=parseInt(localStorage.getItem('pc-thumb-size-v160')||'260',10);
+  const saved=parseInt(localStorage.getItem('pc-thumb-size-v170')||'260',10);
   if(Number.isFinite(saved))thumbSize=Math.min(420,Math.max(160,saved));
 }catch(_){}
 function applyThumbSize(v){
@@ -4325,7 +4325,7 @@ function applyThumbSize(v){
   const label=document.getElementById('thumbSizeValue');
   if(range)range.value=String(thumbSize);
   if(label)label.textContent=String(thumbSize);
-  try{localStorage.setItem('pc-thumb-size-v160',String(thumbSize));}catch(_){}
+  try{localStorage.setItem('pc-thumb-size-v170',String(thumbSize));}catch(_){}
 }
 applyThumbSize(thumbSize);
 document.getElementById('thumbSizeRange').oninput=e=>applyThumbSize(Number(e.target.value));
