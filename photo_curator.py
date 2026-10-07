@@ -26,6 +26,8 @@ from logging.handlers import RotatingFileHandler
 import threading
 import subprocess
 import tempfile
+import platform
+import zipfile
 from pathlib import Path
 from dataclasses import dataclass, asdict
 from urllib.parse import quote
@@ -4003,6 +4005,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
           <button data-clean="previews">清理预览缓存</button>
           <button data-clean="logs">清理旧日志</button>
           <button data-clean="features">重建相似特征</button>
+          <button id="exportDiagnostics">导出诊断包</button>
         </div>
         <small id="dataRootText">正在读取数据目录…</small>
       </div>
@@ -5186,6 +5189,18 @@ async function clearStorageCategory(category){
   }
 }
 document.querySelectorAll('[data-clean]').forEach(btn=>btn.onclick=()=>clearStorageCategory(btn.dataset.clean));
+document.getElementById('exportDiagnostics').onclick=async()=>{
+  const btn=document.getElementById('exportDiagnostics');
+  const old=btn.textContent;btn.disabled=true;btn.textContent='正在导出…';
+  try{
+    const r=await fetch('/api/diagnostics-export',{method:'POST'});
+    const d=await r.json();
+    if(!r.ok||d.error)throw new Error(d.error||('HTTP '+r.status));
+    toast('诊断包已导出：\n'+d.path,'good');
+  }catch(err){
+    toast('诊断包导出失败：'+(err.message||'未知错误'),'bad');
+  }finally{btn.disabled=false;btn.textContent=old;}
+};
 function loadShortcuts(){
   fetch('/api/shortcuts').then(r=>r.json()).then(d=>{
     let h='';
@@ -6762,6 +6777,49 @@ def api_storage_clear():
         return jsonify(result)
     except Exception as exc:
         logger.warning("storage cleanup failed", exc_info=True)
+        return jsonify({'error': str(exc)}), 500
+
+
+@app.route('/api/diagnostics-export', methods=['POST'])
+def api_diagnostics_export():
+    """Create a support bundle with no source photos or preview images."""
+    try:
+        diag_dir = DATA_ROOT / 'logs' / 'diagnostics'
+        diag_dir.mkdir(parents=True, exist_ok=True)
+        stamp = time.strftime('%Y%m%d-%H%M%S')
+        target = diag_dir / f'PhotoCurator-Diagnostic-{stamp}.zip'
+        report = {
+            'app_version': APP_VERSION,
+            'python': sys.version,
+            'platform': platform.platform(),
+            'frozen': IS_FROZEN,
+            'data_root': str(DATA_ROOT),
+            'database_quick_check': sqlite_quick_check(INDEX_DB),
+            'rawpy': HAS_RAWPY,
+            'heif': HAS_HEIF,
+            'supported_extensions': sorted(IMG_EXTS),
+            'sources': catalog_list_sources(INDEX_DB, refresh=False),
+            'scan_sessions': catalog_recent_scan_sessions(INDEX_DB, limit=20),
+            'tasks': TASK_MANAGER.summary(),
+            'scan_runtime': current_scan_snapshot(),
+            'storage': catalog_storage_summary(DATA_ROOT, INDEX_DB),
+        }
+        with zipfile.ZipFile(target, 'w', compression=zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr(
+                'diagnostics.json',
+                json.dumps(report, ensure_ascii=False, indent=2, default=str),
+            )
+            if LOG_DIR and Path(LOG_DIR).is_dir():
+                for log_file in Path(LOG_DIR).glob('*.log*'):
+                    try:
+                        if log_file.is_file() and log_file.stat().st_size <= 8 * 1024 * 1024:
+                            zf.write(log_file, arcname='logs/' + log_file.name)
+                    except OSError:
+                        continue
+        _activity('导出诊断包', str(target), '不包含原照片和预览图')
+        return jsonify({'ok': True, 'path': str(target)})
+    except Exception as exc:
+        logger.warning("diagnostic export failed", exc_info=True)
         return jsonify({'error': str(exc)}), 500
 
 
