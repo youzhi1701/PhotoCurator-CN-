@@ -678,7 +678,7 @@ def _prune_index_db():
 threading.Thread(target=_prune_index_db, daemon=True,
                  name='photocurator-index-prune').start()
 
-APP_VERSION = "1.5.5"
+APP_VERSION = "1.5.6"
 IS_CODESPACES = os.environ.get('CODESPACES', '').strip().lower() == 'true'
 CODESPACE_NAME = os.environ.get('CODESPACE_NAME', '').strip()
 _CODESPACES_DOMAIN_RAW = os.environ.get(
@@ -3482,6 +3482,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
     radial-gradient(circle at 88% 12%,rgba(196,181,253,.18),transparent 34%),
     linear-gradient(135deg,#f7fbff 0%,#fbf8ff 100%)!important}
   .appbar{height:46px;display:flex;align-items:center;gap:10px;padding:0 10px;border-bottom:1px solid rgba(128,145,195,.16);background:rgba(242,247,255,.86);backdrop-filter:blur(22px) saturate(150%);z-index:60}
+  .app-brand{display:flex;align-items:center;gap:8px;min-width:142px;padding-right:2px;color:#334155;user-select:none}.app-brand-mark{width:27px;height:27px;border-radius:9px;display:grid;place-items:center;background:linear-gradient(145deg,#7dd3fc,#6d73e6);color:#fff;font-weight:900;font-size:15px;box-shadow:0 5px 14px rgba(71,92,191,.18)}.app-brand-copy{display:flex;flex-direction:column;line-height:1.05}.app-brand-copy b{font-size:11px}.app-brand-copy small{font-size:8px;color:#8a94a8;margin-top:2px}.window-controls{display:flex;align-self:stretch;margin:-0px -10px 0 2px}.window-controls button{width:44px;height:46px;border:0;border-radius:0;background:transparent;color:#667085;font-size:15px;cursor:pointer}.window-controls button:hover{background:rgba(71,85,105,.09)}.window-controls #winClose:hover{background:#e5484d;color:#fff}.appbar button,.appbar input,.appbar .source-pill,.appbar .workspace-tabs,.appbar .window-controls{-webkit-app-region:no-drag}
   .workspace-tabs{display:flex;align-items:center;gap:4px;padding:3px;border:1px solid rgba(124,139,192,.16);border-radius:11px;background:rgba(255,255,255,.55)}
   .workspace-tabs .step{min-width:auto;height:30px;padding:0 11px;border:0;border-radius:8px;background:transparent;color:#64748b;font-size:11px;font-weight:800;display:flex;align-items:center;gap:6px;cursor:pointer}
   .workspace-tabs .step.active{background:#fff;color:#4861cf;box-shadow:0 3px 10px rgba(75,91,160,.11)}
@@ -3517,7 +3518,11 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   @media(max-width:1050px){.source-pill{max-width:220px;min-width:150px}.workspace-tabs .step{padding:0 9px}.library-sidebar{width:205px;flex-basis:205px}}
   @media(max-width:900px){.source-pill{display:none}.content-title span{display:none}.library-sidebar{width:190px;flex-basis:190px}}
 </style></head><body>
-<header class="appbar">
+<header class="appbar pywebview-drag-region">
+  <div class="app-brand" aria-label="PhotoCurator">
+    <span class="app-brand-mark">C</span>
+    <span class="app-brand-copy"><b>PhotoCurator</b><small>v{{ app_version }}</small></span>
+  </div>
   <nav class="workspace-tabs" aria-label="照片整理工作区">
     <button class="step active" data-step="cull"><span class="nav-icon">◐</span><span class="nav-label">模糊废片</span></button>
     <button class="step" data-step="dedup"><span class="nav-icon">▱</span><span class="nav-label">相似照片</span></button>
@@ -3536,6 +3541,11 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
     <button class="appbar-btn" id="settingsQuick">筛选</button>
     <button class="appbar-btn" id="taskToggle">任务</button>
     <button class="appbar-btn icon-btn" id="toolboxOpen" title="工具箱">⌘</button>
+  </div>
+  <div class="window-controls" aria-label="窗口控制">
+    <button id="winMin" title="最小化">—</button>
+    <button id="winMax" title="最大化/还原">□</button>
+    <button id="winClose" title="关闭到后台">×</button>
   </div>
 </header>
 
@@ -4012,6 +4022,21 @@ function setSidebarCollapsed(on){
 }
 try{setSidebarCollapsed(localStorage.getItem('pc-sidebar-collapsed')==='1');}catch(_){}
 sidebarCollapse.onclick=()=>setSidebarCollapsed(!document.body.classList.contains('sidebar-collapsed'));
+function nativeWindow(action){
+  const api=window.pywebview&&window.pywebview.api;
+  if(api&&api.window_action)return api.window_action(action).catch(()=>false);
+  return Promise.resolve(false);
+}
+document.getElementById('winMin').onclick=()=>nativeWindow('minimize');
+document.getElementById('winMax').onclick=()=>nativeWindow('toggle_maximize');
+document.getElementById('winClose').onclick=()=>nativeWindow('close');
+setTimeout(()=>{
+  if(!(window.pywebview&&window.pywebview.api)){
+    const controls=document.querySelector('.window-controls');
+    if(controls)controls.style.display='none';
+  }
+},1200);
+
 function setInspectorOpen(on){
   document.body.classList.toggle('inspector-open',!!on);
   document.getElementById('inspector').setAttribute('aria-hidden',on?'false':'true');
