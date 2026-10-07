@@ -140,54 +140,64 @@ def _merge_sqlite_catalog(legacy_db, target_db):
         "cache_meta",
     )
     report = {"tables": {}, "rows": 0}
-    with sqlite3.connect(str(target_db), timeout=30) as db:
+    # sqlite3.Connection's context manager commits/rolls back but does NOT
+    # close the connection. Explicit close is required on Windows or the
+    # attached legacy DB can remain locked after migration completes.
+    db = sqlite3.connect(str(target_db), timeout=30)
+    attached = False
+    try:
         db.execute("ATTACH DATABASE ? AS legacy", (str(legacy_db),))
-        try:
-            for table in durable_tables:
-                main_cols, main_pk = _table_columns(db, "main", table)
-                old_cols, _ = _table_columns(db, "legacy", table)
-                common = [c for c in main_cols if c in old_cols]
-                if not common or not main_pk or not all(c in common for c in main_pk):
-                    continue
-                old_rows = db.execute(
-                    f"SELECT {','.join(common)} FROM legacy.{table}"
-                ).fetchall()
-                if not old_rows:
-                    continue
-                index = {name: idx for idx, name in enumerate(common)}
-                updated_idx = index.get("updated_at")
-                merged = 0
-                for row in old_rows:
-                    key_vals = tuple(row[index[c]] for c in main_pk)
-                    where = " AND ".join(f"{c}=?" for c in main_pk)
-                    current = db.execute(
-                        f"SELECT updated_at FROM main.{table} WHERE {where}",
-                        key_vals,
-                    ).fetchone() if "updated_at" in main_cols else db.execute(
-                        f"SELECT 1 FROM main.{table} WHERE {where}",
-                        key_vals,
-                    ).fetchone()
-                    if current is not None:
-                        if updated_idx is None:
+        attached = True
+        for table in durable_tables:
+            main_cols, main_pk = _table_columns(db, "main", table)
+            old_cols, _ = _table_columns(db, "legacy", table)
+            common = [c for c in main_cols if c in old_cols]
+            if not common or not main_pk or not all(c in common for c in main_pk):
+                continue
+            old_rows = db.execute(
+                f"SELECT {','.join(common)} FROM legacy.{table}"
+            ).fetchall()
+            if not old_rows:
+                continue
+            index = {name: idx for idx, name in enumerate(common)}
+            updated_idx = index.get("updated_at")
+            merged = 0
+            for row in old_rows:
+                key_vals = tuple(row[index[c]] for c in main_pk)
+                where = " AND ".join(f"{c}=?" for c in main_pk)
+                current = db.execute(
+                    f"SELECT updated_at FROM main.{table} WHERE {where}",
+                    key_vals,
+                ).fetchone() if "updated_at" in main_cols else db.execute(
+                    f"SELECT 1 FROM main.{table} WHERE {where}",
+                    key_vals,
+                ).fetchone()
+                if current is not None:
+                    if updated_idx is None:
+                        continue
+                    try:
+                        if float(row[updated_idx] or 0) <= float(current[0] or 0):
                             continue
-                        try:
-                            if float(row[updated_idx] or 0) <= float(current[0] or 0):
-                                continue
-                        except Exception:
-                            continue
-                    marks = ",".join("?" for _ in common)
-                    db.execute(
-                        f"INSERT OR REPLACE INTO main.{table} "
-                        f"({','.join(common)}) VALUES({marks})",
-                        tuple(row),
-                    )
-                    merged += 1
-                if merged:
-                    report["tables"][table] = merged
-                    report["rows"] += merged
-            db.commit()
-        finally:
-            db.execute("DETACH DATABASE legacy")
+                    except Exception:
+                        continue
+                marks = ",".join("?" for _ in common)
+                db.execute(
+                    f"INSERT OR REPLACE INTO main.{table} "
+                    f"({','.join(common)}) VALUES({marks})",
+                    tuple(row),
+                )
+                merged += 1
+            if merged:
+                report["tables"][table] = merged
+                report["rows"] += merged
+        db.commit()
+    finally:
+        if attached:
+            try:
+                db.execute("DETACH DATABASE legacy")
+            except sqlite3.DatabaseError:
+                pass
+        db.close()
     return report
 
 
