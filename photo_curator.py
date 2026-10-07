@@ -3296,10 +3296,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   .zoomctl button:hover{background:rgba(255,255,255,.18)}
   .zoomctl .zoomval{min-width:48px;text-align:center;font-size:11px;font-weight:700;user-select:none}
   @media (max-width: 820px){
-    .task-center{left:12px;right:12px;bottom:12px}
-    .task-center.open{grid-template-columns:1fr 1fr}
-    .task-center-head,.task-tip{grid-column:1/-1}
-.zoomctl .zoomval{min-width:42px}.zoomctl button{min-width:26px}}
+    .zoomctl .zoomval{min-width:42px}.zoomctl button{min-width:26px}}
   @media (max-width: 620px){
     .lb-shortcuts{display:none}.zoomctl{order:2}.zoomctl .zoomval{display:none}}
 
