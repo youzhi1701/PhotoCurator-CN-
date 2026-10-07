@@ -714,7 +714,7 @@ def _prune_index_db():
 threading.Thread(target=_prune_index_db, daemon=True,
                  name='photocurator-index-prune').start()
 
-APP_VERSION = "1.7.0"
+APP_VERSION = "1.7.1"
 IS_CODESPACES = os.environ.get('CODESPACES', '').strip().lower() == 'true'
 CODESPACE_NAME = os.environ.get('CODESPACE_NAME', '').strip()
 _CODESPACES_DOMAIN_RAW = os.environ.get(
@@ -1048,7 +1048,8 @@ state = {
     'cull':  {**_blank(), 'sharp': 0, 'soft': 0, 'blurry': 0, 'sharp_paths': [], 'overrides': {}, 'removed_paths': set(), 'cache_hits': 0},
     'dedup': {**_blank(), 'groups': 0, 'kept_paths': [], 'groups_data': [],
               'singleton_paths': [], 'all_singleton_paths': [], 'seen_paths': set(), 'applied': False},
-    'rank':  {**_blank(), 'scores': [], 'total': 0, 'analyzed': 0, 'preview': [], 'preview_at': 0.0},
+    'rank':  {**_blank(), 'scores': [], 'total': 0, 'analyzed': 0, 'preview': [], 'preview_at': 0.0,
+              'preview_score_count': 0},
 }
 
 
@@ -2537,16 +2538,16 @@ def _shared_list_images(folder, recursive=True, max_age=2.0):
     with _SCAN_SNAPSHOT_CV:
         entry = _SCAN_SNAPSHOTS.get(key)
         if entry and entry.get('state') == 'ready' and now - entry.get('at', 0) <= max_age:
-            return list(entry.get('paths') or [])
+            return entry.get('paths') or ()
         while entry and entry.get('state') == 'scanning':
             _SCAN_SNAPSHOT_CV.wait(timeout=0.25)
             entry = _SCAN_SNAPSHOTS.get(key)
             if entry and entry.get('state') == 'ready':
-                return list(entry.get('paths') or [])
+                return entry.get('paths') or ()
             if not entry or entry.get('state') == 'failed':
                 break
         _SCAN_SNAPSHOTS[key] = {
-            'state': 'scanning', 'at': time.time(), 'paths': [],
+            'state': 'scanning', 'at': time.time(), 'paths': (),
             'discovered': 0,
         }
 
@@ -2589,8 +2590,10 @@ def _shared_list_images(folder, recursive=True, max_age=2.0):
                 with _SCAN_SNAPSHOT_CV:
                     entry = _SCAN_SNAPSHOTS.get(key)
                     if entry and entry.get('state') == 'scanning':
+                        # Progress only needs a count. Copying the whole growing
+                        # path list every 128 files turns a large scan into O(n²)
+                        # memory traffic and creates avoidable GC pressure.
                         entry['discovered'] = len(paths)
-                        entry['paths'] = list(paths)
 
         if scan_session is not None:
             if pending_catalog:
@@ -2614,16 +2617,17 @@ def _shared_list_images(folder, recursive=True, max_age=2.0):
         with _SCAN_SNAPSHOT_CV:
             _SCAN_SNAPSHOTS[key] = {
                 'state': 'failed', 'at': time.time(), 'error': str(exc),
-                'paths': list(paths), 'discovered': len(paths),
+                'paths': (), 'discovered': len(paths),
             }
             _SCAN_SNAPSHOT_CV.notify_all()
         raise
 
     paths.sort(key=lambda p: os.path.normcase(str(p)))
+    snapshot = tuple(paths)
     with _SCAN_SNAPSHOT_CV:
         _SCAN_SNAPSHOTS[key] = {
-            'state': 'ready', 'at': time.time(), 'paths': list(paths),
-            'discovered': len(paths),
+            'state': 'ready', 'at': time.time(), 'paths': snapshot,
+            'discovered': len(snapshot),
         }
         if len(_SCAN_SNAPSHOTS) > 8:
             stale = sorted(
@@ -2633,7 +2637,7 @@ def _shared_list_images(folder, recursive=True, max_age=2.0):
             for old_key, _ in stale[:max(0, len(_SCAN_SNAPSHOTS) - 8)]:
                 _SCAN_SNAPSHOTS.pop(old_key, None)
         _SCAN_SNAPSHOT_CV.notify_all()
-    return list(paths)
+    return snapshot
 
 
 def current_scan_snapshot(folder=None):
@@ -3230,6 +3234,7 @@ def run_rank(folder, ftype='all', pair='both', recursive=True):
     s = state['rank']
     s.update({'running': True, 'cancel': False, 'progress': 0, 'status': '正在准备…',
               'scores': [], 'total': 0, 'analyzed': 0, 'preview': [], 'preview_at': 0.0,
+              'preview_score_count': 0,
               'cache_hits': 0, 'pending_paths': set(), 'complete': False,
               'src_folder': str(folder), 'recursive': bool(recursive)})
     state['excluded'] = set()
@@ -3447,7 +3452,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   .status-toggle{position:absolute;bottom:34px;right:6px;z-index:6;border:none;border-radius:5px;padding:4px 8px;font-size:10px;font-weight:700;cursor:pointer;background:rgba(0,0,0,.62);color:#fff}
   .status-toggle:hover{background:rgba(0,0,0,.85)}
   .photo-card.pbg{border-color:#e8632a!important;box-shadow:0 0 0 2px #e8632a}
-  .pbg-toggle{position:absolute;top:6px;right:6px;z-index:7;border:none;border-radius:50%;width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-size:14px;cursor:pointer;background:rgba(0,0,0,.55);color:#fff;backdrop-filter:blur(2px);transition:background .15s,transform .15s}
+  .pbg-toggle{position:absolute;top:6px;right:6px;z-index:7;border:none;border-radius:50%;width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-size:14px;cursor:pointer;background:rgba(0,0,0,.68);color:#fff;transition:background .15s,transform .15s}
   .pbg-toggle:hover{background:rgba(0,0,0,.8);transform:scale(1.08)}
   .pbg-toggle.on{background:#e8632a;box-shadow:0 1px 5px rgba(232,99,42,.6)}
   .lb-btn.pbg{background:rgba(232,99,42,.85)} .lb-btn.pbg:hover{background:#e8632a} .lb-btn.pbg.on{background:#e8632a}
@@ -4221,7 +4226,7 @@ const cullLiveStore=new Map();
 const dedupLiveStore=new Map();
 let isRunning=false, runningStep=null, codespacesMode=false;
 let coreRunning=false, corePollTimer=null, coreSnapshots={cull:null,dedup:null};
-let lastRankSig='', lastStep=null, weightTimer=null, removedCount=0, pollFailures=0, largeResultWarned=false;
+let lastRankSig='', lastCullSig='', lastDedupSig='', lastStep=null, weightTimer=null, removedCount=0, pollFailures=0, largeResultWarned=false;
 
 // Result paging/filter state must exist before the first UI bootstrap call.
 // Keep boot-critical state together here so setupFilterBar() cannot touch
@@ -4323,6 +4328,7 @@ function setAllFolders(collapsed){
   defaultFoldersCollapsed=collapsed;
   collapsedFolders.clear();
   expandedFolders.clear();
+  lastCullSig='';lastDedupSig='';lastRankSig='';
   if(currentStep==='cull')renderCullStep(photos);
   else if(currentStep==='dedup')renderDedupGroups(photos);
   else renderRank(photos);
@@ -4346,6 +4352,7 @@ document.getElementById('gallery').addEventListener('click',e=>{
     if(next)collapsedFolders.add(key);else collapsedFolders.delete(key);
   }
   const btn=group.querySelector('.fold-btn');if(btn)btn.textContent=next?'展开':'收起';
+  lastCullSig='';lastDedupSig='';lastRankSig='';
   // Re-render so collapsed folders do not keep thousands of hidden thumbnail nodes.
   if(currentStep==='cull')renderCullStep(photos);
   else if(currentStep==='dedup')renderDedupGroups(photos);
@@ -4372,28 +4379,36 @@ document.getElementById('activityRefresh').onclick=loadActivity;
 loadActivity();
 
 /* Gallery thumbnail zoom: Ctrl + wheel changes photo-card size, never page zoom. */
-let thumbSize=260;
+let thumbSize=260,thumbPendingSize=260,thumbRaf=0,thumbSaveTimer=null;
 try{
   const saved=parseInt(localStorage.getItem('pc-thumb-size-v170')||'260',10);
   if(Number.isFinite(saved))thumbSize=Math.min(420,Math.max(160,saved));
 }catch(_){}
+function clampThumbSize(v){return Math.min(420,Math.max(160,Math.round(v/10)*10));}
 function applyThumbSize(v){
-  thumbSize=Math.min(420,Math.max(160,Math.round(v/10)*10));
+  thumbSize=clampThumbSize(v);thumbPendingSize=thumbSize;
   document.documentElement.style.setProperty('--thumb-size',thumbSize+'px');
   const range=document.getElementById('thumbSizeRange');
   const label=document.getElementById('thumbSizeValue');
   if(range)range.value=String(thumbSize);
   if(label)label.textContent=String(thumbSize);
-  try{localStorage.setItem('pc-thumb-size-v170',String(thumbSize));}catch(_){}
+  clearTimeout(thumbSaveTimer);
+  thumbSaveTimer=setTimeout(()=>{try{localStorage.setItem('pc-thumb-size-v170',String(thumbSize));}catch(_){}},180);
+}
+function scheduleThumbSize(v){
+  thumbPendingSize=clampThumbSize(v);
+  if(thumbRaf)return;
+  thumbRaf=requestAnimationFrame(()=>{thumbRaf=0;applyThumbSize(thumbPendingSize);});
 }
 applyThumbSize(thumbSize);
-document.getElementById('thumbSizeRange').oninput=e=>applyThumbSize(Number(e.target.value));
-document.getElementById('thumbSmaller').onclick=()=>applyThumbSize(thumbSize-20);
-document.getElementById('thumbLarger').onclick=()=>applyThumbSize(thumbSize+20);
+document.getElementById('thumbSizeRange').oninput=e=>scheduleThumbSize(Number(e.target.value));
+document.getElementById('thumbSmaller').onclick=()=>scheduleThumbSize((thumbRaf?thumbPendingSize:thumbSize)-20);
+document.getElementById('thumbLarger').onclick=()=>scheduleThumbSize((thumbRaf?thumbPendingSize:thumbSize)+20);
 document.querySelector('.main').addEventListener('wheel',e=>{
   if(!e.ctrlKey||document.getElementById('lightbox').classList.contains('open'))return;
   e.preventDefault();
-  applyThumbSize(thumbSize+(e.deltaY<0?20:-20));
+  const base=thumbRaf?thumbPendingSize:thumbSize;
+  scheduleThumbSize(base+(e.deltaY<0?20:-20));
 },{passive:false});
 
 const WORKSPACE_COPY={
@@ -4512,16 +4527,29 @@ function taskLabel(d){
   return st&&st!=='待开始'?'待继续':'待开始';
 }
 let lastBackgroundActive=0,lastBackgroundFailed=-1,lastAutoSyncAt=0;
+let taskCenterTimer=null,taskCenterBusy=false;
+const TASK_CENTER_BUSY_MS=1200,TASK_CENTER_IDLE_MS=8000,TASK_CENTER_ERROR_MS=12000;
 function fileTaskLabel(kind){
   return ({move_to_trash:'移入软件回收站',permanent_delete:'永久删除',
     restore_trash:'恢复照片',purge_trash:'清理软件回收站'})[kind]||'文件操作';
 }
+function scheduleTaskCenter(delay){
+  if(taskCenterTimer){clearTimeout(taskCenterTimer);taskCenterTimer=null;}
+  if(document.hidden)return;
+  taskCenterTimer=setTimeout(()=>refreshTaskCenter(),Math.max(250,Number(delay)||TASK_CENTER_IDLE_MS));
+}
 async function refreshTaskCenter(){
+  if(taskCenterBusy)return;
+  taskCenterBusy=true;
+  let nextDelay=TASK_CENTER_ERROR_MS;
   try{
-    const [rows,tasks]=await Promise.all([
-      Promise.all(['cull','dedup','rank'].map(k=>fetch('/api/progress/'+k).then(r=>r.json()).catch(()=>null))),
-      fetch('/api/tasks').then(r=>r.json()).catch(()=>({active:0,counts:{}}))
-    ]);
+    const snapshot=await fetch('/api/task-center').then(r=>{
+      if(!r.ok)throw new Error('HTTP '+r.status);
+      return r.json();
+    });
+    const analysisMap=snapshot.analysis||{};
+    const rows=['cull','dedup','rank'].map(k=>analysisMap[k]||null);
+    const tasks=snapshot.files||{active:0,counts:{},items:[]};
     document.getElementById('taskCull').textContent=taskLabel(rows[0]);
     document.getElementById('taskDedup').textContent=taskLabel(rows[1]);
     document.getElementById('taskRank').textContent=taskLabel(rows[2]);
@@ -4556,11 +4584,22 @@ async function refreshTaskCenter(){
     }
     lastBackgroundActive=queued;
     lastBackgroundFailed=failed;
-  }catch(_){}
+    nextDelay=(analysis||queued)?TASK_CENTER_BUSY_MS:TASK_CENTER_IDLE_MS;
+  }catch(_){
+    nextDelay=TASK_CENTER_ERROR_MS;
+  }finally{
+    taskCenterBusy=false;
+    scheduleTaskCenter(nextDelay);
+  }
 }
-setInterval(refreshTaskCenter,1400);
 window.addEventListener('focus',()=>{refreshTaskCenter();syncCurrentView();});
-document.addEventListener('visibilitychange',()=>{if(!document.hidden){refreshTaskCenter();syncCurrentView();}});
+document.addEventListener('visibilitychange',()=>{
+  if(document.hidden){
+    if(taskCenterTimer){clearTimeout(taskCenterTimer);taskCenterTimer=null;}
+  }else{
+    refreshTaskCenter();syncCurrentView();
+  }
+});
 refreshTaskCenter();
 
 /* settings panels per step */
@@ -4682,7 +4721,7 @@ function activateStep(step){
     showPhotoView();
     document.getElementById('gallery').innerHTML=emptyHTML(currentStep);
   }
-  lastRankSig='';lastStep=null;
+  lastRankSig='';lastCullSig='';lastDedupSig='';lastStep=null;
   gPage=0;lastGallerySig='';gItems=[];document.getElementById('pager').style.display='none';
   setupFilterBar();
   if(step==='cull')updateCullMoveButton();
@@ -4797,8 +4836,11 @@ function resetWorkspaceForFolder(){
   cullLiveStore.clear();dedupLiveStore.clear();
   cullReady=false;
   photos=[];lbList=[];folderStatus={};
-  lastRankSig='';lastCullSig='';lastCullMoveSig='';lastGallerySig='';
+  lastRankSig='';lastCullSig='';lastDedupSig='';lastCullMoveSig='';lastGallerySig='';
   gItems=[];gPage=0;
+  ['catalogLoadEarlier','catalogLoadMore'].forEach(id=>{
+    const node=document.getElementById(id);if(node)node.remove();
+  });
   ['sImages','sSharp','sSoft','sBlurry','sGroups','sShowing','sTrash'].forEach(id=>{
     const el=document.getElementById(id);if(el)el.textContent='0';
   });
@@ -5124,18 +5166,30 @@ function catalogCardHtml(item){
     +'<div class="source-path">'+escHtml(item.relative_path)+'</div>'
     +'<div class="catalog-meta">'+(item.has_cull_cache?'已分析':'仅索引')+' · '+formatBytes(item.size)+'</div></div></div>';
 }
-async function loadCatalogRoot(rootId,{append=false}={}){
+const CATALOG_PAGE_SIZE=400,CATALOG_DOM_WINDOW=800;
+async function loadCatalogRoot(rootId,{append=false,prepend=false}={}){
   if(catalogRootLoading)return;
   catalogRootLoading=true;
   showPhotoView();
   try{
-    const offset=append&&catalogRootView?Number(catalogRootView.loaded||0):0;
-    const r=await fetch('/api/catalog-root/'+encodeURIComponent(rootId)+'?limit=400&offset='+offset);
+    const sameView=catalogRootView&&catalogRootView.root_id===rootId;
+    const previous=sameView?catalogRootView:null;
+    const windowStart=previous?Number(previous.window_start||0):0;
+    const windowItems=previous?(previous.items||[]):[];
+    const offset=prepend&&previous
+      ?Math.max(0,windowStart-CATALOG_PAGE_SIZE)
+      :(append&&previous?windowStart+windowItems.length:0);
+    const limit=prepend&&previous
+      ?Math.max(1,windowStart-offset)
+      :CATALOG_PAGE_SIZE;
+    const r=await fetch('/api/catalog-root/'+encodeURIComponent(rootId)+'?limit='+limit+'&offset='+offset);
     const d=await r.json();
     if(!r.ok||d.error)throw new Error(d.error||('HTTP '+r.status));
     const incoming=d.items||[];
-    if(!append){
-      catalogRootView={...d,items:incoming.slice(),loaded:incoming.length};
+    const g=document.getElementById('gallery');
+
+    if(!append&&!prepend){
+      catalogRootView={...d,root_id:rootId,items:incoming.slice(),window_start:0};
       folder=null;
       updateStartAvailability();
       updateSourceUi();
@@ -5145,30 +5199,70 @@ async function loadCatalogRoot(rootId,{append=false}={}){
       document.getElementById('filterBar').style.display='none';
       document.getElementById('resultTools').style.display='none';
       document.getElementById('workspaceTitle').textContent=(d.source&&d.source.display_name)||'离线图库';
-      document.getElementById('workspaceHint').textContent='历史索引分批加载；设备未连接时仍可查看已生成的离线预览。';
-      const g=document.getElementById('gallery');
+      document.getElementById('workspaceHint').textContent='历史索引采用窗口化分页；设备未连接时仍可查看已生成的离线预览。';
       g.className='gallery catalog-history';
       g.innerHTML=incoming.length
         ?incoming.map(catalogCardHtml).join('')
         :'<div class="empty"><div class="icon">🗄️</div><div class="title">这个图库还没有持久化媒体索引</div><p>重新连接数据源并完成一次扫描后会建立历史目录。</p></div>';
-    }else{
-      catalogRootView.items.push(...incoming);
-      catalogRootView.loaded+=incoming.length;
-      catalogRootView.has_more=!!d.has_more;
-      document.getElementById('gallery').insertAdjacentHTML('beforeend',incoming.map(catalogCardHtml).join(''));
+    }else if(prepend&&previous){
+      previous.items.unshift(...incoming);
+      previous.window_start=offset;
+      previous.total=Number(d.total||previous.total||0);
+      if(incoming.length){
+        g.insertAdjacentHTML('afterbegin',incoming.map(catalogCardHtml).join(''));
+      }
+      if(previous.items.length>CATALOG_DOM_WINDOW){
+        const drop=previous.items.length-CATALOG_DOM_WINDOW;
+        previous.items.splice(previous.items.length-drop,drop);
+        const cards=g.querySelectorAll('.catalog-card');
+        for(let i=0;i<drop;i++){
+          const node=cards[cards.length-1-i];
+          if(node)node.remove();
+        }
+      }
+    }else if(append&&previous){
+      previous.items.push(...incoming);
+      previous.total=Number(d.total||previous.total||0);
+      if(incoming.length){
+        g.insertAdjacentHTML('beforeend',incoming.map(catalogCardHtml).join(''));
+      }
+      if(previous.items.length>CATALOG_DOM_WINDOW){
+        const drop=previous.items.length-CATALOG_DOM_WINDOW;
+        previous.items.splice(0,drop);
+        previous.window_start+=drop;
+        for(let i=0;i<drop;i++){
+          const node=g.querySelector('.catalog-card');
+          if(!node)break;
+          node.remove();
+        }
+      }
     }
-    catalogRootView.has_more=!!d.has_more;
-    catalogRootView.total=Number(d.total||catalogRootView.total||0);
-    const loaded=Number(catalogRootView.loaded||incoming.length);
-    document.getElementById('sShowing').textContent=String(loaded);
-    document.getElementById('sImages').textContent=String(catalogRootView.total||loaded);
 
-    let more=document.getElementById('catalogLoadMore');
-    if(more)more.remove();
-    if(catalogRootView.has_more){
-      more=document.createElement('button');
+    catalogRootView.total=Number(d.total||catalogRootView.total||0);
+    const shown=Number((catalogRootView.items||[]).length);
+    const first=shown?Number(catalogRootView.window_start||0)+1:0;
+    const last=Number(catalogRootView.window_start||0)+shown;
+    catalogRootView.has_more=last<catalogRootView.total;
+    document.getElementById('sShowing').textContent=String(shown);
+    document.getElementById('sImages').textContent=String(catalogRootView.total||shown);
+    document.getElementById('workspaceHint').textContent=shown
+      ?'历史索引窗口化加载 · 当前 '+first+'–'+last+' / '+catalogRootView.total+' · 最多保留 '+CATALOG_DOM_WINDOW+' 张前台卡片'
+      :'历史索引采用窗口化分页；设备未连接时仍可查看已生成的离线预览。';
+
+    ['catalogLoadEarlier','catalogLoadMore'].forEach(id=>{
+      const old=document.getElementById(id);if(old)old.remove();
+    });
+    if(Number(catalogRootView.window_start||0)>0){
+      const earlier=document.createElement('button');
+      earlier.id='catalogLoadEarlier';earlier.className='catalog-load-more';
+      earlier.textContent='加载上一批 · 当前 '+first+'–'+last+' / '+catalogRootView.total;
+      earlier.onclick=()=>loadCatalogRoot(rootId,{prepend:true});
+      document.getElementById('photoView').appendChild(earlier);
+    }
+    if(last<catalogRootView.total){
+      const more=document.createElement('button');
       more.id='catalogLoadMore';more.className='catalog-load-more';
-      more.textContent='继续加载 · '+loaded+' / '+catalogRootView.total;
+      more.textContent='继续加载 · 当前 '+first+'–'+last+' / '+catalogRootView.total;
       more.onclick=()=>loadCatalogRoot(rootId,{append:true});
       document.getElementById('photoView').appendChild(more);
     }
@@ -5817,6 +5911,10 @@ function renderDedupGroups(groups){
   );
   const g=document.getElementById('gallery');
   document.getElementById('sShowing').textContent=reviewGroups.length;
+  const dedupSig=reviewGroups.map(group=>String(group.group_id)+':'+String(group.status||'pending')+':'
+    +(group.members||[]).filter(visibleInReview).map(p=>p.path+':'+(p.selected?1:0)+':'+(p.lifecycle||'normal')+':'+String(p.score??'')+':'+String(p.name||'')).join(',')).join('|');
+  if(dedupSig===lastDedupSig&&lastStep===currentStep){updateResultTools();return;}
+  lastDedupSig=dedupSig;lastStep=currentStep;
   if(!reviewGroups.length){
     g.innerHTML='<div class="empty"><div class="icon">✓</div><div class="title">没有需要人工处理的相似组</div></div>';
     document.getElementById('resultTools').style.display='none';
@@ -6177,7 +6275,7 @@ async function syncCurrentView(){
 }
 
 /* ---- cull (3-tier, reconciling, filterable) ---- */
-let cullView=[], rankView=[], lastCullSig='', lastCullMoveSig='';
+let cullView=[], rankView=[], lastCullMoveSig='';
 const TIER_NAME={sharp:'清晰',soft:'轻微软',blurry:'模糊'};
 const NEXT_TIER={sharp:'soft',soft:'blurry',blurry:'sharp'};
 const REVIEW_HIDDEN_LIFECYCLES=new Set([
@@ -6265,17 +6363,21 @@ function renderCullStep(items){
     return;
   }
 
+  const moveSig=items.filter(p=>p.tier==='blurry')
+    .map(p=>p.path+':'+(p.move_selected===false?'0':'1')).join('|');
+  if(moveSig!==lastCullMoveSig){lastCullMoveSig=moveSig;setupFilterBar();}
+  const sig=gPage+'#'+cullView.map(p=>p.path+':'+p.tier+':'+(p.lifecycle||'normal')+':'+(p.move_selected===false?'0':'1')).join('|');
   if(recursiveScan){
+    if(sig===lastCullSig&&lastStep===currentStep){
+      document.getElementById('sShowing').textContent=filtered.length;
+      updateResultTools();updatePager();return;
+    }
+    lastCullSig=sig;lastStep=currentStep;
     g.innerHTML=renderFolderPage(cullView,cullCardHtml,0);
     document.getElementById('sShowing').textContent=filtered.length;
     updateResultTools();updatePager();return;
   }
   document.getElementById('resultTools').style.display='none';
-
-  const moveSig=items.filter(p=>p.tier==='blurry')
-    .map(p=>p.path+':'+(p.move_selected===false?'0':'1')).join('|');
-  if(moveSig!==lastCullMoveSig){lastCullMoveSig=moveSig;setupFilterBar();}
-  const sig=gPage+'#'+cullView.map(p=>p.path+':'+p.tier+':'+(p.lifecycle||'normal')+':'+(p.move_selected===false?'0':'1')).join('|');
   if(sig===lastCullSig&&lastStep===currentStep){
     document.getElementById('sShowing').textContent=filtered.length;
     updatePager();
@@ -7392,9 +7494,14 @@ def api_progress(step):
     if step == 'rank':
         s = state['rank']
         now = time.time()
-        if (not s['running']) or now - float(s.get('preview_at', 0.0)) >= 1.0:
+        score_count = len(s.get('scores') or [])
+        preview_at = float(s.get('preview_at', 0.0) or 0.0)
+        preview_score_count = int(s.get('preview_score_count', -1) or 0)
+        preview_dirty = preview_at <= 0.0 or preview_score_count != score_count
+        if preview_dirty and ((not s['running']) or now - preview_at >= 1.0):
             s['preview'] = build_topn()
             s['preview_at'] = now
+            s['preview_score_count'] = score_count
         return jsonify({'running': s['running'], 'complete': bool(s.get('complete')),
                         'progress': s['progress'], 'status': s['status'],
                         'src_folder': s.get('src_folder'), 'photos': s.get('preview', []),
@@ -7816,8 +7923,28 @@ def api_delete_photo():
 
 @app.route('/api/tasks')
 def api_tasks():
-    """Lightweight task-center snapshot for the desktop UI / tray."""
+    """Background file-task snapshot for compatibility / direct inspection."""
     return jsonify(TASK_MANAGER.summary())
+
+
+@app.route('/api/task-center')
+def api_task_center():
+    """One lightweight heartbeat for the task center.
+
+    Never serializes photo result payloads and never triggers Rank preview
+    recomputation. This replaces four periodic requests with one bounded query.
+    """
+    analysis = {}
+    for key in ('cull', 'dedup', 'rank'):
+        step = state.get(key) or {}
+        analysis[key] = {
+            'running': bool(step.get('running')),
+            'complete': bool(step.get('complete')),
+            'progress': int(step.get('progress') or 0),
+            'status': str(step.get('status') or ''),
+            'src_folder': step.get('src_folder'),
+        }
+    return jsonify({'analysis': analysis, 'files': TASK_MANAGER.summary()})
 
 
 @app.route('/api/tasks/<int:task_id>')
@@ -7846,6 +7973,7 @@ def api_weights():
     state['topn'] = topn
     state['rank']['preview'] = build_topn()
     state['rank']['preview_at'] = time.time()
+    state['rank']['preview_score_count'] = len(state['rank'].get('scores') or [])
     return jsonify({'ok': True, 'photos': state['rank']['preview']})
 
 def _active_task_name():
@@ -7881,6 +8009,7 @@ def api_exclude():
     if not _known_rank_path(path):
         return jsonify({'error': '当前优选结果中未找到这张照片'}), 404
     state['excluded'].add(path)
+    state['rank']['preview_at'] = 0.0
     return jsonify({'ok': True, 'removed': len(state['excluded']), 'photos': build_topn()})
 
 @app.route('/api/restore', methods=['POST'])
@@ -7893,6 +8022,7 @@ def api_restore():
         if not _known_rank_path(path):
             return jsonify({'error': '当前优选结果中未找到这张照片'}), 404
         state['excluded'].discard(path)
+    state['rank']['preview_at'] = 0.0
     return jsonify({'ok': True, 'removed': len(state['excluded']), 'photos': build_topn()})
 
 @app.route('/api/toggle-status', methods=['POST'])

@@ -191,7 +191,7 @@ def main():
             require(after > before + 40,
                     f"相似照片缩放没有改变真实卡片宽度：before={before}, after={after}")
 
-        print("UI 冒烟测试通过：启动 / 分析 / 左侧控制栏 / 相似照片真实缩放均符合 v1.7.0 契约")
+        print("UI 冒烟测试通过：启动 / 分析 / 左侧控制栏 / 相似照片真实缩放均符合 v1.7.1 契约")
     finally:
         try:
             if driver is not None:

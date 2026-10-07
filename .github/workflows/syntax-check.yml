@@ -43,7 +43,8 @@ jobs:
             "Codespaces冒烟测试.py" \
             windows_smoke_test.py \
             ui_smoke_test.py \
-            release_gate_test.py
+            release_gate_test.py \
+            performance_gate_test.py
 
       - name: Parse GitHub Actions YAML
         run: |
@@ -572,7 +573,7 @@ jobs:
           )
           missing_ui = [item for item in required_ui if item not in ui]
           if missing_ui:
-              raise SystemExit("v1.7.0 workspace contract missing: " + repr(missing_ui))
+              raise SystemExit("v1.7.1 workspace contract missing: " + repr(missing_ui))
 
           shortcuts = core.split("@app.route('/api/shortcuts')", 1)[1].split(
               "@app.route('/api/sources')", 1
@@ -919,6 +920,10 @@ jobs:
         run: |
           python "基础冒烟测试.py"
           python release_gate_test.py
+
+      - name: Performance architecture regression gate
+        run: |
+          python performance_gate_test.py
 
       - name: Real desktop UI interaction smoke test
         run: |

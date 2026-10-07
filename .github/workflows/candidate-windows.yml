@@ -17,7 +17,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request'
     runs-on: windows-latest
     env:
-      CANDIDATE_VERSION: "1.7.0"
+      CANDIDATE_VERSION: "1.7.1"
       PYTHONUTF8: "1"
       PYTHONIOENCODING: "utf-8"
 
@@ -104,12 +104,14 @@ jobs:
       - name: Release-gate source tests
         shell: powershell
         run: |
-          python -m py_compile db_runtime.py desktop_app.py runtime_paths.py catalog.py photo_curator.py background_tasks.py raw_loader.py ui_smoke_test.py windows_smoke_test.py
+          python -m py_compile db_runtime.py desktop_app.py runtime_paths.py catalog.py photo_curator.py background_tasks.py raw_loader.py ui_smoke_test.py windows_smoke_test.py performance_gate_test.py
           if ($LASTEXITCODE -ne 0) { throw "py_compile failed" }
           python -c "import runpy; runpy.run_path('\u57fa\u7840\u5192\u70df\u6d4b\u8bd5.py', run_name='__main__')"
           if ($LASTEXITCODE -ne 0) { throw "base smoke test failed" }
           python release_gate_test.py
           if ($LASTEXITCODE -ne 0) { throw "release_gate_test failed" }
+          python performance_gate_test.py
+          if ($LASTEXITCODE -ne 0) { throw "performance_gate_test failed" }
           python ui_smoke_test.py
           if ($LASTEXITCODE -ne 0) { throw "ui_smoke_test failed" }
           pip-audit -r requirements.txt
@@ -260,10 +262,10 @@ jobs:
           $installer = "release\PhotoCurator-Setup-v$env:CANDIDATE_VERSION.exe"
           if (!(Test-Path $installer)) { throw "Candidate installer not built: $installer" }
 
-      - name: Upload v1.7.0 test installer
+      - name: Upload v1.7.1 test installer
         uses: actions/upload-artifact@v4
         with:
-          name: PhotoCurator-v1.7.0-test-installer
-          path: release/PhotoCurator-Setup-v1.7.0.exe
+          name: PhotoCurator-v1.7.1-test-installer
+          path: release/PhotoCurator-Setup-v1.7.1.exe
           if-no-files-found: error
           retention-days: 14
