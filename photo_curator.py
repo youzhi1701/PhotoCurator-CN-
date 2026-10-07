@@ -40,6 +40,7 @@ from raw_loader import (RAW_EXTS, HAS_RAWPY, is_raw,
                         open_image_pil, imread_bgr, imread_gray)
 from photo_ranking_v3 import AdvancedPhotoAnalyzer, PhotoScoreV3
 from photo_dedup_batch import FastBatchDeduplicator
+from background_tasks import BackgroundTaskManager
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -129,7 +130,69 @@ def _db_init():
         db.execute("""CREATE TABLE IF NOT EXISTS geocode_cache (
             key TEXT PRIMARY KEY, label TEXT NOT NULL, updated_at REAL NOT NULL
         )""")
+        db.execute("""CREATE TABLE IF NOT EXISTS media_state (
+            original_path TEXT PRIMARY KEY,
+            current_path TEXT NOT NULL,
+            state TEXT NOT NULL,
+            source_step TEXT NOT NULL DEFAULT '',
+            group_key TEXT,
+            updated_at REAL NOT NULL,
+            detail TEXT NOT NULL DEFAULT ''
+        )""")
+        db.execute("""CREATE INDEX IF NOT EXISTS idx_media_state_state
+                      ON media_state(state, updated_at)""")
+        db.execute("""CREATE TABLE IF NOT EXISTS similarity_group_state (
+            group_key TEXT PRIMARY KEY,
+            folder_root TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            revision INTEGER NOT NULL DEFAULT 1,
+            updated_at REAL NOT NULL
+        )""")
         db.commit()
+
+def _media_state_set(original_path, current_path=None, state_name='normal',
+                     source_step='', group_key=None, detail=''):
+    """Persist user-visible lifecycle state separately from analysis caches."""
+    original = os.path.realpath(str(original_path))
+    current = os.path.realpath(str(current_path or original_path))
+    try:
+        with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=15) as db:
+            db.execute(
+                """INSERT INTO media_state
+                   (original_path,current_path,state,source_step,group_key,updated_at,detail)
+                   VALUES(?,?,?,?,?,?,?)
+                   ON CONFLICT(original_path) DO UPDATE SET
+                     current_path=excluded.current_path,
+                     state=excluded.state,
+                     source_step=excluded.source_step,
+                     group_key=COALESCE(excluded.group_key,media_state.group_key),
+                     updated_at=excluded.updated_at,
+                     detail=excluded.detail""",
+                (original, current, str(state_name), str(source_step or ''),
+                 str(group_key) if group_key is not None else None,
+                 time.time(), str(detail or ''))
+            )
+            db.commit()
+    except Exception:
+        logger.debug("media state save failed", exc_info=True)
+
+
+def _media_state_get(original_path):
+    original = os.path.realpath(str(original_path))
+    try:
+        with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=10) as db:
+            row = db.execute(
+                "SELECT current_path,state,source_step,group_key,updated_at,detail "
+                "FROM media_state WHERE original_path=?", (original,)
+            ).fetchone()
+        if row:
+            return {'original_path': original, 'current_path': row[0], 'state': row[1],
+                    'source_step': row[2], 'group_key': row[3],
+                    'updated_at': float(row[4]), 'detail': row[5]}
+    except Exception:
+        logger.debug("media state load failed", exc_info=True)
+    return None
+
 
 def _activity(action, path='', detail=''):
     try:
@@ -390,6 +453,8 @@ try:
 except Exception:
     logger.warning("library index unavailable", exc_info=True)
 
+TASK_MANAGER = BackgroundTaskManager(INDEX_DB, workers=2)
+
 def _prune_index_db():
     """Keep indexes bounded without doing multi-million-row DELETE work every launch."""
     try:
@@ -420,7 +485,7 @@ def _prune_index_db():
 threading.Thread(target=_prune_index_db, daemon=True,
                  name='photocurator-index-prune').start()
 
-APP_VERSION = "1.4.2"
+APP_VERSION = "1.5.0"
 IS_CODESPACES = os.environ.get('CODESPACES', '').strip().lower() == 'true'
 CODESPACE_NAME = os.environ.get('CODESPACE_NAME', '').strip()
 _CODESPACES_DOMAIN_RAW = os.environ.get(
