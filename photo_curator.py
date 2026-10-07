@@ -1311,8 +1311,9 @@ def _apply_media_lifecycle(original_path, current_path, lifecycle, source_step='
     """Synchronize one file lifecycle change into every in-memory view."""
     original = os.path.realpath(str(original_path))
     current = os.path.realpath(str(current_path or original_path))
-    _media_state_set(original, current, lifecycle, source_step,
-                     detail=str(trash_id or ''))
+    deleted_states = {'pending_trash','pending_permanent_delete','trashed','permanently_deleted'}
+    is_deleted = lifecycle in deleted_states
+    _media_state_set(original, current, lifecycle, source_step, detail=str(trash_id or ''))
     try:
         with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=15) as db:
             db.execute(
@@ -1324,22 +1325,30 @@ def _apply_media_lifecycle(original_path, current_path, lifecycle, source_step='
             db.commit()
     except Exception:
         logger.debug("similarity member lifecycle sync failed", exc_info=True)
+
     with _STATE_LOCK:
         cull = state['cull']
+        matched_cull = None
         for p in cull.get('photos', []):
             identity = os.path.realpath(str(p.get('original_path') or p.get('path') or ''))
             if identity == original:
+                matched_cull = p
                 p['original_path'] = original
                 p['path'] = current
                 p['thumb'] = thumb_url(current) if Path(current).is_file() else ''
                 p['lifecycle'] = lifecycle
                 p['trash_id'] = trash_id
                 p['move_selected'] = False
-        cull['sharp_paths'] = [p for p in cull.get('sharp_paths', [])
-                               if os.path.realpath(str(p)) != original]
-        cull.setdefault('removed_paths', set()).add(original)
+        if is_deleted:
+            cull['sharp_paths'] = [p for p in cull.get('sharp_paths', [])
+                                   if os.path.realpath(str(p)) != original]
+            cull.setdefault('removed_paths', set()).add(original)
+        else:
+            cull.setdefault('removed_paths', set()).discard(original)
+            if matched_cull and matched_cull.get('tier') != 'blurry' and current not in cull.get('sharp_paths', []):
+                cull.setdefault('sharp_paths', []).append(current)
         active_cull = [p for p in cull.get('photos', [])
-                       if p.get('lifecycle') not in ('pending_trash','pending_permanent_delete','trashed','permanently_deleted')]
+                       if p.get('lifecycle') not in deleted_states]
         cull['sharp'] = sum(1 for p in active_cull if p.get('tier') == 'sharp')
         cull['soft'] = sum(1 for p in active_cull if p.get('tier') == 'soft')
         cull['blurry'] = sum(1 for p in active_cull if p.get('tier') == 'blurry')
@@ -1357,28 +1366,28 @@ def _apply_media_lifecycle(original_path, current_path, lifecycle, source_step='
                     m['trash_id'] = trash_id
                     m['selected'] = False
                     changed = True
-            if changed:
-                group['selected_paths'] = [
-                    p for p in (group.get('selected_paths') or [])
-                    if os.path.realpath(str(p)) != original
-                ]
-                active = [m for m in group.get('members', [])
-                          if m.get('lifecycle') not in ('pending_trash','pending_permanent_delete','trashed','permanently_deleted')]
-                if len(active) == 1:
-                    active[0]['selected'] = True
-                    group['selected_paths'] = [active[0].get('path')]
-                    group['status'] = 'reviewed'
-                elif len(active) > 1:
-                    group['status'] = group.get('status') or 'pending'
-                else:
-                    group['status'] = 'reviewed'
-                if group.get('group_key'):
-                    _set_similarity_group_status(group['group_key'], group['status'])
-                group['active_count'] = len(active)
-                group['deleted_count'] = sum(
-                    1 for m in group.get('members', [])
-                    if m.get('lifecycle') in ('pending_trash','pending_permanent_delete','trashed','permanently_deleted')
-                )
+            if not changed:
+                continue
+            group['selected_paths'] = [
+                p for p in (group.get('selected_paths') or [])
+                if os.path.realpath(str(p)) != original
+            ]
+            active = [m for m in group.get('members', [])
+                      if m.get('lifecycle') not in deleted_states]
+            if is_deleted and len(active) == 1:
+                active[0]['selected'] = True
+                group['selected_paths'] = [active[0].get('path')]
+                group['status'] = 'reviewed'
+            elif not is_deleted and len(active) > 1:
+                group['status'] = 'updated'
+            elif len(active) == 0:
+                group['status'] = 'reviewed'
+            group['active_count'] = len(active)
+            group['deleted_count'] = sum(1 for m in group.get('members', [])
+                                         if m.get('lifecycle') in deleted_states)
+            if group.get('group_key'):
+                _set_similarity_group_status(group['group_key'], group['status'])
+
         dedup['photos'] = [g for g in dedup.get('groups_data', []) if g.get('count', 0) > 1]
         dedup['groups'] = len(dedup['photos'])
         dedup['kept_paths'] = [
@@ -1386,11 +1395,12 @@ def _apply_media_lifecycle(original_path, current_path, lifecycle, source_step='
             for p in (g.get('selected_paths') or [])
             if p and Path(p).is_file()
         ]
-        rank = state['rank']
-        rank['scores'] = [sc for sc in rank.get('scores', [])
-                          if os.path.realpath(str(getattr(sc, 'path', ''))) != original]
-        rank['total'] = len(rank['scores'])
-        rank['preview_at'] = 0.0
+        if is_deleted:
+            rank = state['rank']
+            rank['scores'] = [sc for sc in rank.get('scores', [])
+                              if os.path.realpath(str(getattr(sc, 'path', ''))) != original]
+            rank['total'] = len(rank['scores'])
+            rank['preview_at'] = 0.0
 
 
 def _background_move_to_trash(payload):
@@ -1426,8 +1436,38 @@ def _background_permanent_delete(payload):
     return {'ok': True, 'original_path': original, 'deleted_path': path}
 
 
+def _background_restore_trash(payload):
+    trash_id = int(payload['trash_id'])
+    with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=15) as db:
+        row = db.execute(
+            "SELECT original_path,source_step FROM software_trash WHERE id=?", (trash_id,)
+        ).fetchone()
+    if not row:
+        raise FileNotFoundError("回收站记录不存在")
+    original, source_step = str(row[0]), str(row[1] or '')
+    restored = _restore_trash_item(trash_id)
+    _apply_media_lifecycle(original, restored, 'normal', source_step)
+    return {'ok': True, 'original_path': original, 'restored_path': restored}
+
+
+def _background_purge_trash(payload):
+    trash_id = int(payload['trash_id'])
+    with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=15) as db:
+        row = db.execute(
+            "SELECT original_path,trash_path,source_step FROM software_trash WHERE id=?", (trash_id,)
+        ).fetchone()
+    if not row:
+        return {'ok': True, 'already_done': True}
+    original, trash_path, source_step = map(str, row)
+    _purge_trash_item(trash_id)
+    _apply_media_lifecycle(original, trash_path, 'permanently_deleted', source_step)
+    return {'ok': True, 'original_path': original, 'deleted_path': trash_path}
+
+
 TASK_MANAGER.register('move_to_trash', _background_move_to_trash)
 TASK_MANAGER.register('permanent_delete', _background_permanent_delete)
+TASK_MANAGER.register('restore_trash', _background_restore_trash)
+TASK_MANAGER.register('purge_trash', _background_purge_trash)
 
 
 def _thumb_cache_path(image_path):
@@ -5533,9 +5573,6 @@ def api_trash():
 
 @app.route('/api/trash-restore', methods=['POST'])
 def api_trash_restore():
-    blocked = _reject_mutation_while_running()
-    if blocked:
-        return blocked
     folder = state.get('folder')
     if not folder or not Path(folder).is_dir():
         return jsonify({'error': '请先选择照片文件夹'}), 400
@@ -5544,74 +5581,69 @@ def api_trash_restore():
         trash_id = int(data.get('id'))
     except (TypeError, ValueError):
         return jsonify({'error': '无效的回收站记录'}), 400
-    try:
-        current = _trash_rows(folder)
-        if trash_id not in {row['id'] for row in current}:
-            return jsonify({'error': '当前照片库的回收站中没有这条记录'}), 404
-        restored = _restore_trash_item(trash_id)
-        rows = _trash_rows(folder)
-        return jsonify({'ok': True, 'restored_path': restored,
-                        'photos': rows, 'count': len(rows)})
-    except Exception as e:
-        logger.warning(f"trash restore failed {trash_id}: {e}")
-        return jsonify({'error': f'恢复失败：{e}'}), 500
+    current = _trash_rows(folder)
+    row = next((x for x in current if x['id'] == trash_id), None)
+    if not row:
+        return jsonify({'error': '当前照片库的回收站中没有这条记录'}), 404
+    task_id, created = TASK_MANAGER.enqueue(
+        'restore_trash', {'trash_id': trash_id}, priority=8,
+        idempotency_key=f"restore_trash:{trash_id}"
+    )
+    _media_state_set(row['original_path'], row['path'], 'pending_restore',
+                     row.get('source_step') or '', detail=str(task_id))
+    return jsonify({'ok': True, 'queued': True, 'created': created,
+                    'task_id': task_id, 'id': trash_id}), 202
 
 
 @app.route('/api/trash-purge', methods=['POST'])
 def api_trash_purge():
-    """Permanently delete one or all photos after the final recycle-bin review."""
-    blocked = _reject_mutation_while_running()
-    if blocked:
-        return blocked
+    """Queue permanent deletion after final recycle-bin review."""
     folder = state.get('folder')
     if not folder or not Path(folder).is_dir():
         return jsonify({'error': '请先选择照片文件夹'}), 400
     data = request.get_json() or {}
+    rows = _trash_rows(folder)
+    if data.get('all'):
+        task_ids = []
+        for row in rows:
+            task_id, _ = TASK_MANAGER.enqueue(
+                'purge_trash', {'trash_id': row['id']}, priority=12,
+                idempotency_key=f"purge_trash:{row['id']}"
+            )
+            task_ids.append(task_id)
+        return jsonify({'ok': True, 'queued': True, 'task_ids': task_ids,
+                        'count': len(task_ids)}), 202
     try:
-        if data.get('all'):
-            rows = _trash_rows(folder)
-            failed = 0
-            for row in rows:
-                try:
-                    _purge_trash_item(row['id'])
-                except Exception:
-                    failed += 1
-            left = _trash_rows(folder)
-            return jsonify({'ok': failed == 0, 'purged': len(rows) - failed,
-                            'failed': failed, 'photos': left, 'count': len(left)})
         trash_id = int(data.get('id'))
-        current = _trash_rows(folder)
-        if trash_id not in {row['id'] for row in current}:
-            return jsonify({'error': '当前照片库的回收站中没有这条记录'}), 404
-        _purge_trash_item(trash_id)
-        rows = _trash_rows(folder)
-        return jsonify({'ok': True, 'purged': 1, 'photos': rows, 'count': len(rows)})
     except (TypeError, ValueError):
         return jsonify({'error': '无效的回收站记录'}), 400
-    except Exception as e:
-        logger.warning(f"trash purge failed: {e}")
-        return jsonify({'error': f'永久删除失败：{e}'}), 500
+    if trash_id not in {row['id'] for row in rows}:
+        return jsonify({'error': '当前照片库的回收站中没有这条记录'}), 404
+    task_id, created = TASK_MANAGER.enqueue(
+        'purge_trash', {'trash_id': trash_id}, priority=7,
+        idempotency_key=f"purge_trash:{trash_id}"
+    )
+    return jsonify({'ok': True, 'queued': True, 'created': created,
+                    'task_id': task_id, 'id': trash_id}), 202
 
 
 @app.route('/api/trash-restore-all', methods=['POST'])
 def api_trash_restore_all():
-    blocked = _reject_mutation_while_running()
-    if blocked:
-        return blocked
     folder = state.get('folder')
     if not folder or not Path(folder).is_dir():
         return jsonify({'error': '请先选择照片文件夹'}), 400
     rows = _trash_rows(folder)
-    restored = failed = 0
+    task_ids = []
     for row in rows:
-        try:
-            _restore_trash_item(row['id'])
-            restored += 1
-        except Exception:
-            failed += 1
-    left = _trash_rows(folder)
-    return jsonify({'ok': failed == 0, 'restored': restored, 'failed': failed,
-                    'photos': left, 'count': len(left)})
+        task_id, _ = TASK_MANAGER.enqueue(
+            'restore_trash', {'trash_id': row['id']}, priority=15,
+            idempotency_key=f"restore_trash:{row['id']}"
+        )
+        task_ids.append(task_id)
+        _media_state_set(row['original_path'], row['path'], 'pending_restore',
+                         row.get('source_step') or '', detail=str(task_id))
+    return jsonify({'ok': True, 'queued': True, 'task_ids': task_ids,
+                    'count': len(task_ids)}), 202
 
 
 @app.route('/api/delete-photo', methods=['POST'])
