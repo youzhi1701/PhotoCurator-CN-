@@ -1104,19 +1104,35 @@ def storage_summary(data_root, db_path):
     data_root = Path(data_root)
 
     def tree_size(path):
-        total = 0
-        path = Path(path)
-        if not path.exists():
-            return 0
-        if path.is_file():
-            try:
-                return int(path.stat().st_size)
-            except OSError:
+        """Fast non-recursive-stack size walk for local runtime storage.
+
+        os.scandir() returns file type/stat metadata from the directory iterator
+        and avoids constructing a Path object plus extra stat calls for every
+        cache file. Symlinked directories are never followed.
+        """
+        root = os.fspath(path)
+        try:
+            if os.path.isfile(root):
+                return int(os.stat(root, follow_symlinks=False).st_size)
+            if not os.path.isdir(root):
                 return 0
-        for p in path.rglob("*"):
+        except OSError:
+            return 0
+
+        total = 0
+        stack = [root]
+        while stack:
+            current = stack.pop()
             try:
-                if p.is_file():
-                    total += int(p.stat().st_size)
+                with os.scandir(current) as entries:
+                    for entry in entries:
+                        try:
+                            if entry.is_file(follow_symlinks=False):
+                                total += int(entry.stat(follow_symlinks=False).st_size)
+                            elif entry.is_dir(follow_symlinks=False):
+                                stack.append(entry.path)
+                        except OSError:
+                            continue
             except OSError:
                 continue
         return total
