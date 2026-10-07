@@ -211,3 +211,58 @@ jobs:
             普通“删除”默认先进入 PhotoCurator 软件回收站；覆盖安装只替换程序目录，
             保留配置、索引、缓存、任务状态和用户照片。下方变更列表由 GitHub
             根据本次标签与上一正式版本之间的提交自动生成。
+      - name: Verify published release asset
+        if: "${{ startsWith(github.ref, 'refs/tags/v') || (github.ref == 'refs/heads/main' && startsWith(github.event.head_commit.message, 'release: publish v')) }}"
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "v${{ steps.release_meta.outputs.version }}"
+          $asset = "${{ steps.release_meta.outputs.installer }}"
+          $release = gh api "repos/${{ github.repository }}/releases/tags/$tag" | ConvertFrom-Json
+          $match = $release.assets | Where-Object { $_.name -eq $asset }
+          if (-not $match) { throw "Published release is missing installer asset: $asset" }
+          if ([int64]$match.size -le 0) { throw "Published installer asset is empty" }
+          Write-Host "Verified release asset: $asset ($($match.size) bytes)"
+
+      - name: Mark release metadata as published
+        if: "${{ github.ref == 'refs/heads/main' && startsWith(github.event.head_commit.message, 'release: publish v') }}"
+        shell: powershell
+        run: |
+          @'
+          import json
+          import re
+          from pathlib import Path
+
+          manifest_path = Path("packaging/release_manifest.json")
+          manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+          version = str(manifest["version"])
+          installer = f"PhotoCurator-Setup-v{version}.exe"
+          manifest["published_version"] = version
+          manifest["published_installer"] = installer
+          manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+          readme_path = Path("README.md")
+          readme = readme_path.read_text(encoding="utf-8")
+          repo = "${{ github.repository }}"
+          block = f"""<!-- LATEST_RELEASE_START -->
+          ## ⬇️ 当前可下载 Windows 安装包
+
+          **当前已发布版：v{version}**
+
+          [**点击下载 {installer}**](https://github.com/{repo}/releases/download/v{version}/{installer})
+
+          > Windows 10 / 11 x64 · 正式安装版 EXE  
+          > 当前源码与正式发布版本均为 **v{version}**。
+          <!-- LATEST_RELEASE_END -->"""
+          readme = re.sub(
+              r"<!-- LATEST_RELEASE_START -->.*?<!-- LATEST_RELEASE_END -->",
+              block, readme, count=1, flags=re.S,
+          )
+          readme_path.write_text(readme, encoding="utf-8")
+          '@ | python -
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packaging/release_manifest.json README.md
+          git commit -m "chore: mark v${{ steps.release_meta.outputs.version }} published"
+          git push origin HEAD:main
