@@ -1,0 +1,120 @@
+name: Build Windows Candidate
+
+on:
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: photocurator-windows-candidate-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-candidate:
+    if: github.event_name == 'workflow_dispatch' || github.head_ref == 'fix-v1.5.1'
+    runs-on: windows-latest
+    env:
+      CANDIDATE_VERSION: "1.5.1"
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      - name: Stamp candidate version
+        shell: powershell
+        run: |
+          $v = $env:CANDIDATE_VERSION
+
+          foreach ($file in @("desktop_app.py", "photo_curator.py")) {
+            $text = Get-Content $file -Raw
+            $text = $text -replace 'APP_VERSION = "1\.5\.0"', ('APP_VERSION = "' + $v + '"')
+            Set-Content $file $text -Encoding utf8
+          }
+
+          $vi = Get-Content "packaging\version_info.txt" -Raw
+          $parts = $v.Split(".")
+          $tuple = "($($parts[0]), $($parts[1]), $($parts[2]), 0)"
+          $vi = $vi -replace 'filevers=\(\d+,\s*\d+,\s*\d+,\s*\d+\)', ("filevers=" + $tuple)
+          $vi = $vi -replace 'prodvers=\(\d+,\s*\d+,\s*\d+,\s*\d+\)', ("prodvers=" + $tuple)
+          $vi = $vi -replace "StringStruct\('FileVersion', '[^']+'\)", ("StringStruct('FileVersion', '" + $v + "')")
+          $vi = $vi -replace "StringStruct\('ProductVersion', '[^']+'\)", ("StringStruct('ProductVersion', '" + $v + "')")
+          Set-Content "packaging\version_info.txt" $vi -Encoding utf8
+
+          Write-Host "Candidate version stamped: $v"
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-optional.txt
+          pip install pyinstaller
+
+      - name: Build approved app icon
+        shell: powershell
+        run: |
+          python packaging\build_icon.py
+          if (!(Test-Path "packaging\PhotoCurator.ico")) { throw "App icon not built" }
+
+      - name: Build candidate EXE
+        shell: cmd
+        run: >
+          pyinstaller --noconfirm --clean --windowed
+          --name PhotoCurator
+          --icon packaging\PhotoCurator.ico
+          --version-file packaging\version_info.txt
+          --add-data "vendor;vendor"
+          --add-data "packaging\PhotoCurator.ico;packaging"
+          --collect-all webview
+          --collect-all rawpy
+          --collect-all pillow_heif
+          desktop_app.py
+
+      - name: Verify packaged candidate
+        shell: powershell
+        run: |
+          $exe = "dist\PhotoCurator\PhotoCurator.exe"
+          if (!(Test-Path $exe)) { throw "Candidate EXE not built" }
+          $v = (Get-Item $exe).VersionInfo.ProductVersion
+          if ($v -notlike "$env:CANDIDATE_VERSION*") {
+            throw "Wrong candidate EXE version: $v"
+          }
+          $p = Start-Process -FilePath $exe -ArgumentList "--self-test" -Wait -PassThru
+          if ($p.ExitCode -ne 0) {
+            throw "Candidate packaged self-test failed: $($p.ExitCode)"
+          }
+
+      - name: Download WebView2 bootstrapper
+        shell: powershell
+        run: |
+          Invoke-WebRequest "https://go.microsoft.com/fwlink/p/?LinkId=2124703" -OutFile "packaging\MicrosoftEdgeWebview2Setup.exe"
+          if (!(Test-Path "packaging\MicrosoftEdgeWebview2Setup.exe")) {
+            throw "WebView2 bootstrapper missing"
+          }
+
+      - name: Install Inno Setup
+        shell: powershell
+        run: choco install innosetup -y --no-progress
+
+      - name: Build test installer
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force release | Out-Null
+          $pf86 = [Environment]::GetFolderPath("ProgramFilesX86")
+          $iscc = Join-Path $pf86 "Inno Setup 6\ISCC.exe"
+          & $iscc "/DMyAppVersion=$env:CANDIDATE_VERSION" "packaging\PhotoCurator.iss"
+          $installer = "release\PhotoCurator-Setup-v$env:CANDIDATE_VERSION.exe"
+          if (!(Test-Path $installer)) { throw "Candidate installer not built: $installer" }
+
+      - name: Upload v1.5.1 test installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: PhotoCurator-v1.5.1-test-installer
+          path: release/PhotoCurator-Setup-v1.5.1.exe
+          if-no-files-found: error
+          retention-days: 14
