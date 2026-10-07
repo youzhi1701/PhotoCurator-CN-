@@ -570,8 +570,9 @@ jobs:
               "function showDashboard(",
               "function showPhotoView(",
               "function visibleInReview(",
-              "repeat(auto-fill,var(--thumb-size))",
-              "pc-thumb-size-v170",
+              "repeat(auto-fill,minmax(min(var(--thumb-size),100%),1fr))",
+              "pc-thumb-size-v180",
+              "queueThumbSize",
           )
           missing_ui = [item for item in required_ui if item not in ui]
           if missing_ui:
