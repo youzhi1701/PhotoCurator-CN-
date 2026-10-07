@@ -105,5 +105,5 @@ img=Image.alpha_composite(img,overlay)
 png = HERE / "PhotoCurator.png"
 ico = HERE / "PhotoCurator.ico"
 img.resize((512,512), Image.Resampling.LANCZOS).save(png, optimize=True)
-img.save(ico, format="ICO", sizes=[(16,16),(24,24),(32,32),(48,48),(64,64),(128,128),(256,256)])
+img.save(ico, format="ICO", sizes=[(16,16),(20,20),(24,24),(32,32),(40,40),(48,48),(64,64),(128,128),(256,256)])
 print(ico)
