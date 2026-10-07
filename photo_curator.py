@@ -4100,7 +4100,10 @@ function selectFolderValue(value){
 function sdLabel(p){const parts=p.split(/[\\/]/).filter(Boolean);
   const tail=parts.slice(-2).join('/');
   const m=/^([A-Za-z]:)/.exec(p);return m?m[1]+' '+tail:tail;}
-function loadShortcuts(){fetch('/api/shortcuts').then(r=>r.json()).then(d=>{
+let demoVisible=false,shortcutsLoaded=false;
+async function loadShortcuts(includeDemo=demoVisible){
+  const suffix=includeDemo?'?include_demo=1':'';
+  const d=await fetch('/api/shortcuts'+suffix).then(r=>r.json());
   let h='';
   codespacesMode=!!d.codespaces;
   const fi=document.getElementById('folderInput');
@@ -4109,11 +4112,13 @@ function loadShortcuts(){fetch('/api/shortcuts').then(r=>r.json()).then(d=>{
   if(codespacesMode){
     bb.disabled=true;bb.textContent='云端路径模式';
     fi.placeholder='输入 Codespaces 中的云端文件夹路径';
-    h+=`<div style="background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:9px 10px;font-size:11px;line-height:1.55;margin-bottom:7px">☁️ <b>Codespaces 在线预览</b><br>当前只能访问云端工作区文件，不能直接读取你电脑的 C:/F: 等本地硬盘。</div>`;
+    h+='<div style="background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:9px 10px;font-size:11px;line-height:1.55;margin-bottom:7px">☁️ <b>Codespaces 在线预览</b><br>当前只能访问云端工作区文件，不能直接读取你电脑的 C:/F: 等本地硬盘。</div>';
   }else{
     bb.disabled=isRunning;bb.textContent='选择文件夹…';
     fi.placeholder='请选择或粘贴照片文件夹路径';
   }
+
+  h+='<div style="display:flex;gap:6px;margin:6px 0 4px"><button class="chip" id="scanStorageBtn">检测存储设备</button><button class="chip" id="prepareDemoBtn">加载测试数据</button></div>';
 
   if(d.demo_folder){
     const p=d.demo_folder;
@@ -4122,31 +4127,75 @@ function loadShortcuts(){fetch('/api/shortcuts').then(r=>r.json()).then(d=>{
       <span class="tag recent" style="margin-top:1px">内置测试</span>
       <span style="display:flex;flex-direction:column;gap:2px;min-width:0">
         <b style="font-size:12px;color:var(--text)">内置测试数据 · ${n} 张</b>
-        <span style="font-size:10px;color:var(--muted)">清晰 ${br.sharp||4} · 轻微软 ${br.soft||4} · 模糊 ${br.blurry||4} · 程序内永久保留</span>
+        <span style="font-size:10px;color:var(--muted)">清晰 ${br.sharp||4} · 轻微软 ${br.soft||4} · 模糊 ${br.blurry||4}</span>
       </span>
     </button>`;
-    if(codespacesMode&&!folder){selectFolderValue(p);fi.value=p;}
   }
 
-  (d.sd||[]).forEach(o=>{const p=(typeof o==='string')?o:o.path;
+  (d.sd||[]).forEach(o=>{
+    const p=(typeof o==='string')?o:o.path;
     const br=(o&&o.brand)?(' · '+o.brand):'';
-    h+=`<button class="shortcut" data-p="${escHtml(p)}"><span class="tag sd">SD${escHtml(br)}</span>${escHtml(sdLabel(p))}</button>`;});
-  (d.recent||[]).slice(0,4).forEach(p=>h+=`<button class="shortcut" data-p="${escHtml(p)}"><span class="tag recent">最近</span>${escHtml(sdLabel(p))}</button>`);
-  if(d.rawpy===false)h=`<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:8px;`
-    +`padding:8px 10px;font-size:11px;line-height:1.5;margin-bottom:6px">⚠️ <b>RAW 支持未启用</b> — `
-    +`未安装 rawpy，CR2/NEF/ARW/DNG 等 RAW 文件会被跳过。<br>`
-    +`请重新运行依赖安装后再试。</div>`+h;
-  if(d.heif===false)h=`<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:8px;`
-    +`padding:8px 10px;font-size:11px;line-height:1.5;margin-bottom:6px">⚠️ <b>HEIC 支持未启用</b> — `
-    +`未安装 pillow-heif，iPhone 的 HEIC/HEIF 文件会被跳过。<br>`
-    +`请重新运行依赖安装后再试。</div>`+h;
-  if(!(d.sd||[]).length&&!codespacesMode)h+=`<div style="font-size:11px;color:var(--muted);margin-top:6px">未检测到相机存储卡；插入后会自动出现在这里，也可以直接选择文件夹。</div>`;
+    h+=`<button class="shortcut" data-p="${escHtml(p)}"><span class="tag sd">SD${escHtml(br)}</span>${escHtml(sdLabel(p))}</button>`;
+  });
+  (d.recent||[]).slice(0,4).forEach(p=>{
+    h+=`<button class="shortcut" data-p="${escHtml(p)}"><span class="tag recent">最近</span>${escHtml(sdLabel(p))}</button>`;
+  });
+
+  if(d.rawpy===false)h='<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:8px;padding:8px 10px;font-size:11px;line-height:1.5;margin-bottom:6px">⚠️ <b>RAW 支持未启用</b></div>'+h;
+  if(d.heif===false)h='<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:8px;padding:8px 10px;font-size:11px;line-height:1.5;margin-bottom:6px">⚠️ <b>HEIC 支持未启用</b></div>'+h;
+  if(d.storage_scanning)h+='<div style="font-size:11px;color:var(--muted);margin-top:6px">正在后台检测相机卡 / 可移动存储…</div>';
+  else if(d.storage_scanned_at&&!(d.sd||[]).length&&!codespacesMode)h+='<div style="font-size:11px;color:var(--muted);margin-top:6px">本次未检测到相机存储卡，也可以直接选择文件夹。</div>';
+
   document.getElementById('shortcuts').innerHTML=h;
-  document.querySelectorAll('.shortcut').forEach(b=>{b.disabled=isRunning;b.onclick=()=>{if(isRunning)return;selectFolderValue(b.dataset.p);fi.value=folder||'';};});
-}).catch(()=>{});
+  document.querySelectorAll('.shortcut').forEach(b=>{
+    b.disabled=isRunning;
+    b.onclick=()=>{if(isRunning)return;selectFolderValue(b.dataset.p);fi.value=folder||'';};
+  });
+
+  const scan=document.getElementById('scanStorageBtn');
+  if(scan)scan.onclick=async()=>{
+    scan.disabled=true;scan.textContent='正在检测…';
+    try{
+      await fetch('/api/storage/refresh',{method:'POST'});
+      for(let i=0;i<30;i++){
+        await new Promise(resolve=>setTimeout(resolve,180));
+        const status=await fetch('/api/shortcuts'+(demoVisible?'?include_demo=1':'')).then(r=>r.json());
+        if(!status.storage_scanning)break;
+      }
+      await loadShortcuts(demoVisible);
+    }catch(err){
+      toast('存储设备检测失败：'+(err.message||'未知错误'),'bad');
+      scan.disabled=false;scan.textContent='重新检测';
+    }
+  };
+
+  const demo=document.getElementById('prepareDemoBtn');
+  if(demo)demo.onclick=async()=>{
+    demo.disabled=true;demo.textContent='正在准备…';
+    try{
+      const response=await fetch('/api/demo/prepare',{method:'POST'});
+      const data=await response.json();
+      if(!response.ok||!data.demo_folder)throw new Error(data.error||'测试数据准备失败');
+      demoVisible=true;
+      await loadShortcuts(true);
+    }catch(err){
+      toast('测试数据准备失败：'+(err.message||'未知错误'),'bad');
+      demo.disabled=false;demo.textContent='重试测试数据';
+    }
+  };
 }
-loadShortcuts();
-setInterval(()=>{if(!document.hidden&&!isRunning)loadShortcuts();},30000);  // pick up a card inserted later
+const sourceDetails=document.getElementById('sourceDetails');
+sourceDetails.addEventListener('toggle',()=>{
+  if(sourceDetails.open&&!shortcutsLoaded){
+    shortcutsLoaded=true;
+    loadShortcuts().catch(()=>{});
+  }
+});
+setInterval(()=>{
+  if(shortcutsLoaded&&sourceDetails.open&&!document.hidden&&!isRunning){
+    loadShortcuts(demoVisible).catch(()=>{});
+  }
+},60000);
 document.getElementById('folderInput').onchange=e=>selectFolderValue(e.target.value);
 document.getElementById('folderInput').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();selectFolderValue(e.target.value);}};
 document.getElementById('browseBtn').onclick=async()=>{
