@@ -11,6 +11,8 @@ import heapq, json, logging, sqlite3, threading, time
 from pathlib import Path
 from typing import Callable, Dict
 
+from db_runtime import connect_db
+
 logger = logging.getLogger(__name__)
 
 class BackgroundTaskManager:
@@ -33,7 +35,7 @@ class BackgroundTaskManager:
             worker.start()
 
     def _connect(self):
-        return sqlite3.connect(str(self.db_path), timeout=30)
+        return connect_db(self.db_path, timeout=30)
 
     def _init_db(self):
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
