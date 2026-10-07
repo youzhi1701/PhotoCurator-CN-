@@ -1,8 +1,8 @@
 {
   "product": "PhotoCurator",
   "channel": "stable",
-  "version": "1.5.6",
-  "installer": "PhotoCurator-Setup-v1.5.6.exe",
+  "version": "1.5.7",
+  "installer": "PhotoCurator-Setup-v1.5.7.exe",
   "upgrade_mode": "in_place",
   "same_app_id": true,
   "data_root": "%LOCALAPPDATA%/PhotoCurator/data",
@@ -22,7 +22,7 @@
   "replace": [
     "app"
   ],
-  "notes": "v1.5.6 Windows 实机稳定性修复：撤回 v1.5.4 起的原生 WinForms frame 路径，恢复已在同一台 Windows 机器验证稳定的 frameless WebView2 生命周期；托盘在 GUI loop 前初始化，webview.start 不再挂启动回调；保留单层自定义标题栏以及 v1.5.x 的数据源、离线图库、Dashboard/照片视图、持久索引等功能。",
+  "notes": "v1.5.7 Windows 启动未响应根因修复：自动环境刷新不再扫描所有磁盘的 DCIM、容量、卷信息或目录；周期任务只用轻量 Windows 卷存在性 API 更新已登记数据源的在线/离线状态，避免慢速/休眠/异常 USB 硬盘让 Python/pywebview 宿主失去响应。保留 v1.5.6 稳定 frameless 壳与全部数据源/离线图库功能。",
   "release_date": "2026-10-07",
   "published_version": "1.5.0",
   "published_installer": "PhotoCurator-Setup-v1.5.0.exe"
