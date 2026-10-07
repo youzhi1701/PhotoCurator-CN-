@@ -1783,51 +1783,167 @@ def save_recent(folder):
 
 
 def ensure_builtin_demo():
-    """Keep one built-in test dataset inside the program directory.
+    """Create a small but realistic multi-folder library for real UI testing.
 
-    The dataset is deterministic and intentionally small: 12 JPEGs total,
-    including 4 clear, 4 slightly-soft and 4 blurry samples. Existing files
-    are never overwritten. If a test moves a canonical sample away, only the
-    missing canonical file is recreated on the next shortcut refresh.
+    36 JPEGs live under several nested folders. The set deliberately contains
+    sharp/soft/blurry frames and near-duplicate bursts so recursive scanning,
+    source-folder grouping and similarity review can all be exercised.
     """
     demo = DATA_ROOT / '内置测试数据'
     try:
         demo.mkdir(parents=True, exist_ok=True)
-        from PIL import ImageDraw, ImageFilter
-        for i in range(12):
-            kind = 'blurry' if i >= 8 else ('soft' if i >= 4 else 'sharp')
-            zh = {'sharp': '清晰', 'soft': '轻微软', 'blurry': '模糊'}[kind]
-            target = demo / f"测试_{i+1:02d}_{zh}.jpg"
-            if target.exists():
-                continue
+        from PIL import ImageDraw, ImageFilter, ImageEnhance
+        import random
+
+        # Remove only the old canonical flat demo fixtures. User-created files
+        # under the demo root are never touched.
+        for old in demo.glob('测试_*_*.jpg'):
+            try:
+                old.unlink()
+            except OSError:
+                pass
+
+        folders = [
+            ('旅行/海边日落', 'coast'),
+            ('旅行/山野徒步', 'mountain'),
+            ('家庭/室内聚会', 'indoor'),
+            ('城市/夜景', 'city'),
+            ('手机导入/2026-10', 'daily'),
+            ('重复测试/连拍组', 'burst'),
+        ]
+        kinds = ('sharp', 'soft', 'blurry')
+        kind_zh = {'sharp': '清晰', 'soft': '轻微软', 'blurry': '模糊'}
+
+        def gradient(size, top, bottom):
+            w, h = size
+            img = Image.new('RGB', size)
+            px = img.load()
+            for y in range(h):
+                t = y / max(1, h - 1)
+                row = tuple(int(top[c] * (1 - t) + bottom[c] * t) for c in range(3))
+                for x in range(w):
+                    px[x, y] = row
+            return img
+
+        def draw_scene(scene, seed, variant):
+            rng = random.Random(seed)
             w, h = 960, 640
-            img = Image.new('RGB', (w, h), (238, 241, 247))
+
+            if scene == 'coast':
+                img = gradient((w, h), (92, 139, 206), (246, 178, 122))
+                d = ImageDraw.Draw(img)
+                d.rectangle((0, 385, w, h), fill=(44, 111, 143))
+                d.ellipse((690 + variant * 3, 105, 790 + variant * 3, 205),
+                          fill=(255, 224, 151))
+                d.polygon([(0, 430), (180, 380), (330, 430), (500, 392),
+                           (650, 438), (w, 400), (w, 470), (0, 470)],
+                          fill=(32, 68, 82))
+                for x in (130, 330, 545, 760):
+                    d.line((x, 420, x + 18, 520), fill=(28, 39, 45), width=5)
+                    d.ellipse((x - 10, 390, x + 25, 430), fill=(28, 39, 45))
+            elif scene == 'mountain':
+                img = gradient((w, h), (116, 166, 213), (224, 232, 220))
+                d = ImageDraw.Draw(img)
+                d.polygon([(0, 410), (180, 205), (330, 410)], fill=(74, 104, 103))
+                d.polygon([(210, 420), (480, 150), (720, 420)], fill=(61, 88, 91))
+                d.polygon([(510, 430), (760, 235), (w, 430)], fill=(83, 112, 104))
+                d.polygon([(410, h), (500 + variant * 4, 390), (585, h)],
+                          fill=(172, 146, 111))
+                for _ in range(28):
+                    x = rng.randint(0, w - 1); y = rng.randint(360, h - 20)
+                    d.polygon([(x, y), (x - 9, y + 32), (x + 9, y + 32)],
+                              fill=(41, 89 + rng.randint(0, 30), 66))
+            elif scene == 'indoor':
+                img = gradient((w, h), (239, 211, 178), (183, 132, 99))
+                d = ImageDraw.Draw(img)
+                d.rectangle((585, 70, 890, 330), fill=(191, 222, 231),
+                            outline=(247, 240, 220), width=14)
+                d.rectangle((0, 430, w, h), fill=(111, 73, 53))
+                d.rectangle((170, 365, 810, 500), fill=(156, 103, 67))
+                for p in range(4):
+                    cx = 250 + p * 155 + variant * (p % 2)
+                    d.ellipse((cx - 38, 245, cx + 38, 321),
+                              fill=(214, 168 - p * 6, 132))
+                    d.rounded_rectangle((cx - 55, 315, cx + 55, 430),
+                                        radius=24,
+                                        fill=(80 + p * 25, 94 + p * 9, 126 + p * 12))
+                for x in (310, 445, 590):
+                    d.ellipse((x, 395, x + 55, 435), fill=(228, 204, 152))
+            elif scene == 'city':
+                img = gradient((w, h), (24, 28, 59), (78, 48, 88))
+                d = ImageDraw.Draw(img)
+                base = 555
+                for x in range(-20, w, 95):
+                    bw = rng.randint(70, 110); bh = rng.randint(180, 390)
+                    d.rectangle((x, base - bh, x + bw, base),
+                                fill=(28 + rng.randint(0, 20), 35, 54))
+                    for wx in range(x + 14, x + bw - 10, 24):
+                        for wy in range(base - bh + 20, base - 15, 30):
+                            if rng.random() > .45:
+                                d.rectangle((wx, wy, wx + 8, wy + 10),
+                                            fill=(244, 197 + rng.randint(0, 40), 110))
+                d.rectangle((0, 555, w, h), fill=(34, 35, 43))
+                for x in range(0, w, 125):
+                    d.ellipse((x + variant * 2, 575, x + 18 + variant * 2, 585),
+                              fill=(245, 212, 150))
+            elif scene == 'daily':
+                img = gradient((w, h), (168, 206, 222), (224, 221, 185))
+                d = ImageDraw.Draw(img)
+                d.rectangle((0, 400, w, h), fill=(102, 149, 96))
+                d.rectangle((90, 290, 405, 520), fill=(228, 222, 204))
+                d.polygon([(65, 300), (250, 160), (435, 300)], fill=(117, 87, 74))
+                d.rectangle((620, 290, 815, 520), fill=(201, 187, 164))
+                for _ in range(22):
+                    x = rng.randint(0, w); y = rng.randint(380, h)
+                    d.ellipse((x, y, x + 10, y + 10), fill=(76, 127, 71))
+            else:  # burst / near-duplicate people-like outdoor sequence
+                img = gradient((w, h), (118, 174, 211), (210, 222, 188))
+                d = ImageDraw.Draw(img)
+                d.rectangle((0, 405, w, h), fill=(87, 137, 75))
+                shift = (variant % 3) * 7
+                for p in range(3):
+                    cx = 330 + p * 130 + shift
+                    d.ellipse((cx - 33, 235, cx + 33, 301),
+                              fill=(221, 176, 139))
+                    d.rounded_rectangle((cx - 52, 298, cx + 52, 448),
+                                        radius=20,
+                                        fill=((61 + p * 38), (92 + p * 15), (154 - p * 17)))
+                d.rectangle((120, 190, 195, 405), fill=(92, 72, 54))
+                d.ellipse((83, 120, 235, 250), fill=(72, 126, 74))
+
+            # Add restrained film-like texture so the fixtures behave more like
+            # photos than vector diagrams during sharpness/similarity analysis.
             d = ImageDraw.Draw(img)
+            for _ in range(900):
+                x = rng.randrange(w); y = rng.randrange(h)
+                c = rng.randint(0, 18)
+                base = img.getpixel((x, y))
+                d.point((x, y), fill=tuple(max(0, min(255, v + c - 9)) for v in base))
+            return img
 
-            # Distinct geometry gives the cull / dedup / ranking views enough
-            # visual structure to exercise their real UI instead of blank cards.
-            step = 30 + (i % 4) * 7
-            for x in range(0, w, step):
-                d.line((x, 0, max(0, w - x // 2), h),
-                       width=2 + (i % 3),
-                       fill=(40 + i * 7, 72 + (i % 4) * 10, 118 + i * 5))
-            for y in range(0, h, step + 8):
-                d.line((0, y, w, max(0, h - y // 2)),
-                       width=1 + (i % 2),
-                       fill=(118, 72 + i * 6, 66 + (i % 3) * 12))
-            d.ellipse((150 + i * 10, 120, 500 + i * 8, 490),
-                      outline=(30, 35, 45), width=10)
-            d.rectangle((600, 105 + i * 6, 855, 410 + i * 3),
-                        outline=(30, 118, 88), width=8)
-            d.text((34, 28), f"PhotoCurator 内置测试 {i+1:02d} / 12",
-                   fill=(25, 30, 40))
-            d.text((34, 58), f"类型：{zh}", fill=(25, 30, 40))
+        global_i = 0
+        for folder_rel, scene in folders:
+            target_dir = demo / Path(folder_rel)
+            target_dir.mkdir(parents=True, exist_ok=True)
+            for j in range(6):
+                kind = kinds[global_i % 3]
+                target = target_dir / (
+                    f"{global_i + 1:02d}_{scene}_{j + 1:02d}_{kind_zh[kind]}.jpg"
+                )
+                if not target.exists():
+                    # Burst pairs deliberately reuse a scene seed; other folders
+                    # vary enough to exercise grouping without becoming identical.
+                    seed = (5000 + j // 2) if scene == 'burst' else (1000 + global_i)
+                    img = draw_scene(scene, seed, j)
+                    if scene == 'burst' and j % 2:
+                        img = ImageEnhance.Brightness(img).enhance(1.025)
+                    if kind == 'blurry':
+                        img = img.filter(ImageFilter.GaussianBlur(radius=5.0))
+                    elif kind == 'soft':
+                        img = img.filter(ImageFilter.GaussianBlur(radius=1.35))
+                    img.save(target, quality=92)
+                global_i += 1
 
-            if kind == 'blurry':
-                img = img.filter(ImageFilter.GaussianBlur(radius=5.0))
-            elif kind == 'soft':
-                img = img.filter(ImageFilter.GaussianBlur(radius=1.4))
-            img.save(target, quality=92)
         return os.path.realpath(demo)
     except Exception as e:
         logger.warning(f"ensure built-in demo failed: {e}")
