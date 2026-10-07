@@ -1237,6 +1237,82 @@ def _output_destination(src, kind, root, mode='source', custom_output=''):
     return _unique_destination(base / src.name)
 
 
+def _photo_sidecars(path):
+    """Return sidecars that belong to the same photo capture."""
+    p = Path(path)
+    out = []
+    for ext in ('.xmp', '.XMP', '.aae', '.AAE'):
+        candidate = p.with_suffix(ext)
+        if candidate.is_file():
+            out.append(candidate)
+    return out
+
+
+def _safe_move_file(src, dst):
+    """Move without overwrite; cross-volume moves are copy/verify/commit/delete."""
+    src = Path(src)
+    dst = Path(dst)
+    if not src.is_file():
+        raise FileNotFoundError(str(src))
+    if dst.exists():
+        raise FileExistsError(str(dst))
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        os.replace(str(src), str(dst))
+        return dst
+    except OSError:
+        pass
+
+    tmp = dst.with_name(dst.name + '.photocurator-part')
+    if tmp.exists():
+        tmp.unlink()
+    try:
+        shutil.copy2(str(src), str(tmp))
+        if int(tmp.stat().st_size) != int(src.stat().st_size):
+            raise IOError("跨盘复制校验失败：文件大小不一致")
+        try:
+            with open(tmp, 'rb') as fh:
+                os.fsync(fh.fileno())
+        except OSError:
+            pass
+        os.replace(str(tmp), str(dst))
+        src.unlink()
+        return dst
+    except Exception:
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except OSError:
+            pass
+        raise
+
+
+def _move_photo_bundle(src, dst):
+    """Move a photo and its XMP/AAE sidecars as one rollback-capable bundle."""
+    src = Path(src)
+    dst = Path(dst)
+    sidecars = _photo_sidecars(src)
+    moved = []
+    try:
+        _safe_move_file(src, dst)
+        moved.append((dst, src))
+        for sidecar in sidecars:
+            side_dst = dst.with_suffix(sidecar.suffix)
+            if side_dst.exists():
+                side_dst = _unique_destination(side_dst)
+            _safe_move_file(sidecar, side_dst)
+            moved.append((side_dst, sidecar))
+        return dst
+    except Exception:
+        for moved_path, original_path in reversed(moved):
+            try:
+                if moved_path.exists() and not original_path.exists():
+                    _safe_move_file(moved_path, original_path)
+            except Exception:
+                logger.error("photo bundle rollback failed", exc_info=True)
+        raise
+
+
 def _move_reviewed_files(paths, kind, root, mode='source', custom_output=''):
     result = {'moved': 0, 'failed': 0, 'skipped': 0, 'destinations': []}
     for raw in paths:
@@ -1246,7 +1322,7 @@ def _move_reviewed_files(paths, kind, root, mode='source', custom_output=''):
             continue
         try:
             dst = _output_destination(src, kind, root, mode, custom_output)
-            shutil.move(str(src), str(dst))
+            _move_photo_bundle(src, dst)
             _activity('移动文件', str(src), str(dst))
             result['moved'] += 1
             result['destinations'].append({'old': str(src), 'new': str(dst)})
@@ -1375,7 +1451,7 @@ def _move_to_software_trash(src, root, source_step, planned_trash_path=None):
     else:
         dst = _trash_destination(src, root)
 
-    shutil.move(str(src), str(dst))
+    _move_photo_bundle(src, dst)
     trash_path = str(dst.resolve())
     try:
         trash_id = _ensure_software_trash_record(
@@ -1385,7 +1461,7 @@ def _move_to_software_trash(src, root, source_step, planned_trash_path=None):
         try:
             Path(original).parent.mkdir(parents=True, exist_ok=True)
             if not Path(original).exists() and Path(trash_path).is_file():
-                shutil.move(trash_path, original)
+                _move_photo_bundle(Path(trash_path), Path(original))
         except Exception:
             logger.error("software trash rollback failed", exc_info=True)
         raise
@@ -1449,7 +1525,7 @@ def _restore_trash_item(trash_id):
     desired = Path(original)
     desired.parent.mkdir(parents=True, exist_ok=True)
     restored = _unique_destination(desired)
-    shutil.move(str(src), str(restored))
+    _move_photo_bundle(src, restored)
     with _DB_LOCK, connect_db(INDEX_DB, timeout=15) as db:
         db.execute("DELETE FROM software_trash WHERE id=?", (int(trash_id),))
         db.commit()
@@ -1665,7 +1741,13 @@ def _background_permanent_delete(payload):
     target = Path(path)
     try:
         if target.is_file():
+            sidecars = _photo_sidecars(target)
             target.unlink()
+            for sidecar in sidecars:
+                try:
+                    sidecar.unlink()
+                except OSError:
+                    logger.warning("sidecar delete failed: %s", sidecar)
         with _DB_LOCK, connect_db(INDEX_DB, timeout=15) as db:
             db.execute("DELETE FROM software_trash WHERE trash_path=? OR original_path=?",
                        (path, original))
@@ -1719,7 +1801,7 @@ def _background_restore_trash(payload):
             restored_file.parent.mkdir(parents=True, exist_ok=True)
             if restored_file.exists():
                 raise FileExistsError("计划的恢复目标已存在，未覆盖任何文件")
-            shutil.move(str(trash_file), str(restored_file))
+            _move_photo_bundle(trash_file, restored_file)
         elif not restored_file.is_file():
             raise FileNotFoundError("回收站中的照片和计划恢复目标均不存在")
 
