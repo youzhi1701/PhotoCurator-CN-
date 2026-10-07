@@ -49,6 +49,9 @@ from catalog import (
     register_source as catalog_register_source,
     storage_summary as catalog_storage_summary,
     clear_rebuildable_storage,
+    root_snapshot as catalog_root_snapshot,
+    media_record as catalog_media_record,
+    media_id_for_path as catalog_media_id_for_path,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -1724,6 +1727,15 @@ TASK_MANAGER.register('purge_trash', _background_purge_trash)
 
 
 def _thumb_cache_path(image_path):
+    # Catalog-backed previews use a stable media id, so a drive-letter change
+    # (F: -> G:) does not invalidate the offline preview.
+    try:
+        media_id = catalog_media_id_for_path(INDEX_DB, image_path)
+        if media_id:
+            return THUMB_DIR / f"catalog_{media_id}.jpg"
+    except Exception:
+        pass
+
     p = Path(image_path)
     try:
         st = p.stat()
@@ -1732,8 +1744,6 @@ def _thumb_cache_path(image_path):
     except OSError:
         mtime_ns = 0
         size_bytes = 0
-    # Versioned high-resolution file fingerprint. Including mtime_ns + size
-    # prevents a replaced same-name photo from reusing an old thumbnail.
     key = hashlib.md5(
         f"{image_path}:{mtime_ns}:{size_bytes}:v3".encode()
     ).hexdigest()
@@ -3385,7 +3395,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   .viewport{height:auto!important;min-height:0;display:flex;overflow:hidden}
   .sidebar{width:250px;flex:0 0 250px;padding:12px 10px;background:rgba(255,255,255,.68);backdrop-filter:blur(24px) saturate(145%);border-right:1px solid rgba(140,157,208,.18)}
   .sidebar-nav{flex:0 0 auto}.source-browser{flex:1;min-height:0;overflow-y:auto;margin-top:12px;padding:0 2px 8px}.section-head{display:flex;align-items:center;justify-content:space-between;margin:0 2px 8px;font-size:12px}.section-head b,.section-subhead{color:var(--muted);font-weight:800;letter-spacing:.03em}.section-subhead{font-size:10px;margin:14px 4px 5px}.source-add{border:0;background:rgba(87,109,226,.10);color:#4f63c9;border-radius:8px;padding:5px 8px;font-weight:800;cursor:pointer}.source-path-input{margin-bottom:8px;font-size:11px!important}
-  .sources-list{display:flex;flex-direction:column;gap:6px}.source-card{width:100%;display:grid;grid-template-columns:10px minmax(0,1fr);gap:8px;text-align:left;padding:9px 10px;border:1px solid rgba(124,139,192,.18);border-radius:12px;background:rgba(255,255,255,.56);cursor:default}.source-card.connected{cursor:pointer}.source-card.connected:hover{border-color:rgba(91,111,218,.48);background:rgba(255,255,255,.78)}.source-card b,.source-card small{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.source-card b{font-size:12px}.source-card small{font-size:10px;color:var(--muted);margin-top:2px}.source-root-btn{margin-top:6px;border:0;border-radius:7px;padding:5px 7px;background:rgba(82,105,222,.09);color:#4257b8;font-size:10px;font-weight:700;cursor:pointer;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.source-root-btn:disabled{cursor:not-allowed;color:#8b94a8;background:rgba(148,163,184,.10)}
+  .sources-list{display:flex;flex-direction:column;gap:6px}.source-card{width:100%;display:grid;grid-template-columns:10px minmax(0,1fr);gap:8px;text-align:left;padding:9px 10px;border:1px solid rgba(124,139,192,.18);border-radius:12px;background:rgba(255,255,255,.56);cursor:default}.source-card.connected{cursor:pointer}.source-card.connected:hover{border-color:rgba(91,111,218,.48);background:rgba(255,255,255,.78)}.source-card b,.source-card small{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.source-card b{font-size:12px}.source-card small{font-size:10px;color:var(--muted);margin-top:2px}.source-root-btn{margin-top:6px;border:0;border-radius:7px;padding:5px 7px;background:rgba(82,105,222,.09);color:#4257b8;font-size:10px;font-weight:700;cursor:pointer;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.source-root-btn:disabled{cursor:not-allowed;color:#8b94a8;background:rgba(148,163,184,.10)}.source-card.offline .source-root-btn{color:#64748b;background:rgba(148,163,184,.09);cursor:pointer}.offline-preview-fallback{width:100%;aspect-ratio:3/2;place-items:center;background:linear-gradient(145deg,#edf1f8,#e4e9f5);color:#8490a7;font-size:11px}.catalog-meta{margin-top:3px;font-size:9px;color:var(--muted)}
   #shortcuts{display:flex;flex-direction:column}.shortcut{margin-top:5px;background:rgba(255,255,255,.52)}
   .sidebar-bottom{display:grid;grid-template-columns:1fr auto;gap:7px;border-top:1px solid rgba(124,139,192,.16);padding-top:9px}.sidebar-bottom .toolbox-open,.sidebar-bottom .sidebar-collapse{height:36px;border:1px solid rgba(124,139,192,.18);border-radius:10px;background:rgba(255,255,255,.55);color:var(--text);cursor:pointer;font-weight:700}.sidebar-bottom .toolbox-open{display:flex;align-items:center;justify-content:center;gap:7px}.sidebar-bottom .sidebar-collapse{padding:0 10px}
   .main{flex:1;min-width:0;padding:14px 16px 10px;overflow-y:auto;background:transparent}
@@ -3687,7 +3697,7 @@ document.addEventListener('keydown',e=>{
   else if(e.key==='p'||e.key==='P'){e.preventDefault();closeDeleteDialog('permanent');}
 });
 let folder=null, photos=[], lbList=[], lbIndex=0, currentStep='cull', folderStatus={};
-let sourceCatalog=[], selectedSource=null;
+let sourceCatalog=[], selectedSource=null, catalogRootView=null;
 const cullLiveStore=new Map();
 const dedupLiveStore=new Map();
 let isRunning=false, runningStep=null, codespacesMode=false;
@@ -4281,16 +4291,22 @@ function sourceForPath(value){
 }
 function updateSourceUi(){
   selectedSource=folder?sourceForPath(folder):null;
+  const offline=catalogRootView&&catalogRootView.source?catalogRootView.source:null;
   const name=document.getElementById('topSourceName');
   const path=document.getElementById('topSourcePath');
   const topDot=document.getElementById('topSourceDot');
   const statusDot=document.getElementById('statusSourceDot');
   const statusText=document.getElementById('statusSourceText');
-  const connected=!!(selectedSource&&selectedSource.connected);
+  const active=selectedSource||offline;
+  const connected=!!(active&&active.connected);
   if(folder){
     name.textContent=selectedSource?selectedSource.display_name:'当前照片来源';
     path.textContent=folder;
     statusText.textContent=(selectedSource?(selectedSource.display_name+' · '):'')+(connected?'已连接':'路径已选择');
+  }else if(offline){
+    name.textContent=offline.display_name||'离线图库';
+    path.textContent=(catalogRootView.root&&catalogRootView.root.original_root)||'原始位置未连接';
+    statusText.textContent=(offline.display_name||'数据源')+' · 未连接 · 历史数据可查看';
   }else{
     name.textContent='未选择数据源';
     path.textContent='添加硬盘、U盘或照片文件夹后开始';
@@ -4305,6 +4321,7 @@ function selectFolderValue(value){
   const next=String(value||'').trim();
   if(next===folder){updateStartAvailability();updateSourceUi();return;}
   folder=next||null;
+  catalogRootView=null;
   resetWorkspaceForFolder();
   updateStartAvailability();
   updateSourceUi();
@@ -4335,8 +4352,8 @@ function renderSources(){
       const current=root.current_root||root.original_root||'';
       const title=(root.display_name||current||'照片库')+' · '+Number(root.photo_count||0)+' 张';
       return '<button class="source-root-btn" data-source-root="'+escHtml(current)+'"'
-        +(source.connected?'':' disabled')
-        +' title="'+escHtml(current)+'">'+escHtml(title)+'</button>';
+        +' data-root-id="'+escHtml(root.root_id)+'" data-source-id="'+escHtml(source.source_id)+'"'
+        +' data-connected="'+(source.connected?'1':'0')+'" title="'+escHtml(current)+'">'+escHtml(title)+'</button>';
     }).join('');
     return '<div class="source-card '+(source.connected?'connected':'offline')+'">'
       +'<span class="source-dot '+(source.connected?'online':'offline')+'"></span>'
@@ -4345,12 +4362,53 @@ function renderSources(){
       +(source.capacity_bytes?' · '+formatBytes(source.capacity_bytes):'')+'</small>'
       +roots+'</div></div>';
   }).join('');
-  box.querySelectorAll('.source-root-btn:not([disabled])').forEach(btn=>{
+  box.querySelectorAll('.source-root-btn').forEach(btn=>{
     btn.onclick=()=>{
-      selectFolderValue(btn.dataset.sourceRoot);
-      document.getElementById('folderInput').value=folder||'';
+      if(btn.dataset.connected==='1'){
+        selectFolderValue(btn.dataset.sourceRoot);
+        document.getElementById('folderInput').value=folder||'';
+      }else{
+        loadCatalogRoot(btn.dataset.rootId);
+      }
     };
   });
+}
+async function loadCatalogRoot(rootId){
+  try{
+    const r=await fetch('/api/catalog-root/'+encodeURIComponent(rootId));
+    const d=await r.json();
+    if(!r.ok||d.error)throw new Error(d.error||('HTTP '+r.status));
+    catalogRootView=d;
+    folder=null;
+    updateStartAvailability();
+    updateSourceUi();
+    const fi=document.getElementById('folderInput');
+    fi.value=(d.root&&d.root.original_root)||'';
+    document.getElementById('progressWrap').style.display='none';
+    document.getElementById('filterBar').style.display='none';
+    document.getElementById('resultTools').style.display='none';
+    document.getElementById('workspaceTitle').textContent=(d.source&&d.source.display_name)||'离线图库';
+    document.getElementById('workspaceHint').textContent='数据源未连接 · 历史索引仍可查看，重新插入原设备后可继续增量分析。';
+    const items=d.items||[];
+    const g=document.getElementById('gallery');
+    g.className='gallery catalog-history';
+    g.innerHTML=items.length?items.map(item=>{
+      const missing=item.state==='missing';
+      const badge=missing?'<span class="lifecycle-badge trash">原文件缺失</span>':'';
+      const preview=item.thumb
+        ?'<img class="photo-img" src="'+escHtml(item.thumb)+'" loading="lazy" decoding="async" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'grid\'">'
+          +'<div class="offline-preview-fallback" style="display:none">离线预览未缓存</div>'
+        :'<div class="offline-preview-fallback">离线预览未缓存</div>';
+      return '<div class="photo-card catalog-card">'+badge+preview
+        +'<div class="photo-info"><div class="photo-name">'+escHtml(item.name)+'</div>'
+        +'<div class="source-path">'+escHtml(item.relative_path)+'</div>'
+        +'<div class="catalog-meta">'+(item.has_cull_cache?'已分析':'仅索引')+' · '+formatBytes(item.size)+'</div></div></div>';
+    }).join(''):'<div class="empty"><div class="icon">🗄️</div><div class="title">这个图库还没有持久化媒体索引</div><p>重新连接数据源并完成一次扫描后会建立历史目录。</p></div>';
+    document.getElementById('sShowing').textContent=String(items.length);
+    document.getElementById('sImages').textContent=String(d.total||items.length);
+  }catch(err){
+    toast('读取离线图库失败：'+(err.message||'未知错误'),'bad');
+  }
 }
 function loadStorageSummary(){
   fetch('/api/storage-summary').then(r=>r.json()).then(d=>{
@@ -5888,6 +5946,59 @@ def vendor_file(name):
     resp = send_file(str(f), mimetype=mime)
     resp.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
     return resp
+
+
+@app.route('/api/catalog-root/<root_id>')
+def api_catalog_root(root_id):
+    try:
+        # Refresh device connection state before returning an offline/online view.
+        catalog_list_sources(INDEX_DB)
+        snap = catalog_root_snapshot(
+            INDEX_DB,
+            root_id,
+            limit=request.args.get('limit', 2000, type=int),
+            offset=request.args.get('offset', 0, type=int),
+        )
+        if not snap:
+            return jsonify({'error': '图库不存在'}), 404
+        for item in snap.get('items') or []:
+            item['thumb'] = '/api/catalog-thumb?media_id=' + quote(str(item['media_id']))
+        return jsonify(snap)
+    except Exception as exc:
+        logger.warning("catalog root snapshot failed", exc_info=True)
+        return jsonify({'error': str(exc)}), 500
+
+
+@app.route('/api/catalog-thumb')
+def api_catalog_thumb():
+    media_id = str(request.args.get('media_id') or '').strip()
+    if not media_id:
+        abort(404)
+    try:
+        record = catalog_media_record(INDEX_DB, media_id)
+    except Exception:
+        record = None
+    if not record:
+        abort(404)
+    cached = THUMB_DIR / f"catalog_{media_id}.jpg"
+    if cached.is_file():
+        return send_file(str(cached), mimetype='image/jpeg')
+
+    candidates = []
+    rel = str(record.get('relative_path') or '')
+    current_root = str(record.get('current_root') or '')
+    if current_root and rel:
+        candidates.append(os.path.join(current_root, rel))
+    candidates.extend([
+        str(record.get('current_path') or ''),
+        str(record.get('original_path') or ''),
+    ])
+    for candidate in candidates:
+        if candidate and Path(candidate).is_file():
+            made = make_thumb_file(candidate)
+            if made and Path(made).is_file():
+                return send_file(str(made), mimetype='image/jpeg')
+    abort(404)
 
 
 @app.route('/api/thumb')
