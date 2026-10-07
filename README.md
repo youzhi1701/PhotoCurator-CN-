@@ -194,7 +194,7 @@ GitHub Actions：
 
 普通 `main` 推送只运行源码/结构门禁，不会反复消耗 Windows 正式安装包构建；Windows Candidate 通过 Pull Request 或手动触发完成真实 EXE、窗口存活和测试安装包验证。正式 Release 仅由显式发布请求或匹配版本标签触发。
 
-发布目标由 `packaging/release_manifest.json` 驱动。当前目标为 **1.7.0 Candidate**；只有全部 Release Gate 通过后，才允许创建正式标签：
+发布目标由 `packaging/release_manifest.json` 驱动。当前目标为 **1.7.1 Candidate**；只有全部 Release Gate 通过后，才允许创建正式标签：
 
 `v1.7.1`
 
