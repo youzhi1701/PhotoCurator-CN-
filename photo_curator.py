@@ -1807,6 +1807,65 @@ def make_thumb_file(image_path, size=300):
         return None
 
 
+def _background_build_offline_previews(payload):
+    """Generate a small durable preview batch, then yield the worker queue."""
+    root_id = str(payload.get('root_id') or '').strip()
+    offset = max(0, int(payload.get('offset') or 0))
+    if not root_id:
+        return {'ok': False, 'error': 'missing root_id'}
+    snap = catalog_root_snapshot(INDEX_DB, root_id, limit=64, offset=offset)
+    if not snap:
+        return {'ok': False, 'error': 'library root missing'}
+    built = 0
+    skipped = 0
+    for item in snap.get('items') or []:
+        if TASK_MANAGER.foreground_busy():
+            time.sleep(0.01)
+        if str(item.get('state') or '') != 'present':
+            skipped += 1
+            continue
+        media_id = str(item.get('media_id') or '')
+        if not media_id:
+            skipped += 1
+            continue
+        durable = OFFLINE_PREVIEW_DIR / f"{media_id}.jpg"
+        if durable.is_file():
+            skipped += 1
+            continue
+        candidate = str(item.get('current_path') or '')
+        if not candidate or not Path(candidate).is_file():
+            skipped += 1
+            continue
+        made = make_thumb_file(candidate, size=360)
+        if made and Path(made).is_file():
+            built += 1
+        else:
+            skipped += 1
+
+    next_offset = offset + len(snap.get('items') or [])
+    if snap.get('has_more') and next_offset > offset:
+        try:
+            TASK_MANAGER.enqueue(
+                'build_offline_previews',
+                {'root_id': root_id, 'offset': next_offset},
+                priority=90,
+                idempotency_key=f"offline_previews:{root_id}:{next_offset}",
+            )
+        except Exception:
+            logger.debug("offline preview continuation queue failed", exc_info=True)
+    return {
+        'ok': True,
+        'root_id': root_id,
+        'offset': offset,
+        'built': built,
+        'skipped': skipped,
+        'has_more': bool(snap.get('has_more')),
+    }
+
+
+TASK_MANAGER.register('build_offline_previews', _background_build_offline_previews)
+
+
 def thumb_url(image_path):
     # The &v tag busts the BROWSER's HTTP cache when thumbnail logic changes
     # (v3 = high-resolution source fingerprint + EXIF orientation). Without
@@ -2392,6 +2451,15 @@ def _shared_list_images(folder, recursive=True, max_age=2.0):
             finish_catalog_scan(
                 INDEX_DB, scan_session, full_scan=bool(recursive)
             )
+            try:
+                TASK_MANAGER.enqueue(
+                    'build_offline_previews',
+                    {'root_id': scan_session['root_id'], 'offset': 0},
+                    priority=90,
+                    idempotency_key=f"offline_previews:{scan_session['root_id']}:0",
+                )
+            except Exception:
+                logger.debug("offline preview queue skipped", exc_info=True)
     except Exception as exc:
         if scan_session is not None:
             abort_catalog_scan(INDEX_DB, scan_session, str(exc))
