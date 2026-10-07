@@ -34,6 +34,23 @@ jobs:
           "installer=PhotoCurator-Setup-v$version.exe" >> $env:GITHUB_OUTPUT
           Write-Host "Resolved PhotoCurator version: $version"
 
+      - name: Verify README latest installer link
+        shell: powershell
+        run: |
+          $version = "${{ steps.release_meta.outputs.version }}"
+          $installer = "${{ steps.release_meta.outputs.installer }}"
+          $readme = Get-Content "README.md" -Raw
+          $marker = "<!-- LATEST_RELEASE_START -->"
+          $expected = "https://github.com/${{ github.repository }}/releases/download/v$version/$installer"
+          $markerPos = $readme.IndexOf($marker)
+          if ($markerPos -lt 0 -or $markerPos -gt 1200) {
+            throw "README latest-release block must stay near the top"
+          }
+          if (-not $readme.Contains($expected)) {
+            throw "README latest EXE link is stale or missing. Expected: $expected"
+          }
+          Write-Host "README latest installer link OK: $expected"
+
       - name: Verify release tag matches source version
         if: startsWith(github.ref, 'refs/tags/')
         shell: powershell
