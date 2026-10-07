@@ -3415,65 +3415,106 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   body.sidebar-collapsed .sidebar{width:66px!important;flex-basis:66px!important;padding-left:7px;padding-right:7px}body.sidebar-collapsed .source-browser{display:none}body.sidebar-collapsed .sidebar-bottom{grid-template-columns:1fr}body.sidebar-collapsed .sidebar-bottom .nav-label{display:none}body.sidebar-collapsed .sidebar-collapse{font-size:0}body.sidebar-collapsed .sidebar-collapse::after{content:'⇥';font-size:17px}
   @media(max-width:1050px){.inspector{width:270px;flex-basis:270px}.sidebar{width:225px;flex-basis:225px}.top-source{max-width:34vw}.workspace-heading span{max-width:420px}}
   @media(max-width:820px){body{grid-template-rows:54px minmax(0,1fr) 36px}.viewport{height:auto!important;flex-direction:row}.inspector{display:none}.sidebar{width:210px;flex-basis:210px}.top-source{display:none}.workspace-heading span{display:none}.main{padding:10px}.gallery,.folder-grid,.dedup-choices{grid-template-columns:repeat(auto-fill,minmax(var(--thumb-size),1fr))}}
+
+  /* v1.5.3 native-window workspace: one sidebar + one temporary drawer */
+  body{height:100vh;height:100dvh;display:grid!important;grid-template-rows:52px minmax(0,1fr) 34px!important;overflow:hidden!important;background:
+    radial-gradient(circle at 18% 8%,rgba(125,211,252,.16),transparent 34%),
+    radial-gradient(circle at 88% 12%,rgba(196,181,253,.18),transparent 34%),
+    linear-gradient(135deg,#f7fbff 0%,#fbf8ff 100%)!important}
+  .appbar{height:52px;display:flex;align-items:center;gap:12px;padding:0 12px;border-bottom:1px solid rgba(128,145,195,.16);background:rgba(242,247,255,.86);backdrop-filter:blur(22px) saturate(150%);z-index:60}
+  .appbar .brand{min-width:155px;display:flex;align-items:center;gap:8px}.appbar .brand-mark{width:30px;height:30px;border-radius:9px;display:grid;place-items:center;background:linear-gradient(145deg,#8bc5ff,#9686ef);color:#fff;font-weight:900;box-shadow:0 5px 14px rgba(83,104,196,.18)}.appbar .brand-copy{display:flex;flex-direction:column;line-height:1.08}.appbar .brand-copy b{font-size:13px}.appbar .brand-copy small{font-size:9px;color:var(--muted);margin-top:2px}
+  .workspace-tabs{display:flex;align-items:center;gap:4px;padding:3px;border:1px solid rgba(124,139,192,.16);border-radius:11px;background:rgba(255,255,255,.55)}
+  .workspace-tabs .step{min-width:auto;height:34px;padding:0 12px;border:0;border-radius:8px;background:transparent;color:#64748b;font-size:11px;font-weight:800;display:flex;align-items:center;gap:6px;cursor:pointer}
+  .workspace-tabs .step.active{background:#fff;color:#4861cf;box-shadow:0 3px 10px rgba(75,91,160,.11)}
+  .appbar-spacer{flex:1;min-width:12px}
+  .source-pill{min-width:190px;max-width:330px;height:38px;display:flex;align-items:center;gap:8px;padding:0 10px;border:1px solid rgba(124,139,192,.16);border-radius:11px;background:rgba(255,255,255,.58)}
+  .source-pill-copy{display:flex;flex-direction:column;min-width:0;line-height:1.08}.source-pill-copy b,.source-pill-copy small{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.source-pill-copy b{font-size:10px}.source-pill-copy small{font-size:9px;color:var(--muted);margin-top:2px}
+  .appbar-actions{display:flex;align-items:center;gap:6px}.appbar-btn{height:36px;padding:0 12px;border:1px solid rgba(124,139,192,.18);border-radius:10px;background:rgba(255,255,255,.68);color:#48536b;font-size:10px;font-weight:800;cursor:pointer}.appbar-btn:hover{border-color:#7b8fe4;background:#fff}.appbar-btn.primary{min-width:108px;background:linear-gradient(135deg,#5878ee,#6f63df);color:#fff;border-color:transparent;box-shadow:0 6px 16px rgba(76,93,210,.18)}.appbar-btn.primary:disabled{opacity:.38;box-shadow:none}.appbar-btn.icon-btn{width:36px;padding:0;font-size:15px}
+  .workspace-shell{min-height:0;display:flex;overflow:hidden!important}
+  .library-sidebar{width:224px;flex:0 0 224px;display:flex;flex-direction:column;min-height:0;padding:12px 10px 9px;border-right:1px solid rgba(124,139,192,.16);background:rgba(248,251,255,.72);backdrop-filter:blur(20px)}
+  .library-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}.library-head>div{display:flex;flex-direction:column}.library-head b{font-size:12px}.library-head small{font-size:9px;color:var(--muted);margin-top:1px}.library-head .source-add{height:30px;padding:0 9px}
+  .source-path-input{height:34px!important;margin-bottom:8px!important;border-radius:9px!important;font-size:10px!important}
+  .source-browser{flex:1!important;min-height:0;overflow-y:auto;margin:0!important;padding:0 1px 8px!important}.library-footer{padding-top:8px;border-top:1px solid rgba(124,139,192,.14)}.library-footer .sidebar-collapse{width:100%;height:32px;border:1px solid rgba(124,139,192,.16);border-radius:9px;background:rgba(255,255,255,.52);color:var(--muted);font-size:10px;font-weight:700;cursor:pointer}
+  .main{flex:1;min-width:0;min-height:0;padding:14px 15px 10px!important;overflow-y:auto!important;background:transparent!important}
+  .content-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}.content-title{min-width:0}.content-title b{font-size:18px}.content-title span{display:block;margin-top:2px;color:var(--muted);font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:760px}.workspace-actions{display:flex;align-items:center;gap:6px;flex:0 0 auto}
+  .content-toolbar{display:flex;align-items:center;justify-content:space-between;gap:8px}.filter-bar{flex-wrap:nowrap!important;overflow-x:auto}.result-tools{margin:0!important}
+  .gallery{min-height:calc(100% - 88px)}
+  .empty-start{min-height:420px;display:flex!important;flex-direction:column;align-items:center;justify-content:center;text-align:center}.empty-start .icon{font-size:42px}.empty-start .title{font-size:17px;font-weight:800;color:#39445a}.empty-start p{max-width:520px;margin:8px auto 16px;color:var(--muted);font-size:11px;line-height:1.6}.empty-add-source{height:36px;padding:0 14px;border:0;border-radius:10px;background:#5b72df;color:white;font-weight:800;cursor:pointer}
+  .inspector-drawer{position:fixed!important;right:10px!important;top:62px!important;bottom:44px!important;width:320px!important;z-index:90!important;display:flex!important;flex-direction:column!important;background:rgba(250,252,255,.96)!important;border:1px solid rgba(124,139,192,.18)!important;border-radius:16px!important;box-shadow:0 20px 54px rgba(54,65,115,.20)!important;backdrop-filter:blur(24px) saturate(150%)!important;transform:translateX(calc(100% + 24px));opacity:0;pointer-events:none;transition:transform .18s ease,opacity .18s ease}
+  body.inspector-open .inspector-drawer{transform:translateX(0);opacity:1;pointer-events:auto}.inspector-head{padding:12px!important}.inspector-scroll{padding:10px!important}.drawer-scrim{position:fixed;inset:52px 0 34px 0;z-index:80;background:rgba(25,33,56,.10);backdrop-filter:blur(1px);opacity:0;pointer-events:none;transition:opacity .18s ease}body.inspector-open .drawer-scrim{opacity:1;pointer-events:auto}
+  .statusbar{height:34px!important;padding:0 10px 0 12px!important;z-index:70!important}
+  body.sidebar-collapsed .library-sidebar{width:58px!important;flex-basis:58px!important;padding-left:7px!important;padding-right:7px!important}body.sidebar-collapsed .library-head>div,body.sidebar-collapsed .library-head .source-add,body.sidebar-collapsed .source-path-input,body.sidebar-collapsed .source-browser{display:none!important}body.sidebar-collapsed .library-head{height:28px;margin:0}body.sidebar-collapsed .library-footer{margin-top:auto}body.sidebar-collapsed .sidebar-collapse{font-size:0}body.sidebar-collapsed .sidebar-collapse::after{content:'⇥';font-size:16px}
+  .window-controls,.pywebview-drag-region{display:none!important}
+  @media(max-width:1050px){.source-pill{max-width:220px;min-width:150px}.workspace-tabs .step{padding:0 9px}.appbar .brand{min-width:130px}.library-sidebar{width:205px;flex-basis:205px}}
+  @media(max-width:900px){.source-pill{display:none}.appbar .brand-copy small{display:none}.content-title span{display:none}.library-sidebar{width:190px;flex-basis:190px}}
 </style></head><body>
-<div class="top pywebview-drag-region">
+<header class="appbar">
   <div class="brand">
     <span class="brand-mark">C</span>
-    <span class="brand-copy"><b>PhotoCurator</b><small>照片整理工作区 · v{{ app_version }}</small></span>
+    <span class="brand-copy"><b>PhotoCurator</b><small>v{{ app_version }}</small></span>
   </div>
-  <div class="top-source" id="topSource">
-    <span class="source-dot offline" id="topSourceDot"></span>
-    <span class="top-source-copy"><b id="topSourceName">未选择数据源</b><small id="topSourcePath">添加硬盘、U盘或照片文件夹后开始</small></span>
-  </div>
-  <div class="top-right">
-    <button class="top-primary" id="startBtn">▶ 开始分析</button>
-    <button class="title-action" id="taskToggle" title="任务中心" aria-label="任务中心"><span>◉</span><span>任务</span></button>
-    <div class="window-controls">
-      <button id="winMin" title="最小化">—</button>
-      <button id="winMax" title="最大化/还原">□</button>
-      <button id="winClose" title="关闭到后台">×</button>
-    </div>
-  </div>
-</div>
 
-<div class="viewport">
-  <aside class="sidebar" id="sidebar">
-    <nav class="sidebar-nav" aria-label="核心照片整理">
-      <button class="step active" data-step="cull"><span class="nav-icon">◐</span><span class="nav-label">模糊废片</span></button>
-      <button class="step" data-step="dedup"><span class="nav-icon">▱</span><span class="nav-label">相似照片</span></button>
-      <button class="step" data-step="trash"><span class="nav-icon">♲</span><span class="nav-label">回收站</span></button>
-    </nav>
+  <nav class="workspace-tabs" aria-label="照片整理工作区">
+    <button class="step active" data-step="cull"><span class="nav-icon">◐</span><span class="nav-label">模糊废片</span></button>
+    <button class="step" data-step="dedup"><span class="nav-icon">▱</span><span class="nav-label">相似照片</span></button>
+    <button class="step" data-step="trash"><span class="nav-icon">♲</span><span class="nav-label">回收站</span></button>
+  </nav>
+
+  <div class="appbar-spacer"></div>
+
+  <div class="source-pill" id="topSource">
+    <span class="source-dot offline" id="topSourceDot"></span>
+    <span class="source-pill-copy"><b id="topSourceName">未选择数据源</b><small id="topSourcePath">添加照片来源后开始</small></span>
+  </div>
+
+  <div class="appbar-actions">
+    <button class="appbar-btn primary" id="startBtn">▶ 开始分析</button>
+    <button class="appbar-btn" id="settingsQuick">筛选</button>
+    <button class="appbar-btn" id="taskToggle">任务</button>
+    <button class="appbar-btn icon-btn" id="toolboxOpen" title="工具箱">⌘</button>
+  </div>
+</header>
+
+<div class="workspace-shell">
+  <aside class="library-sidebar" id="sidebar">
+    <div class="library-head">
+      <div><b>数据源</b><small>硬盘 / U盘 / 照片文件夹</small></div>
+      <button class="source-add" id="browseBtn">＋ 添加</button>
+    </div>
+
+    <input type="text" id="folderInput" class="source-path-input" placeholder="选择或粘贴照片文件夹路径">
 
     <div class="source-browser">
-      <div class="section-head"><b>数据源</b><button class="source-add" id="browseBtn">＋ 添加</button></div>
-      <input type="text" id="folderInput" class="source-path-input" placeholder="选择或粘贴照片文件夹路径">
       <div id="sourcesList" class="sources-list"></div>
       <div class="section-subhead">示例与最近</div>
       <div id="shortcuts"></div>
     </div>
 
-    <div class="sidebar-bottom">
-      <button class="toolbox-open" id="toolboxOpen"><span class="nav-icon">⌘</span><span class="nav-label">工具箱</span></button>
-      <button class="sidebar-collapse" id="sidebarCollapse" title="收起/展开数据源栏">⇤ 收起</button>
+    <div class="library-footer">
+      <button class="sidebar-collapse" id="sidebarCollapse" title="收起/展开数据源栏">⇤ 收起数据源</button>
     </div>
   </aside>
 
   <main class="main">
-    <div class="workspace-heading">
-      <div><b id="workspaceTitle">模糊废片</b><span id="workspaceHint">快速复核模糊与失焦照片，后台分析不会打断当前操作。</span></div>
+    <section class="content-head">
+      <div class="content-title">
+        <b id="workspaceTitle">模糊废片</b>
+        <span id="workspaceHint">快速复核模糊与失焦照片，后台分析不会打断当前操作。</span>
+      </div>
       <div class="workspace-actions">
         <button class="workspace-action" id="exportBtn" style="display:none">⬇ 导出</button>
-        <button class="workspace-action" id="exportPbgBtn" style="display:none">📱 导出壁纸</button>
+        <button class="workspace-action" id="exportPbgBtn" style="display:none">📱 壁纸</button>
         <button class="workspace-action danger-soft" id="moveBlurryBtn" style="display:none">🗑 移入回收站</button>
         <button class="workspace-action" id="dedupApplyBtn" style="display:none!important" aria-hidden="true">旧版批量处理</button>
-        <button class="workspace-action" id="settingsQuick">检查器</button>
       </div>
-    </div>
+    </section>
 
     <div class="progress-wrap" id="progressWrap">
       <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
-      <div class="progress-line"><div class="progress-text" id="progressText">…</div>
-        <button class="chip new-results" id="loadNewResults" style="display:none">加载新结果</button></div>
+      <div class="progress-line">
+        <div class="progress-text" id="progressText">…</div>
+        <button class="chip new-results" id="loadNewResults" style="display:none">加载新结果</button>
+      </div>
     </div>
 
     <div class="content-toolbar">
@@ -3491,50 +3532,61 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
     </div>
 
     <div class="pager" id="pager" style="display:none!important"></div>
-    <div class="gallery" id="gallery"><div class="empty"><div class="icon">🎞️</div><div>从左侧选择数据源后点击顶部“开始分析”</div></div></div>
-  </main>
-
-  <aside class="inspector" id="inspector">
-    <div class="inspector-head"><div><b>检查器</b><span>当前任务的设置与状态</span></div><button id="inspectorClose" title="收起检查器">×</button></div>
-    <div class="inspector-scroll">
-      <details class="settings-fold" id="settingsDetails" open>
-        <summary>筛选设置</summary>
-        <div id="settingsPanel" style="margin-top:10px"></div>
-      </details>
-
-      <details class="stats-fold" open>
-        <summary>当前结果</summary>
-        <div class="panel-box" style="margin-top:8px">
-          <div class="stat-row" data-steps="cull dedup rank"><span>照片数量</span><span class="v" id="sImages">0</span></div>
-          <div class="stat-row" data-steps="cull"><span>清晰</span><span class="v" id="sSharp">0</span></div>
-          <div class="stat-row" data-steps="cull"><span>轻微软</span><span class="v" id="sSoft" style="color:var(--warn)">0</span></div>
-          <div class="stat-row" data-steps="cull"><span>模糊</span><span class="v" id="sBlurry">0</span></div>
-          <div class="stat-row" data-steps="dedup"><span>相似分组</span><span class="v" id="sGroups">0</span></div>
-          <div class="stat-row" data-steps="cull dedup rank trash"><span>当前显示</span><span class="v" id="sShowing">0</span></div>
-          <div class="stat-row" data-steps="trash"><span>软件回收站</span><span class="v" id="sTrash">0</span></div>
-          <div id="removedBox" style="display:none">已移除 <b id="removedN">0</b> 张 · <a id="restoreAll">全部恢复</a></div>
-        </div>
-      </details>
-
-      <details class="data-fold" open>
-        <summary>数据与存储</summary>
-        <div class="data-summary" id="dataSummary">
-          <div><span>数据库</span><b id="dbUsage">—</b></div>
-          <div><span>图库离线预览</span><b id="catalogPreviewUsage">—</b></div>
-          <div><span>临时预览缓存</span><b id="previewUsage">—</b></div>
-          <div><span>相似特征</span><b id="featureUsage">—</b></div>
-          <div><span>日志</span><b id="logUsage">—</b></div>
-          <div class="storage-actions">
-            <button data-clean="previews">清理预览缓存</button>
-            <button data-clean="logs">清理旧日志</button>
-            <button data-clean="features">重建相似特征</button>
-          </div>
-          <small id="dataRootText">正在读取数据目录…</small>
-        </div>
-      </details>
+    <div class="gallery" id="gallery">
+      <div class="empty empty-start">
+        <div class="icon">🗂️</div>
+        <div class="title">选择一个数据源开始整理照片</div>
+        <p>左侧添加硬盘、U盘或照片文件夹；已建立索引的数据源即使断开也会保留历史记录。</p>
+        <button class="empty-add-source" id="emptyAddSource">＋ 添加数据源</button>
+      </div>
     </div>
-  </aside>
+  </main>
 </div>
+
+<aside class="inspector-drawer" id="inspector" aria-hidden="true">
+  <div class="inspector-head">
+    <div><b>筛选与数据</b><span>只在需要时打开，不占用照片工作区</span></div>
+    <button id="inspectorClose" title="关闭">×</button>
+  </div>
+  <div class="inspector-scroll">
+    <details class="settings-fold" id="settingsDetails" open>
+      <summary>筛选设置</summary>
+      <div id="settingsPanel" style="margin-top:10px"></div>
+    </details>
+
+    <details class="stats-fold" open>
+      <summary>当前结果</summary>
+      <div class="panel-box" style="margin-top:8px">
+        <div class="stat-row" data-steps="cull dedup rank"><span>照片数量</span><span class="v" id="sImages">0</span></div>
+        <div class="stat-row" data-steps="cull"><span>清晰</span><span class="v" id="sSharp">0</span></div>
+        <div class="stat-row" data-steps="cull"><span>轻微软</span><span class="v" id="sSoft" style="color:var(--warn)">0</span></div>
+        <div class="stat-row" data-steps="cull"><span>模糊</span><span class="v" id="sBlurry">0</span></div>
+        <div class="stat-row" data-steps="dedup"><span>相似分组</span><span class="v" id="sGroups">0</span></div>
+        <div class="stat-row" data-steps="cull dedup rank trash"><span>当前显示</span><span class="v" id="sShowing">0</span></div>
+        <div class="stat-row" data-steps="trash"><span>软件回收站</span><span class="v" id="sTrash">0</span></div>
+        <div id="removedBox" style="display:none">已移除 <b id="removedN">0</b> 张 · <a id="restoreAll">全部恢复</a></div>
+      </div>
+    </details>
+
+    <details class="data-fold" open>
+      <summary>数据与存储</summary>
+      <div class="data-summary" id="dataSummary">
+        <div><span>数据库</span><b id="dbUsage">—</b></div>
+        <div><span>图库离线预览</span><b id="catalogPreviewUsage">—</b></div>
+        <div><span>临时预览缓存</span><b id="previewUsage">—</b></div>
+        <div><span>相似特征</span><b id="featureUsage">—</b></div>
+        <div><span>日志</span><b id="logUsage">—</b></div>
+        <div class="storage-actions">
+          <button data-clean="previews">清理预览缓存</button>
+          <button data-clean="logs">清理旧日志</button>
+          <button data-clean="features">重建相似特征</button>
+        </div>
+        <small id="dataRootText">正在读取数据目录…</small>
+      </div>
+    </details>
+  </div>
+</aside>
+<div class="drawer-scrim" id="drawerScrim"></div>
 
 <footer class="statusbar">
   <div class="status-left">
@@ -3879,12 +3931,6 @@ document.querySelector('.main').addEventListener('wheel',e=>{
   applyThumbSize(thumbSize+(e.deltaY<0?20:-20));
 },{passive:false});
 
-function nativeWindow(action){if(window.pywebview&&window.pywebview.api&&window.pywebview.api.window_action){window.pywebview.api.window_action(action).catch(()=>{});}}
-document.getElementById('winMin').onclick=()=>nativeWindow('minimize');
-document.getElementById('winMax').onclick=()=>nativeWindow('toggle_maximize');
-document.getElementById('winClose').onclick=()=>nativeWindow('close');
-setTimeout(()=>{if(!(window.pywebview&&window.pywebview.api))document.querySelector('.window-controls').style.display='none';},900);
-
 const WORKSPACE_COPY={
   cull:['模糊废片','快速复核模糊与失焦照片，后台分析不会打断当前操作。'],
   dedup:['相似照片','删除不需要的重复照片，完成的分组会保留复核记录。'],
@@ -3904,20 +3950,24 @@ function setSidebarCollapsed(on){
 }
 try{setSidebarCollapsed(localStorage.getItem('pc-sidebar-collapsed')==='1');}catch(_){}
 sidebarCollapse.onclick=()=>setSidebarCollapsed(!document.body.classList.contains('sidebar-collapsed'));
-function setInspectorCollapsed(on){
-  document.body.classList.toggle('inspector-collapsed',!!on);
-  try{localStorage.setItem('pc-inspector-collapsed',on?'1':'0');}catch(_){}
+function setInspectorOpen(on){
+  document.body.classList.toggle('inspector-open',!!on);
+  document.getElementById('inspector').setAttribute('aria-hidden',on?'false':'true');
 }
-try{setInspectorCollapsed(localStorage.getItem('pc-inspector-collapsed')==='1');}catch(_){}
+setInspectorOpen(false);
 document.getElementById('settingsQuick').onclick=()=>{
-  const next=!document.body.classList.contains('inspector-collapsed');
-  setInspectorCollapsed(next);
-  if(!next){
+  const next=!document.body.classList.contains('inspector-open');
+  setInspectorOpen(next);
+  if(next){
     const d=document.getElementById('settingsDetails');d.open=true;
     loadStorageSummary(true);
   }
 };
-document.getElementById('inspectorClose').onclick=()=>setInspectorCollapsed(true);
+document.getElementById('inspectorClose').onclick=()=>setInspectorOpen(false);
+document.getElementById('drawerScrim').onclick=()=>setInspectorOpen(false);
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape'&&document.body.classList.contains('inspector-open'))setInspectorOpen(false);
+});
 const toolboxPanel=document.getElementById('toolboxPanel');
 document.getElementById('toolboxOpen').onclick=()=>toolboxPanel.classList.add('open');
 document.getElementById('toolboxClose').onclick=()=>toolboxPanel.classList.remove('open');
@@ -4508,6 +4558,7 @@ function loadShortcuts(){
   }).catch(()=>{});
 }
 loadShortcuts();
+document.getElementById('emptyAddSource').onclick=()=>document.getElementById('browseBtn').click();
 setInterval(()=>{if(!document.hidden&&!isRunning&&!coreRunning)loadShortcuts();},30000);
 document.getElementById('folderInput').onchange=e=>selectFolderValue(e.target.value);
 document.getElementById('folderInput').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();selectFolderValue(e.target.value);}};
