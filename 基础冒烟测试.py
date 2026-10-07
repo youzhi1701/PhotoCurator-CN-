@@ -3,6 +3,7 @@
 """照片筛选基础冒烟测试：中文路径、特殊字符、图像读取和安全路径。"""
 
 import os
+import sqlite3
 import sys
 import tempfile
 import time
@@ -288,6 +289,49 @@ def main():
             for x in trash_rows
         ), f"待删除相似照片没有进入软件回收站：{trash_rows}")
 
+        # Multi-photo groups are not implicitly complete merely because the
+        # user removed one item. "完成本组" explicitly accepts all active members
+        # and persists the reviewed group state.
+        complete_dir = root / "完成组选优测试"
+        complete_dir.mkdir(parents=True, exist_ok=True)
+        cg1, cg2, cg3 = [complete_dir / n for n in ("1.jpg", "2.jpg", "3.jpg")]
+        for p in (cg1, cg2, cg3):
+            Image.new("RGB", (44, 34), "white").save(p)
+        group_key = "smoke-complete-group"
+        photo_curator.state["dedup"]["groups_data"] = [{
+            "group_id": 91, "group_key": group_key, "count": 3,
+            "status": "pending", "selected_paths": [str(cg1)],
+            "members": [
+                {"path": str(cg1), "original_path": str(cg1), "selected": True, "lifecycle": "normal"},
+                {"path": str(cg2), "original_path": str(cg2), "selected": False, "lifecycle": "normal"},
+                {"path": str(cg3), "original_path": str(cg3), "selected": False, "lifecycle": "normal"},
+            ],
+        }]
+        photo_curator.state["dedup"]["photos"] = photo_curator.state["dedup"]["groups_data"]
+        photo_curator._similarity_group_state(group_key, root, [cg1, cg2, cg3])
+        completed = client.post(
+            "/api/dedup-complete", json={"group_id": 91},
+            headers={"Host": f"127.0.0.1:{photo_curator.PORT}"},
+        )
+        assert_true(completed.status_code == 200, f"完成相似组失败：{completed.get_json()}")
+        completed_payload = completed.get_json()
+        assert_true(completed_payload["status"] == "reviewed"
+                    and completed_payload["kept"] == 3,
+                    f"完成相似组结果不正确：{completed_payload}")
+        with sqlite3.connect(str(photo_curator.INDEX_DB)) as db:
+            persisted_status = db.execute(
+                "SELECT status FROM similarity_group_state WHERE group_key=?",
+                (group_key,)
+            ).fetchone()
+            persisted_members = db.execute(
+                "SELECT COUNT(*),SUM(selected) FROM similarity_group_member WHERE group_key=?",
+                (group_key,)
+            ).fetchone()
+        assert_true(persisted_status and persisted_status[0] == "reviewed",
+                    f"完成相似组状态没有持久化：{persisted_status}")
+        assert_true(persisted_members == (3, 3),
+                    f"完成相似组成员选择没有持久化：{persisted_members}")
+
         # Custom output is an explicit user-selected root and must remain
         # accessible to thumbnails / previews after a reviewed file is moved.
         custom_root = Path(td) / "自定义筛选结果"
@@ -338,6 +382,21 @@ def main():
                     f"软件回收站目录错误：{trash_row}")
         assert_true(Path(trash_row["path"]) not in photo_curator.list_images(root, recursive=True),
                     "软件回收站中的照片不应重新进入递归扫描")
+
+        manifest = root / photo_curator.SOFTWARE_TRASH_DIR / photo_curator.TRASH_MANIFEST_NAME
+        assert_true(manifest.is_file(), "软件回收站没有生成图库内恢复清单")
+        # Simulate reinstall/config loss: remove only the central trash row,
+        # then confirm _trash_rows() re-imports it from the library sidecar.
+        with sqlite3.connect(str(photo_curator.INDEX_DB)) as db:
+            db.execute("DELETE FROM software_trash WHERE id=?", (trash_id,))
+            db.commit()
+        recovered_rows = photo_curator._trash_rows(root)
+        recovered = next((x for x in recovered_rows
+                          if os.path.normcase(os.path.realpath(str(x["original_path"])))
+                          == os.path.normcase(os.path.realpath(str(trash_src)))), None)
+        assert_true(recovered is not None,
+                    "中央回收站记录丢失后没有从图库恢复清单重新导入")
+        trash_id = recovered["id"]
 
         trash_list = client.get(
             "/api/trash",
