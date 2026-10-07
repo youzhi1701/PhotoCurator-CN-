@@ -4227,7 +4227,7 @@ function dedupMemberState(group,p){
   const life=p.lifecycle||'normal';
   if(life==='pending_trash')return ['待移入回收站','state-pending','pending-delete'];
   if(life==='pending_permanent_delete')return ['待彻底删除','state-pending','pending-delete'];
-  if(life==='trashed')return ['已移入回收站','state-trash','trashed'];
+  if(life==='trashed')return ['↩ 已删除 · 恢复','state-trash','trashed'];
   if(life==='permanently_deleted')return ['已彻底删除','state-trash','trashed'];
   if(group.status==='reviewed'&&p.selected)return ['✓ 保留','','selected'];
   if(p.selected)return ['推荐保留','',''];
@@ -4276,7 +4276,10 @@ function renderDedupGroups(groups){
         const [label,badgeClass,cardState]=dedupMemberState(group,p);
         const selectedClass=(group.status==='reviewed'&&p.selected)?' selected':'';
         html+='<div class="dedup-choice'+selectedClass+(cardState?' '+cardState:'')+'" data-group="'+group.group_id+'" data-path="'+escHtml(p.path)+'">';
-        html+='<button class="dedup-recommend '+badgeClass+'" data-group="'+group.group_id+'" data-path="'+escHtml(p.path)+'" title="切换保留状态">'+label+'</button>';
+        const life=p.lifecycle||'normal';
+        const disabled=['pending_trash','pending_permanent_delete','permanently_deleted','pending_restore'].includes(life)?' disabled':'';
+        const title=life==='trashed'?'恢复这张照片':(disabled?'后台处理中':'切换保留状态');
+        html+='<button class="dedup-recommend '+badgeClass+'" data-group="'+group.group_id+'" data-path="'+escHtml(p.path)+'" data-life="'+escHtml(life)+'" data-trash-id="'+escHtml(p.trash_id||'')+'" title="'+title+'"'+disabled+'>'+label+'</button>';
         if(p.thumb)html+='<img src="'+p.thumb+'" loading="lazy" decoding="async">';
         else html+='<div style="aspect-ratio:3/2;display:grid;place-items:center;background:var(--panel2);color:var(--muted)">文件已删除</div>';
         html+='<div class="dedup-choice-meta"><div><div class="dedup-choice-name">'+escHtml(p.name)+'</div>';
@@ -4517,6 +4520,22 @@ function waitTaskAndSync(taskId,doneText){
   };
   setTimeout(tick,350);
 }
+async function restoreFromReviewCard(trashId){
+  if(!trashId)return;
+  try{
+    const r=await fetch('/api/trash-restore',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:Number(trashId)})});
+    const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));
+    const markPending=row=>{if(row&&Number(row.trash_id)===Number(trashId))row.lifecycle='pending_restore';};
+    if(currentStep==='cull'){
+      (photos||[]).forEach(markPending);renderCullStep(photos);
+    }else if(currentStep==='dedup'){
+      (photos||[]).forEach(g=>(g.members||[]).forEach(markPending));renderDedupGroups(photos);
+    }
+    toast('已提交后台恢复','good');
+    waitTaskAndSync(d.task_id,'照片已恢复');
+  }catch(err){toast('恢复失败：'+(err.message||'未知错误'),'bad');}
+}
+
 function trashRestoreOne(id,fromLightbox=false){
   fetch('/api/trash-restore',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})})
     .then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;})
@@ -4591,7 +4610,11 @@ function cullCardHtml(p,idx){const path=escHtml(p.path);
   const moveSel=!deleted&&p.tier==='blurry'
     ?`<button class="move-select${moveOn?'':' off'}" data-path="${path}" data-selected="${moveOn?'1':'0'}" title="${moveOn?'已加入本次删除，点击保留在原位置':'保留在原位置，点击重新加入本次删除'}">${moveOn?'✓':'□'}</button>`
     :'';
-  const stateBadge=life?`<span class="lifecycle-badge ${life[2]}">${life[0]}</span>`:'';
+  const stateBadge=life
+    ?((p.lifecycle==='trashed'&&p.trash_id)
+      ?`<button class="lifecycle-badge trash restore-inline" data-trash-id="${p.trash_id}" title="恢复这张照片">↩ 已删除 · 恢复</button>`
+      :`<span class="lifecycle-badge ${life[2]}">${life[0]}</span>`)
+    :'';
   const tierBadge=!deleted
     ?`<button class="badge ${p.badgeType} badge-tier" data-path="${path}" data-tier="${p.tier}" title="点击切换：清晰 → 轻微软 → 模糊">⇄ ${p.badge}</button>`
     :'';
@@ -4823,9 +4846,15 @@ function toggleStatus(path,btn,cb){
 document.getElementById('gallery').addEventListener('click',e=>{
   const tr=e.target.closest('.trash-restore-btn');if(tr){e.stopPropagation();trashRestoreOne(Number(tr.dataset.id));return;}
   const tp=e.target.closest('.trash-purge-btn');if(tp){e.stopPropagation();trashPurgeOne(Number(tp.dataset.id));return;}
+  const ri=e.target.closest('.restore-inline');if(ri){e.stopPropagation();restoreFromReviewCard(Number(ri.dataset.trashId));return;}
   const db=e.target.closest('.delete-btn');if(db){e.stopPropagation();deletePhoto(db.dataset.step||currentStep,db.dataset.path);return;}
   const keep=e.target.closest('.dedup-recommend');
-  if(keep&&currentStep==='dedup'){e.stopPropagation();selectDedupPhoto(keep.dataset.group,keep.dataset.path);return;}
+  if(keep&&currentStep==='dedup'){
+    e.stopPropagation();
+    if(keep.dataset.life==='trashed'){restoreFromReviewCard(Number(keep.dataset.trashId));return;}
+    if(['pending_trash','pending_permanent_delete','permanently_deleted','pending_restore'].includes(keep.dataset.life))return;
+    selectDedupPhoto(keep.dataset.group,keep.dataset.path);return;
+  }
   const dc=e.target.closest('.dedup-choice');
   if(dc&&currentStep==='dedup'){
     e.stopPropagation();
@@ -4874,8 +4903,10 @@ function showLb(){
   const rm=document.getElementById('lbRemove'),rs=document.getElementById('lbRestore'),tg=document.getElementById('lbToggle'),ms=document.getElementById('lbMoveSelect'),del=document.getElementById('lbDelete');
   const tr=document.getElementById('lbTrashRestore'),tp=document.getElementById('lbTrashPurge');
   rm.style.display=currentStep==='rank'?'inline-block':'none';
-  del.style.display=['cull','dedup','rank'].includes(currentStep)?'inline-block':'none';
-  tr.style.display=currentStep==='trash'?'inline-block':'none';
+  const life=p.lifecycle||'normal';
+  const inReview=['cull','dedup','rank'].includes(currentStep);
+  del.style.display=(inReview&&!['pending_trash','pending_permanent_delete','trashed','permanently_deleted','pending_restore'].includes(life))?'inline-block':'none';
+  tr.style.display=(currentStep==='trash'||(inReview&&life==='trashed'&&p.trash_id))?'inline-block':'none';
   tp.style.display=currentStep==='trash'?'inline-block':'none';
   rs.style.display=(currentStep==='rank'&&removedCount>0)?'inline-block':'none';
   tg.style.display=currentStep==='cull'?'inline-block':'none';
@@ -4946,8 +4977,7 @@ const MAP_STYLES={light:{{ map_style_light|tojson }},dark:{{ map_style_dark|tojs
 let exMapEl=null,exMap=null,exMapLoading=null,exMapTheme=null,exMapDead=false;
 function hideExMap(){const s=document.getElementById('exMapSlot');
   if(s&&s.closest('.exmap'))s.closest('.exmap').style.display='none';}
-function currentMapStyle(){
-  return document.documentElement.getAttribute('data-theme')==='dark'?'dark':'light';}
+function currentMapStyle(){return 'light';}
 function loadMapLibre(){
   if(window.maplibregl)return Promise.resolve(true);
   if(exMapLoading)return exMapLoading;
@@ -5002,7 +5032,7 @@ function lbRemoveCurrent(){const p=lbList[lbIndex];if(!p)return;
     if(!lbList.length){closeLb();return;}if(lbIndex>=lbList.length)lbIndex=lbList.length-1;showLb();});}
 document.getElementById('lbRemove').onclick=lbRemoveCurrent;
 document.getElementById('lbDelete').onclick=lbDeleteCurrent;
-document.getElementById('lbTrashRestore').onclick=()=>{const p=lbList[lbIndex];if(p)trashRestoreOne(Number(p.id),true);};
+document.getElementById('lbTrashRestore').onclick=()=>{const p=lbList[lbIndex];if(!p)return;if(currentStep==='trash')trashRestoreOne(Number(p.id),true);else restoreFromReviewCard(Number(p.trash_id));};
 document.getElementById('lbTrashPurge').onclick=()=>{const p=lbList[lbIndex];if(p)trashPurgeOne(Number(p.id),true);};
 document.getElementById('lbRestore').onclick=()=>restoreAll(true);
 document.getElementById('lbToggle').onclick=()=>{const p=lbList[lbIndex];if(!p)return;
