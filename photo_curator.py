@@ -1468,51 +1468,93 @@ def _apply_media_lifecycle(original_path, current_path, lifecycle, source_step='
             rank['preview_at'] = 0.0
 
 
+def _restore_group_status_for_member(original_path, status):
+    if status not in ('pending', 'reviewed', 'updated'):
+        return
+    original = os.path.realpath(str(original_path))
+    with _STATE_LOCK:
+        for group in state['dedup'].get('groups_data', []):
+            if any(
+                os.path.realpath(str(m.get('original_path') or m.get('path') or '')) == original
+                for m in group.get('members', [])
+            ):
+                group['status'] = status
+                if group.get('group_key'):
+                    _set_similarity_group_status(group['group_key'], status)
+                    _persist_similarity_group_members(group['group_key'], group.get('members', []))
+                break
+
+
 def _background_move_to_trash(payload):
     original = os.path.realpath(str(payload['path']))
     folder = os.path.realpath(str(payload['folder']))
     source_step = str(payload.get('step') or '')
     target = _safe_image_path(original)
-    if target is None or not Path(target).is_file():
-        row = _media_state_get(original)
-        if row and row.get('state') == 'trashed':
-            return {'ok': True, 'already_done': True, 'path': row.get('current_path')}
-        raise FileNotFoundError("待删除照片已不存在")
-    trash_id, trash_path = _move_to_software_trash(target, folder, source_step)
-    _delete_review_override(original)
-    _apply_media_lifecycle(original, trash_path, 'trashed', source_step, trash_id)
-    return {'ok': True, 'original_path': original, 'trash_path': trash_path,
-            'trash_id': trash_id}
+    try:
+        if target is None or not Path(target).is_file():
+            row = _media_state_get(original)
+            if row and row.get('state') == 'trashed':
+                return {'ok': True, 'already_done': True, 'path': row.get('current_path')}
+            raise FileNotFoundError("待删除照片已不存在")
+        trash_id, trash_path = _move_to_software_trash(target, folder, source_step)
+        _delete_review_override(original)
+        _apply_media_lifecycle(original, trash_path, 'trashed', source_step, trash_id)
+        return {'ok': True, 'original_path': original, 'trash_path': trash_path,
+                'trash_id': trash_id}
+    except Exception:
+        # Foreground uses optimistic pending state; a filesystem failure must
+        # restore the authoritative lifecycle instead of leaving a false delete.
+        if target is not None and Path(target).is_file():
+            _apply_media_lifecycle(
+                original, str(target), str(payload.get('previous_lifecycle') or 'normal'),
+                source_step
+            )
+            _restore_group_status_for_member(original, payload.get('previous_group_status'))
+        raise
 
 
 def _background_permanent_delete(payload):
     path = os.path.realpath(str(payload['path']))
     original = _find_original_for_path(path)
     target = Path(path)
-    if target.is_file():
-        target.unlink()
-    with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=15) as db:
-        db.execute("DELETE FROM software_trash WHERE trash_path=? OR original_path=?",
-                   (path, original))
-        db.commit()
-    _apply_media_lifecycle(original, path, 'permanently_deleted',
-                           str(payload.get('step') or ''))
-    _activity('永久删除', original, path)
-    return {'ok': True, 'original_path': original, 'deleted_path': path}
+    try:
+        if target.is_file():
+            target.unlink()
+        with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=15) as db:
+            db.execute("DELETE FROM software_trash WHERE trash_path=? OR original_path=?",
+                       (path, original))
+            db.commit()
+        _apply_media_lifecycle(original, path, 'permanently_deleted',
+                               str(payload.get('step') or ''))
+        _activity('永久删除', original, path)
+        return {'ok': True, 'original_path': original, 'deleted_path': path}
+    except Exception:
+        if target.is_file():
+            _apply_media_lifecycle(
+                original, path, str(payload.get('previous_lifecycle') or 'normal'),
+                str(payload.get('step') or '')
+            )
+            _restore_group_status_for_member(original, payload.get('previous_group_status'))
+        raise
 
 
 def _background_restore_trash(payload):
     trash_id = int(payload['trash_id'])
     with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=15) as db:
         row = db.execute(
-            "SELECT original_path,source_step FROM software_trash WHERE id=?", (trash_id,)
+            "SELECT original_path,trash_path,source_step FROM software_trash WHERE id=?", (trash_id,)
         ).fetchone()
     if not row:
         raise FileNotFoundError("回收站记录不存在")
-    original, source_step = str(row[0]), str(row[1] or '')
-    restored = _restore_trash_item(trash_id)
-    _apply_media_lifecycle(original, restored, 'normal', source_step)
-    return {'ok': True, 'original_path': original, 'restored_path': restored}
+    original, trash_path, source_step = str(row[0]), str(row[1]), str(row[2] or '')
+    try:
+        restored = _restore_trash_item(trash_id)
+        _apply_media_lifecycle(original, restored, 'normal', source_step)
+        return {'ok': True, 'original_path': original, 'restored_path': restored}
+    except Exception:
+        if Path(trash_path).is_file():
+            _apply_media_lifecycle(original, trash_path, 'trashed', source_step, trash_id)
+        raise
 
 
 def _background_purge_trash(payload):
@@ -1524,9 +1566,14 @@ def _background_purge_trash(payload):
     if not row:
         return {'ok': True, 'already_done': True}
     original, trash_path, source_step = map(str, row)
-    _purge_trash_item(trash_id)
-    _apply_media_lifecycle(original, trash_path, 'permanently_deleted', source_step)
-    return {'ok': True, 'original_path': original, 'deleted_path': trash_path}
+    try:
+        _purge_trash_item(trash_id)
+        _apply_media_lifecycle(original, trash_path, 'permanently_deleted', source_step)
+        return {'ok': True, 'original_path': original, 'deleted_path': trash_path}
+    except Exception:
+        if Path(trash_path).is_file():
+            _apply_media_lifecycle(original, trash_path, 'trashed', source_step, trash_id)
+        raise
 
 
 TASK_MANAGER.register('move_to_trash', _background_move_to_trash)
@@ -5796,6 +5843,17 @@ def api_delete_photo():
         return jsonify({'error': '请先选择有效的照片文件夹'}), 400
 
     original = _find_original_for_path(str(target))
+    previous_state = _media_state_get(original) or {}
+    previous_lifecycle = str(previous_state.get('state') or 'normal')
+    previous_group_status = None
+    if step == 'dedup':
+        for group in state['dedup'].get('groups_data', []):
+            if any(
+                os.path.realpath(str(m.get('original_path') or m.get('path') or '')) == original
+                for m in group.get('members', [])
+            ):
+                previous_group_status = str(group.get('status') or 'pending')
+                break
     lifecycle = 'pending_trash' if mode == 'trash' else 'pending_permanent_delete'
     _apply_media_lifecycle(original, str(target), lifecycle, step)
 
@@ -5803,7 +5861,9 @@ def api_delete_photo():
     priority = 10 if mode == 'trash' else 5
     task_id, created = TASK_MANAGER.enqueue(
         kind,
-        {'path': str(target), 'folder': str(folder), 'step': step},
+        {'path': str(target), 'folder': str(folder), 'step': step,
+         'previous_lifecycle': previous_lifecycle,
+         'previous_group_status': previous_group_status},
         priority=priority,
         idempotency_key=f"{kind}:{original}",
     )
