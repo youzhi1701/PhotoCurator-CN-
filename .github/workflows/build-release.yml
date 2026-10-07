@@ -102,6 +102,29 @@ jobs:
           $p = Start-Process -FilePath "dist\PhotoCurator\PhotoCurator.exe" -ArgumentList "--self-test" -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "Packaged PhotoCurator self-test failed with exit code $($p.ExitCode)" }
 
+      - name: Probe packaged EXE responsiveness for 20 seconds
+        shell: powershell
+        run: |
+          $env:PHOTOCURATOR_PORT = "5014"
+          $env:PHOTOCURATOR_CI_PROBE_SECONDS = "24"
+          $exe = Resolve-Path "dist\PhotoCurator\PhotoCurator.exe"
+          $started = Get-Date
+          $p = Start-Process -FilePath $exe -ArgumentList "--ci-probe" -PassThru
+          try {
+            foreach ($second in @(1, 3, 5, 10, 20)) {
+              $target = $started.AddSeconds($second)
+              while ((Get-Date) -lt $target) { Start-Sleep -Milliseconds 80 }
+              if ($p.HasExited) { throw "PhotoCurator.exe exited before ${second}s (code $($p.ExitCode))" }
+              $resp = Invoke-RestMethod "http://127.0.0.1:5014/api/health" -TimeoutSec 3
+              if (-not $resp.ok -or [string]$resp.version -ne "${{ steps.release_meta.outputs.version }}") {
+                throw "PhotoCurator.exe health mismatch at ${second}s: $($resp | ConvertTo-Json -Compress)"
+              }
+              Write-Host "EXE responsive at ${second}s · version $($resp.version)"
+            }
+          } finally {
+            if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
+          }
+
       - name: Download WebView2 bootstrapper
         shell: powershell
         run: |
