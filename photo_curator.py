@@ -3467,6 +3467,14 @@ const dedupLiveStore=new Map();
 let isRunning=false, runningStep=null, codespacesMode=false;
 let coreRunning=false, corePollTimer=null, coreSnapshots={cull:null,dedup:null};
 let lastRankSig='', lastStep=null, weightTimer=null, removedCount=0, pollFailures=0, largeResultWarned=false;
+
+// Result paging/filter state must exist before the first UI bootstrap call.
+// Keep boot-critical state together here so setupFilterBar() cannot touch
+// a later lexical declaration and abort the rest of the interaction bindings.
+let cullChunkToken=0, cullVisibleTotal=0;
+let dedupChunkToken=0;
+let dedupStatusFilter='pending', dedupVisibleTotal=0;
+let dedupStatusCounts={pending:0,reviewed:0,updated:0};
 // These controls are needed by setupFilterBar() during initial page boot.
 // Define them before the first setupFilterBar() call to avoid TDZ failures
 // that would stop Codespaces shortcut/sample initialization.
@@ -4287,7 +4295,6 @@ function cullRowsForPayload(d){
   return Array.from(cullLiveStore.values());
 }
 
-let cullChunkToken=0,cullVisibleTotal=0;
 async function loadCullPage(reset=false){
   if(currentStep!=='cull')return;
   const token=++cullChunkToken;
@@ -4323,8 +4330,6 @@ function dedupRowsForPayload(d){
   rows.forEach(g=>{if(g&&g.group_id!=null)dedupLiveStore.set(String(g.group_id),g);});
   return Array.from(dedupLiveStore.values());
 }
-let dedupChunkToken=0;
-let dedupStatusFilter='pending',dedupVisibleTotal=0,dedupStatusCounts={pending:0,reviewed:0,updated:0};
 async function loadDedupPage(reset=false){
   if(currentStep!=='dedup')return;
   const offset=reset?0:dedupLiveStore.size;
