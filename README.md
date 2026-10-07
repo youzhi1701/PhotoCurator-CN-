@@ -1,5 +1,16 @@
 # PhotoCurator 中文桌面版
 
+<!-- LATEST_RELEASE_START -->
+## ⬇️ 最新版 Windows 安装包
+
+**当前正式版：v1.5.0**
+
+[**点击下载 PhotoCurator-Setup-v1.5.0.exe**](https://github.com/youzhi1701/PhotoCurator-CN-/releases/download/v1.5.0/PhotoCurator-Setup-v1.5.0.exe)
+
+> Windows 10 / 11 x64 · 正式稳定版 · 安装版 EXE  
+> 如需查看版本说明，可前往 [v1.5.0 Release](https://github.com/youzhi1701/PhotoCurator-CN-/releases/tag/v1.5.0)。
+<!-- LATEST_RELEASE_END -->
+
 > 面向大图库的 Windows 照片清理工具。v1.5.0 将主流程收敛为 **模糊废片筛选 → 相似照片筛选 → 软件回收站复核**，并重构前后台运行机制。
 
 | 项目 | 信息 |
