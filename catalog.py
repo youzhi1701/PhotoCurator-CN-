@@ -295,6 +295,17 @@ def register_source(db_path, folder, display_name=None):
 
 
 def _mounted_volume_map():
+    """Return mounted Windows volumes without touching their filesystems.
+
+    This function is used by the periodic UI connection refresh.  It must stay
+    non-blocking: do not call Path.resolve(), GetVolumeInformationW,
+    shutil.disk_usage(), os.stat() or enumerate directories here.  Those calls
+    can stall for seconds/minutes on sleeping USB disks, empty card readers,
+    disconnected network mappings and unhealthy volumes.
+
+    Registration of a source still uses volume_info_for_path(), where richer
+    metadata is appropriate because the user explicitly selected that source.
+    """
     if os.name != "nt":
         return {}
     out = {}
@@ -307,8 +318,33 @@ def _mounted_volume_map():
                 continue
             root = f"{chr(65 + i)}:\\"
             try:
-                info = volume_info_for_path(root)
-                out[info["identity_key"]] = info
+                drive_type = int(kernel32.GetDriveTypeW(root))
+                # Skip unknown/no-root/CD-ROM drives.  Fixed/removable/network
+                # volumes are presence-only probes here; no filesystem access.
+                if drive_type in (0, 1, 5):
+                    continue
+                guid = ctypes.create_unicode_buffer(32768)
+                volume_guid = ""
+                try:
+                    if kernel32.GetVolumeNameForVolumeMountPointW(
+                        root, guid, len(guid)
+                    ):
+                        volume_guid = str(guid.value or "")
+                except Exception:
+                    volume_guid = ""
+                info = {
+                    "identity_key": (
+                        "win-guid:" + volume_guid.strip().lower()
+                        if volume_guid else ""
+                    ),
+                    "kind": DRIVE_KIND.get(drive_type, "volume"),
+                    "mount_path": root,
+                    "volume_guid": volume_guid,
+                }
+                if info["identity_key"]:
+                    out[info["identity_key"]] = info
+                # Also index by drive letter for legacy/fallback identities.
+                out["win-mount:" + root.lower()] = info
             except Exception:
                 continue
     except Exception:
@@ -317,6 +353,7 @@ def _mounted_volume_map():
 
 
 def refresh_connections(db_path):
+    """Refresh only presence/mount state; never scan media or storage usage."""
     init_catalog_schema(db_path)
     mounted = _mounted_volume_map()
     now = time.time()
@@ -326,6 +363,11 @@ def refresh_connections(db_path):
             identity = str(row["identity_key"])
             if os.name == "nt":
                 info = mounted.get(identity)
+                if not info:
+                    last_mount = str(row["last_mount"] or "")
+                    drive, _ = os.path.splitdrive(last_mount)
+                    mount_key = "win-mount:" + ((drive + "\\").lower() if drive else "")
+                    info = mounted.get(mount_key) if drive else None
                 connected = bool(info)
                 mount_path = info["mount_path"] if info else str(row["last_mount"] or "")
             else:
