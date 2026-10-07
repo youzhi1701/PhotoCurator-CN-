@@ -75,6 +75,7 @@ jobs:
         run: |
           python -m py_compile db_runtime.py desktop_app.py runtime_paths.py catalog.py photo_curator.py background_tasks.py raw_loader.py ui_smoke_test.py windows_smoke_test.py
           python "基础冒烟测试.py"
+          python release_gate_test.py
           python ui_smoke_test.py
           pip-audit -r requirements.txt
       - name: Build approved app icon
