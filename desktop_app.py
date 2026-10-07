@@ -20,7 +20,7 @@ from runtime_paths import (
 )
 
 APP_TITLE = "PhotoCurator"
-APP_VERSION = "1.7.0"
+APP_VERSION = "1.7.1"
 HOST = "127.0.0.1"
 DEFAULT_PORT = 5014
 
