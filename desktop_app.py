@@ -449,15 +449,22 @@ def main():
             _write_early_error_log()
 
     def after_webview_start():
-        # webview.start callbacks run after the GUI loop is live.  Only DWM
-        # attributes are touched here; no pywebview lifecycle re-entry.
-        if os.name == 'nt':
-            deadline = time.monotonic() + 5.0
-            while time.monotonic() < deadline:
-                if desktop_api.apply_native_titlebar_theme():
-                    break
-                time.sleep(0.10)
-        start_tray_after_ui()
+        # Never wait, probe handles or initialize tray objects on a callback
+        # that could share the native GUI thread. Dispatch all post-start work.
+        def post_start_worker():
+            if os.name == 'nt':
+                deadline = time.monotonic() + 5.0
+                while time.monotonic() < deadline:
+                    if desktop_api.apply_native_titlebar_theme():
+                        break
+                    time.sleep(0.10)
+            start_tray_after_ui()
+
+        threading.Thread(
+            target=post_start_worker,
+            daemon=True,
+            name="photocurator-post-start",
+        ).start()
 
     # Native Windows title bar owns close/maximize/restore.  In particular,
     # there is intentionally NO pywebview closing/shown/loaded callback here:
