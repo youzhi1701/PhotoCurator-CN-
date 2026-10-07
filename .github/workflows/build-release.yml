@@ -33,28 +33,27 @@ jobs:
         run: |
           $manifest = Get-Content "packaging\release_manifest.json" -Raw | ConvertFrom-Json
           $version = [string]$manifest.version
+          $published = [string]$manifest.published_version
           if ([string]::IsNullOrWhiteSpace($version)) { throw "Release manifest version is empty" }
+          if ([string]::IsNullOrWhiteSpace($published)) { throw "Published version metadata is empty" }
           "version=$version" >> $env:GITHUB_OUTPUT
           "installer=PhotoCurator-Setup-v$version.exe" >> $env:GITHUB_OUTPUT
-          Write-Host "Resolved PhotoCurator version: $version"
+          "published_version=$published" >> $env:GITHUB_OUTPUT
+          "published_installer=PhotoCurator-Setup-v$published.exe" >> $env:GITHUB_OUTPUT
+          Write-Host "Target PhotoCurator version: $version"
+          Write-Host "Currently published version: $published"
 
-      - name: Verify README latest installer link
+      - name: Verify README still points to the last actually published installer
         shell: powershell
         run: |
-          $version = "${{ steps.release_meta.outputs.version }}"
-          $installer = "${{ steps.release_meta.outputs.installer }}"
+          $published = "${{ steps.release_meta.outputs.published_version }}"
+          $installer = "${{ steps.release_meta.outputs.published_installer }}"
           $readme = Get-Content "README.md" -Raw
-          $marker = "<!-- LATEST_RELEASE_START -->"
-          $expected = "https://github.com/${{ github.repository }}/releases/download/v$version/$installer"
-          $markerPos = $readme.IndexOf($marker)
-          if ($markerPos -lt 0 -or $markerPos -gt 1200) {
-            throw "README latest-release block must stay near the top"
-          }
+          $expected = "https://github.com/${{ github.repository }}/releases/download/v$published/$installer"
           if (-not $readme.Contains($expected)) {
-            throw "README latest EXE link is stale or missing. Expected: $expected"
+            throw "README published installer link is dishonest or stale. Expected: $expected"
           }
-          Write-Host "README latest installer link OK: $expected"
-
+          Write-Host "README correctly keeps the last real release until the new asset exists."
       - name: Verify release tag matches source version
         if: startsWith(github.ref, 'refs/tags/')
         shell: powershell
@@ -69,8 +68,15 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install -r requirements-optional.txt
-          pip install pyinstaller
+          pip install pyinstaller "selenium>=4.25,<5" "pip-audit>=2.7,<3"
 
+      - name: Release-gate source tests
+        shell: powershell
+        run: |
+          python -m py_compile db_runtime.py desktop_app.py runtime_paths.py catalog.py photo_curator.py background_tasks.py raw_loader.py ui_smoke_test.py windows_smoke_test.py
+          python "基础冒烟测试.py"
+          python ui_smoke_test.py
+          pip-audit -r requirements.txt
       - name: Build approved app icon
         shell: powershell
         run: |
@@ -126,11 +132,24 @@ jobs:
           $installer = "release\${{ steps.release_meta.outputs.installer }}"
           if (!(Test-Path $installer)) { throw "Installer not built: $installer" }
 
+      - name: Generate installer SHA256
+        id: checksum
+        shell: powershell
+        run: |
+          $installer = "release\${{ steps.release_meta.outputs.installer }}"
+          $hash = (Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+          $line = "$hash *${{ steps.release_meta.outputs.installer }}"
+          $shaFile = "$installer.sha256"
+          Set-Content -Path $shaFile -Value $line -Encoding ascii
+          "sha256=$hash" >> $env:GITHUB_OUTPUT
+          Write-Host "Installer SHA256: $hash"
       - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
           name: PhotoCurator-Setup-v${{ steps.release_meta.outputs.version }}
-          path: release/${{ steps.release_meta.outputs.installer }}
+          path: |
+            release/${{ steps.release_meta.outputs.installer }}
+            release/${{ steps.release_meta.outputs.installer }}.sha256
           if-no-files-found: error
 
       - name: Verify explicit main release request
@@ -178,12 +197,16 @@ jobs:
           prerelease: false
           draft: false
           generate_release_notes: true
-          files: release/${{ steps.release_meta.outputs.installer }}
+          files: |
+            release/${{ steps.release_meta.outputs.installer }}
+            release/${{ steps.release_meta.outputs.installer }}.sha256
           body: |
             ## PhotoCurator 中文桌面版 v${{ steps.release_meta.outputs.version }}
 
             推荐普通 Windows 用户直接下载：
             **${{ steps.release_meta.outputs.installer }}**
+
+            SHA256：`${{ steps.checksum.outputs.sha256 }}`
 
             普通“删除”默认先进入 PhotoCurator 软件回收站；覆盖安装只替换程序目录，
             保留配置、索引、缓存、任务状态和用户照片。下方变更列表由 GitHub
