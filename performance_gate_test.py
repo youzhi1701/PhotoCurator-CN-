@@ -79,6 +79,16 @@ require("function scheduleThumbSize" in thumb and "requestAnimationFrame" in thu
 require("thumbSaveTimer=setTimeout" in thumb,
         "thumbnail preference writes must remain debounced")
 
+# 6) Offline Catalog uses a bounded, bidirectional DOM window instead of
+#    accumulating every loaded history card forever.
+catalog = block("const CATALOG_PAGE_SIZE=400,CATALOG_DOM_WINDOW=800;", "let lastStorageSummaryAt=0;")
+require("previous.items.splice(0,drop)" in catalog,
+        "Catalog next-page navigation must release old DOM/data rows")
+require("previous.items.splice(previous.items.length-drop,drop)" in catalog,
+        "Catalog previous-page navigation must release tail DOM/data rows")
+require("catalogLoadEarlier" in catalog and "catalogLoadMore" in catalog,
+        "Catalog bounded window must remain bidirectional")
+
 # Per-photo compositing filters are intentionally avoided; the large visual
 # shell may keep its two glass surfaces.
 pbg_css = block(".pbg-toggle{", ".pbg-toggle:hover")
