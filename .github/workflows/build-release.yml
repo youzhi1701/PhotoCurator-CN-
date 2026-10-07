@@ -66,6 +66,40 @@ jobs:
             throw "Tag ${{ github.ref_name }} does not match source version $expected"
           }
 
+      - name: Require Windows Authenticode signing material
+        shell: powershell
+        env:
+          WINDOWS_SIGNING_PFX_BASE64: ${{ secrets.WINDOWS_SIGNING_PFX_BASE64 }}
+          WINDOWS_SIGNING_PFX_PASSWORD: ${{ secrets.WINDOWS_SIGNING_PFX_PASSWORD }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_SIGNING_PFX_BASE64)) {
+            throw "Stable release blocked: WINDOWS_SIGNING_PFX_BASE64 secret is not configured"
+          }
+          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_SIGNING_PFX_PASSWORD)) {
+            throw "Stable release blocked: WINDOWS_SIGNING_PFX_PASSWORD secret is not configured"
+          }
+
+          $pfx = Join-Path $env:RUNNER_TEMP "PhotoCurator-signing.pfx"
+          try {
+            [IO.File]::WriteAllBytes(
+              $pfx,
+              [Convert]::FromBase64String($env:WINDOWS_SIGNING_PFX_BASE64)
+            )
+          } catch {
+            throw "Stable release blocked: signing certificate secret is not valid base64"
+          }
+
+          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" -ErrorAction SilentlyContinue |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+          if (-not $signtool) {
+            throw "Stable release blocked: Windows SDK signtool.exe is unavailable"
+          }
+
+          "PHOTOCURATOR_SIGNING_PFX=$pfx" >> $env:GITHUB_ENV
+          "PHOTOCURATOR_SIGNTOOL=$($signtool.FullName)" >> $env:GITHUB_ENV
+          "PHOTOCURATOR_TIMESTAMP_URL=http://timestamp.digicert.com" >> $env:GITHUB_ENV
+          Write-Host "Authenticode release signing gate is configured."
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
@@ -122,6 +156,24 @@ jobs:
           $p = Start-Process -FilePath "dist\PhotoCurator\PhotoCurator.exe" -ArgumentList "--self-test" -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "Packaged PhotoCurator self-test failed with exit code $($p.ExitCode)" }
 
+      - name: Sign and verify packaged executable
+        shell: powershell
+        env:
+          WINDOWS_SIGNING_PFX_PASSWORD: ${{ secrets.WINDOWS_SIGNING_PFX_PASSWORD }}
+        run: |
+          $exe = "dist\PhotoCurator\PhotoCurator.exe"
+          & "$env:PHOTOCURATOR_SIGNTOOL" sign /f "$env:PHOTOCURATOR_SIGNING_PFX" /p "$env:WINDOWS_SIGNING_PFX_PASSWORD" /fd SHA256 /tr "$env:PHOTOCURATOR_TIMESTAMP_URL" /td SHA256 $exe
+          if ($LASTEXITCODE -ne 0) { throw "Authenticode signing failed for PhotoCurator.exe" }
+
+          & "$env:PHOTOCURATOR_SIGNTOOL" verify /pa /v $exe
+          if ($LASTEXITCODE -ne 0) { throw "signtool verification failed for PhotoCurator.exe" }
+
+          $signature = Get-AuthenticodeSignature -FilePath $exe
+          if ($signature.Status -ne "Valid" -or -not $signature.SignerCertificate) {
+            throw "PhotoCurator.exe does not have a valid trusted Authenticode signature"
+          }
+          Write-Host "Signed EXE certificate: $($signature.SignerCertificate.Subject)"
+          Write-Host "Signed EXE thumbprint: $($signature.SignerCertificate.Thumbprint)"
       - name: Download WebView2 bootstrapper
         shell: powershell
         run: |
@@ -142,6 +194,24 @@ jobs:
           $installer = "release\${{ steps.release_meta.outputs.installer }}"
           if (!(Test-Path $installer)) { throw "Installer not built: $installer" }
 
+      - name: Sign and verify installer
+        shell: powershell
+        env:
+          WINDOWS_SIGNING_PFX_PASSWORD: ${{ secrets.WINDOWS_SIGNING_PFX_PASSWORD }}
+        run: |
+          $installer = "release\${{ steps.release_meta.outputs.installer }}"
+          & "$env:PHOTOCURATOR_SIGNTOOL" sign /f "$env:PHOTOCURATOR_SIGNING_PFX" /p "$env:WINDOWS_SIGNING_PFX_PASSWORD" /fd SHA256 /tr "$env:PHOTOCURATOR_TIMESTAMP_URL" /td SHA256 $installer
+          if ($LASTEXITCODE -ne 0) { throw "Authenticode signing failed for installer" }
+
+          & "$env:PHOTOCURATOR_SIGNTOOL" verify /pa /v $installer
+          if ($LASTEXITCODE -ne 0) { throw "signtool verification failed for installer" }
+
+          $signature = Get-AuthenticodeSignature -FilePath $installer
+          if ($signature.Status -ne "Valid" -or -not $signature.SignerCertificate) {
+            throw "Installer does not have a valid trusted Authenticode signature"
+          }
+          Write-Host "Signed installer certificate: $($signature.SignerCertificate.Subject)"
+          Write-Host "Signed installer thumbprint: $($signature.SignerCertificate.Thumbprint)"
       - name: Generate installer SHA256
         id: checksum
         shell: powershell
@@ -231,9 +301,36 @@ jobs:
           $asset = "${{ steps.release_meta.outputs.installer }}"
           $release = gh api "repos/${{ github.repository }}/releases/tags/$tag" | ConvertFrom-Json
           $match = $release.assets | Where-Object { $_.name -eq $asset }
+          $matchSha = $release.assets | Where-Object { $_.name -eq "$asset.sha256" }
           if (-not $match) { throw "Published release is missing installer asset: $asset" }
+          if (-not $matchSha) { throw "Published release is missing SHA256 asset: $asset.sha256" }
           if ([int64]$match.size -le 0) { throw "Published installer asset is empty" }
-          Write-Host "Verified release asset: $asset ($($match.size) bytes)"
+          if ([int64]$matchSha.size -le 0) { throw "Published SHA256 asset is empty" }
+
+          $verifyDir = Join-Path $env:RUNNER_TEMP "photocurator-published-release"
+          New-Item -ItemType Directory -Force $verifyDir | Out-Null
+          gh release download $tag --pattern $asset --pattern "$asset.sha256" --dir $verifyDir --clobber
+          if ($LASTEXITCODE -ne 0) { throw "Unable to download published release assets for verification" }
+
+          $publishedInstaller = Join-Path $verifyDir $asset
+          $publishedShaFile = Join-Path $verifyDir "$asset.sha256"
+          $expectedHash = "${{ steps.checksum.outputs.sha256 }}".ToLowerInvariant()
+          $publishedHash = (Get-FileHash $publishedInstaller -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($publishedHash -ne $expectedHash) {
+            throw "Published installer hash mismatch: $publishedHash != $expectedHash"
+          }
+          $shaText = (Get-Content $publishedShaFile -Raw).Trim().ToLowerInvariant()
+          if (-not $shaText.StartsWith($expectedHash)) {
+            throw "Published SHA256 sidecar does not match the signed installer"
+          }
+
+          & "$env:PHOTOCURATOR_SIGNTOOL" verify /pa /v $publishedInstaller
+          if ($LASTEXITCODE -ne 0) { throw "Published installer failed Authenticode verification" }
+          $publishedSignature = Get-AuthenticodeSignature -FilePath $publishedInstaller
+          if ($publishedSignature.Status -ne "Valid" -or -not $publishedSignature.SignerCertificate) {
+            throw "Published installer signature is not valid"
+          }
+          Write-Host "Verified signed release asset: $asset ($($match.size) bytes, SHA256 $publishedHash)"
 
       - name: Mark release metadata as published
         if: "${{ github.ref == 'refs/heads/main' && startsWith(github.event.head_commit.message, 'release: publish v') }}"
@@ -276,3 +373,10 @@ jobs:
           git add packaging/release_manifest.json README.md
           git commit -m "chore: mark v${{ steps.release_meta.outputs.version }} published"
           git push origin HEAD:main
+      - name: Remove temporary signing certificate
+        if: always()
+        shell: powershell
+        run: |
+          if ($env:PHOTOCURATOR_SIGNING_PFX -and (Test-Path $env:PHOTOCURATOR_SIGNING_PFX)) {
+            Remove-Item -Force $env:PHOTOCURATOR_SIGNING_PFX
+          }
