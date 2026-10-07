@@ -154,7 +154,7 @@ jobs:
           "sha256=$hash" >> $env:GITHUB_OUTPUT
           Write-Host "Installer SHA256: $hash"
       - name: Upload installer
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: PhotoCurator-Setup-v${{ steps.release_meta.outputs.version }}
           path: |

@@ -116,6 +116,7 @@ _RUN_GATE_LOCK = threading.Lock()
 _FILE_PLAN_LOCK = threading.Lock()
 _GEOCODE_LOCK = threading.Lock()
 _GEOCODE_LAST_AT = 0.0
+_ACTIVITY_WRITE_COUNT = 0
 CULL_METRICS_VERSION = 1
 RUNTIME_SCHEMA_VERSION = 2
 
@@ -423,12 +424,21 @@ def _set_similarity_group_status(group_key, status):
 
 
 def _activity(action, path='', detail=''):
+    """Append one user-visible activity event without pruning the table every write."""
+    global _ACTIVITY_WRITE_COUNT
     try:
         with _DB_LOCK, connect_db(INDEX_DB, timeout=10) as db:
             db.execute("INSERT INTO activity_log(ts,action,path,detail) VALUES(?,?,?,?)",
                        (time.time(), str(action), str(path or ''), str(detail or '')))
-            db.execute("""DELETE FROM activity_log
-                          WHERE id NOT IN (SELECT id FROM activity_log ORDER BY id DESC LIMIT 5000)""")
+            _ACTIVITY_WRITE_COUNT += 1
+            # Retention cleanup is intentionally amortized. Doing the DELETE on
+            # every click/file action turns a tiny log append into repeated table
+            # maintenance and can briefly block foreground SQLite readers.
+            if _ACTIVITY_WRITE_COUNT % 64 == 0:
+                db.execute("""DELETE FROM activity_log
+                              WHERE id NOT IN (
+                                SELECT id FROM activity_log ORDER BY id DESC LIMIT 5000
+                              )""")
             db.commit()
     except Exception:
         logger.debug("activity log write failed", exc_info=True)
@@ -488,9 +498,9 @@ def _query_cache_rows(table, columns, path_keys, chunk_size=400):
     return rows
 
 
-def _load_cull_metrics_map(paths):
+def _load_cull_metrics_map(paths, fingerprints=None):
     """Bulk-load valid clear/quality metrics without opening SQLite per photo."""
-    fps = _fingerprints(paths)
+    fps = fingerprints if fingerprints is not None else _fingerprints(paths)
     out = {}
     try:
         rows = _query_cache_rows(
@@ -505,9 +515,9 @@ def _load_cull_metrics_map(paths):
     return out
 
 
-def _load_rank_scores_map(paths):
+def _load_rank_scores_map(paths, fingerprints=None):
     """Bulk-load valid rank scores; stale file versions are ignored."""
-    fps = _fingerprints(paths)
+    fps = fingerprints if fingerprints is not None else _fingerprints(paths)
     out = {}
     try:
         rows = _query_cache_rows(
@@ -529,9 +539,9 @@ def _load_rank_scores_map(paths):
     return out
 
 
-def _load_review_overrides(paths):
+def _load_review_overrides(paths, fingerprints=None):
     """Load valid manual decisions only for this scan, never the whole table."""
-    fps = _fingerprints(paths)
+    fps = fingerprints if fingerprints is not None else _fingerprints(paths)
     out = {}
     try:
         rows = _query_cache_rows(
@@ -627,10 +637,16 @@ def _save_cull_metrics_batch(rows):
         return
     payload = []
     now = time.time()
-    for path, region_s, quality in rows:
+    for row in rows:
+        path, region_s, quality = row[:3]
         try:
-            p = Path(path); st = p.stat()
-            payload.append((str(p), int(st.st_size), int(st.st_mtime_ns),
+            if len(row) >= 5:
+                size, mtime_ns = int(row[3]), int(row[4])
+                p = Path(path)
+            else:
+                p = Path(path); st = p.stat()
+                size, mtime_ns = int(st.st_size), int(st.st_mtime_ns)
+            payload.append((str(p), size, mtime_ns,
                             float(region_s), float(quality), now))
         except OSError:
             continue
@@ -653,12 +669,18 @@ def _save_rank_scores_batch(rows):
         return
     payload = []
     now = time.time()
-    for path, score in rows:
+    for row in rows:
+        path, score = row[:2]
         try:
-            p = Path(path); st = p.stat()
+            if len(row) >= 4:
+                size, mtime_ns = int(row[2]), int(row[3])
+                p = Path(path)
+            else:
+                p = Path(path); st = p.stat()
+                size, mtime_ns = int(st.st_size), int(st.st_mtime_ns)
             data = asdict(score)
             data['_cache_version'] = RANK_CACHE_VERSION
-            payload.append((str(p), int(st.st_size), int(st.st_mtime_ns),
+            payload.append((str(p), size, mtime_ns,
                             json.dumps(data, ensure_ascii=False), now))
         except OSError:
             continue
@@ -711,10 +733,17 @@ def _prune_index_db():
     except Exception:
         logger.debug("index prune skipped", exc_info=True)
 
-threading.Thread(target=_prune_index_db, daemon=True,
+def _delayed_prune_index_db():
+    # First paint and the first folder selection matter more than maintenance.
+    # Let the WebView/API become interactive before counting/pruning large tables.
+    time.sleep(15.0)
+    _prune_index_db()
+
+
+threading.Thread(target=_delayed_prune_index_db, daemon=True,
                  name='photocurator-index-prune').start()
 
-APP_VERSION = "1.7.0"
+APP_VERSION = "1.8.0"
 IS_CODESPACES = os.environ.get('CODESPACES', '').strip().lower() == 'true'
 CODESPACE_NAME = os.environ.get('CODESPACE_NAME', '').strip()
 _CODESPACES_DOMAIN_RAW = os.environ.get(
@@ -887,6 +916,13 @@ VENDOR_FILES = {'maplibre-gl-csp.js': 'text/javascript',
                 'maplibre-gl.css': 'text/css'}
 
 RECENTS_FILE = DATA_ROOT / 'config' / 'recents.json'
+_RECENTS_CACHE = None
+_RECENTS_LOCK = threading.Lock()
+_ALLOWED_ROOTS_CACHE_KEY = None
+_ALLOWED_ROOTS_CACHE_VALUE = ()
+_ALLOWED_ROOTS_LOCK = threading.Lock()
+_MEDIA_ID_CACHE = {}
+_MEDIA_ID_CACHE_LOCK = threading.Lock()
 THUMB_DIR = DATA_ROOT / 'cache' / 'thumbnails'
 OFFLINE_PREVIEW_DIR = DATA_ROOT / 'offline_previews'
 THUMB_DIR.mkdir(parents=True, exist_ok=True)
@@ -910,8 +946,6 @@ def _migrate_legacy_dedup_cache():
                 continue
     except Exception:
         logger.debug("legacy dedup cache migration skipped", exc_info=True)
-
-_migrate_legacy_dedup_cache()
 
 CACHE_MAX_BYTES = int(os.environ.get('PHOTOCURATOR_CACHE_MAX_BYTES',
                                      str(2 * 1024 * 1024 * 1024)))
@@ -955,7 +989,15 @@ def _prune_thumb_cache():
         logger.debug(f"cache prune skipped: {e}")
 
 
-threading.Thread(target=_prune_thumb_cache, daemon=True,
+def _delayed_cache_maintenance():
+    # Thumbnail directories can contain tens of thousands of files. Never make
+    # startup/first paint pay for directory enumeration that can safely wait.
+    time.sleep(18.0)
+    _migrate_legacy_dedup_cache()
+    _prune_thumb_cache()
+
+
+threading.Thread(target=_delayed_cache_maintenance, daemon=True,
                  name='photocurator-cache-prune').start()
 
 DEFAULT_WEIGHTS = {'aesthetic': 30, 'composition': 22, 'technical': 20,
@@ -978,28 +1020,44 @@ UI_RESULT_CAP = UI_RESULT_CHUNK
 #  pointed at 127.0.0.1.
 # --------------------------------------------------------------------------- #
 def _allowed_roots():
-    """Resolved real paths the app is permitted to read from: the current
-    folder plus any recently-used folders."""
-    roots = []
-    cur = state.get('folder')
-    if cur:
-        roots.append(cur)
+    """Resolved roots permitted by the media API, cached by logical input state.
+
+    Thumbnail grids can issue hundreds of concurrent requests. Re-reading
+    recents.json and realpath()-resolving the same roots per image is pure
+    overhead; the security boundary is identical when the derived root set is
+    cached until its current-folder/custom-output/recent inputs change.
+    """
+    global _ALLOWED_ROOTS_CACHE_KEY, _ALLOWED_ROOTS_CACHE_VALUE
+    cur = str(state.get('folder') or '')
     scan = state.get('scan') or {}
-    if scan.get('output_mode') == 'custom' and scan.get('custom_output'):
-        # A custom output folder is user-selected app state too. Files moved
-        # there must remain viewable/deletable by the same safe media endpoints.
-        roots.append(scan.get('custom_output'))
+    custom = (str(scan.get('custom_output') or '')
+              if scan.get('output_mode') == 'custom' else '')
     try:
-        roots.extend(load_recents())
+        recents = tuple(str(x) for x in load_recents() if x)
     except Exception:
-        pass
-    out = []
-    for r in roots:
-        try:
-            out.append(os.path.realpath(r))
-        except Exception:
-            continue
-    return out
+        recents = ()
+    key = (cur, custom, recents)
+    if key == _ALLOWED_ROOTS_CACHE_KEY:
+        return _ALLOWED_ROOTS_CACHE_VALUE
+    with _ALLOWED_ROOTS_LOCK:
+        if key == _ALLOWED_ROOTS_CACHE_KEY:
+            return _ALLOWED_ROOTS_CACHE_VALUE
+        roots = [x for x in (cur, custom, *recents) if x]
+        out = []
+        seen = set()
+        for raw in roots:
+            try:
+                real = os.path.realpath(raw)
+                norm = os.path.normcase(real)
+                if norm in seen:
+                    continue
+                seen.add(norm)
+                out.append(real)
+            except Exception:
+                continue
+        _ALLOWED_ROOTS_CACHE_KEY = key
+        _ALLOWED_ROOTS_CACHE_VALUE = tuple(out)
+        return _ALLOWED_ROOTS_CACHE_VALUE
 
 
 def _safe_image_path(raw):
@@ -1048,7 +1106,9 @@ state = {
     'cull':  {**_blank(), 'sharp': 0, 'soft': 0, 'blurry': 0, 'sharp_paths': [], 'overrides': {}, 'removed_paths': set(), 'cache_hits': 0},
     'dedup': {**_blank(), 'groups': 0, 'kept_paths': [], 'groups_data': [],
               'singleton_paths': [], 'all_singleton_paths': [], 'seen_paths': set(), 'applied': False},
-    'rank':  {**_blank(), 'scores': [], 'total': 0, 'analyzed': 0, 'preview': [], 'preview_at': 0.0},
+    'rank':  {**_blank(), 'scores': [], 'total': 0, 'analyzed': 0,
+              'preview': [], 'preview_at': 0.0, 'revision': 0,
+              'preview_revision': -1},
 }
 
 
@@ -1193,9 +1253,15 @@ def list_images(folder, recursive=False):
 
 
 def relative_folder(path, root):
-    """Human-readable source folder relative to the selected scan root."""
+    """Human-readable source folder relative to the selected scan root.
+
+    Scan/API paths are already canonicalized at admission time. Using relpath
+    here avoids an expensive resolve()/stat-like filesystem round trip per
+    result card, which is especially noticeable on USB/mechanical disks.
+    """
     try:
-        rel = Path(path).resolve().parent.relative_to(Path(root).resolve())
+        parent = os.path.dirname(os.fspath(path))
+        rel = os.path.relpath(parent, os.fspath(root))
         txt = str(rel).replace('\\', ' / ')
         return txt if txt not in ('', '.') else '当前文件夹'
     except Exception:
@@ -1713,7 +1779,7 @@ def _apply_media_lifecycle(original_path, current_path, lifecycle, source_step='
             rank['scores'] = [sc for sc in rank.get('scores', [])
                               if os.path.realpath(str(getattr(sc, 'path', ''))) != original]
             rank['total'] = len(rank['scores'])
-            rank['preview_at'] = 0.0
+            _invalidate_rank_preview()
 
 
 def _restore_group_status_for_member(original_path, status):
@@ -1898,15 +1964,51 @@ TASK_MANAGER.register('restore_trash', _background_restore_trash)
 TASK_MANAGER.register('purge_trash', _background_purge_trash)
 
 
+def _remember_catalog_media_ids(rows):
+    if not rows:
+        return
+    with _MEDIA_ID_CACHE_LOCK:
+        for path, media_id in rows.items():
+            key = os.path.normcase(os.path.realpath(str(path)))
+            _MEDIA_ID_CACHE[key] = str(media_id)
+        if len(_MEDIA_ID_CACHE) > 16384:
+            trim = max(4096, len(_MEDIA_ID_CACHE) - 12288)
+            for old in list(_MEDIA_ID_CACHE)[:trim]:
+                _MEDIA_ID_CACHE.pop(old, None)
+
+
+def _catalog_media_id_cached(image_path):
+    """Cache successful path -> media-id lookups; misses stay retryable.
+
+    A miss may become a hit moments later while the catalog scan is still
+    committing batches, so only successful lookups are retained.
+    """
+    key = os.path.normcase(os.path.realpath(str(image_path)))
+    with _MEDIA_ID_CACHE_LOCK:
+        cached = _MEDIA_ID_CACHE.get(key)
+    if cached:
+        return cached
+    try:
+        media_id = catalog_media_id_for_path(INDEX_DB, image_path)
+    except Exception:
+        media_id = None
+    if media_id:
+        with _MEDIA_ID_CACHE_LOCK:
+            if len(_MEDIA_ID_CACHE) >= 16384:
+                # Insertion-ordered dict: trim the oldest quarter in one cheap pass.
+                for old in list(_MEDIA_ID_CACHE)[:4096]:
+                    _MEDIA_ID_CACHE.pop(old, None)
+            _MEDIA_ID_CACHE[key] = str(media_id)
+        return str(media_id)
+    return None
+
+
 def _thumb_cache_path(image_path):
     # Catalog-backed previews use a stable media id, so a drive-letter change
     # (F: -> G:) does not invalidate the offline preview.
-    try:
-        media_id = catalog_media_id_for_path(INDEX_DB, image_path)
-        if media_id:
-            return OFFLINE_PREVIEW_DIR / f"{media_id}.jpg"
-    except Exception:
-        pass
+    media_id = _catalog_media_id_cached(image_path)
+    if media_id:
+        return OFFLINE_PREVIEW_DIR / f"{media_id}.jpg"
 
     p = Path(image_path)
     try:
@@ -2007,19 +2109,33 @@ def thumb_url(image_path):
 
 
 def load_recents():
-    try:
-        if RECENTS_FILE.exists():
-            return json.loads(RECENTS_FILE.read_text(encoding='utf-8'))
-    except Exception:
-        pass
-    return []
+    global _RECENTS_CACHE
+    if _RECENTS_CACHE is not None:
+        return list(_RECENTS_CACHE)
+    with _RECENTS_LOCK:
+        if _RECENTS_CACHE is not None:
+            return list(_RECENTS_CACHE)
+        rows = []
+        try:
+            if RECENTS_FILE.exists():
+                data = json.loads(RECENTS_FILE.read_text(encoding='utf-8'))
+                if isinstance(data, list):
+                    rows = [str(x) for x in data if str(x).strip()]
+        except Exception:
+            rows = []
+        _RECENTS_CACHE = rows[:24]
+        return list(_RECENTS_CACHE)
 
 
 def save_recent(folder):
+    global _RECENTS_CACHE
     recents = [r for r in load_recents() if r != folder]
     recents.insert(0, folder)
+    recents = recents[:8]
     try:
-        RECENTS_FILE.write_text(json.dumps(recents[:8], ensure_ascii=False), encoding='utf-8')
+        RECENTS_FILE.write_text(json.dumps(recents, ensure_ascii=False), encoding='utf-8')
+        with _RECENTS_LOCK:
+            _RECENTS_CACHE = list(recents)
     except Exception as e:
         logger.warning(f"save recents fail: {e}")
 
@@ -2535,24 +2651,32 @@ def _shared_list_images(folder, recursive=True, max_age=2.0):
     )
     now = time.time()
     with _SCAN_SNAPSHOT_CV:
+        # This cache only exists to let concurrently-started Cull/Dedup share one
+        # walk. Large path/fingerprint snapshots must not accumulate for the
+        # lifetime of the application.
+        for old_key, old in list(_SCAN_SNAPSHOTS.items()):
+            if old.get('state') != 'scanning' and now - float(old.get('at', 0) or 0) > 15.0:
+                _SCAN_SNAPSHOTS.pop(old_key, None)
         entry = _SCAN_SNAPSHOTS.get(key)
         if entry and entry.get('state') == 'ready' and now - entry.get('at', 0) <= max_age:
-            return list(entry.get('paths') or [])
+            return (entry.get('paths') or (), entry.get('fingerprints') or {})
         while entry and entry.get('state') == 'scanning':
             _SCAN_SNAPSHOT_CV.wait(timeout=0.25)
             entry = _SCAN_SNAPSHOTS.get(key)
             if entry and entry.get('state') == 'ready':
-                return list(entry.get('paths') or [])
+                return (entry.get('paths') or (), entry.get('fingerprints') or {})
             if not entry or entry.get('state') == 'failed':
                 break
         _SCAN_SNAPSHOTS[key] = {
-            'state': 'scanning', 'at': time.time(), 'paths': [],
+            'state': 'scanning', 'at': time.time(),
             'discovered': 0,
         }
 
     scan_session = None
     paths = []
+    scan_fingerprints = {}
     pending_catalog = []
+    pending_media_ids = {}
     try:
         scan_real = os.path.normcase(os.path.realpath(str(folder)))
         demo_real = os.path.normcase(os.path.realpath(str(DATA_ROOT / '内置测试数据')))
@@ -2583,57 +2707,93 @@ def _shared_list_images(folder, recursive=True, max_age=2.0):
             if scan_session is not None:
                 pending_catalog.append(p)
                 if len(pending_catalog) >= 512:
-                    catalog_scan_batch(INDEX_DB, scan_session, pending_catalog)
+                    catalog_scan_batch(
+                        INDEX_DB, scan_session, pending_catalog,
+                        fingerprints=scan_fingerprints,
+                        media_ids=pending_media_ids,
+                    )
+                    _remember_catalog_media_ids(pending_media_ids)
+                    pending_media_ids.clear()
                     pending_catalog.clear()
-            if len(paths) % 128 == 0:
+            if len(paths) % 256 == 0:
                 with _SCAN_SNAPSHOT_CV:
                     entry = _SCAN_SNAPSHOTS.get(key)
                     if entry and entry.get('state') == 'scanning':
+                        # Only publish progress while scanning. Copying the full
+                        # path list every N files becomes quadratic work on very
+                        # large libraries; consumers already wait for "ready".
                         entry['discovered'] = len(paths)
-                        entry['paths'] = list(paths)
 
         if scan_session is not None:
             if pending_catalog:
-                catalog_scan_batch(INDEX_DB, scan_session, pending_catalog)
+                catalog_scan_batch(
+                    INDEX_DB, scan_session, pending_catalog,
+                    fingerprints=scan_fingerprints,
+                    media_ids=pending_media_ids,
+                )
+                _remember_catalog_media_ids(pending_media_ids)
+                pending_media_ids.clear()
                 pending_catalog.clear()
             finish_catalog_scan(
                 INDEX_DB, scan_session, full_scan=bool(recursive)
             )
-            try:
-                TASK_MANAGER.enqueue(
-                    'build_offline_previews',
-                    {'root_id': scan_session['root_id'], 'offset': 0},
-                    priority=90,
-                    idempotency_key=f"offline_previews:{scan_session['root_id']}:0",
-                )
-            except Exception:
-                logger.debug("offline preview queue skipped", exc_info=True)
+            # Offline previews are durable maintenance, not part of the scan's
+            # critical path. Defer them until foreground analysis is idle so
+            # Cull/Dedup never compete with preview decoding for the same disk.
+            state['scan']['catalog_root_id'] = scan_session['root_id']
+            state['scan']['preview_generation_pending'] = True
     except Exception as exc:
         if scan_session is not None:
             abort_catalog_scan(INDEX_DB, scan_session, str(exc))
         with _SCAN_SNAPSHOT_CV:
             _SCAN_SNAPSHOTS[key] = {
                 'state': 'failed', 'at': time.time(), 'error': str(exc),
-                'paths': list(paths), 'discovered': len(paths),
+                'discovered': len(paths),
             }
             _SCAN_SNAPSHOT_CV.notify_all()
         raise
 
     paths.sort(key=lambda p: os.path.normcase(str(p)))
+    ready_paths = tuple(paths)
     with _SCAN_SNAPSHOT_CV:
         _SCAN_SNAPSHOTS[key] = {
-            'state': 'ready', 'at': time.time(), 'paths': list(paths),
-            'discovered': len(paths),
+            'state': 'ready', 'at': time.time(), 'paths': ready_paths,
+            'fingerprints': scan_fingerprints,
+            'discovered': len(ready_paths),
         }
-        if len(_SCAN_SNAPSHOTS) > 8:
+        if len(_SCAN_SNAPSHOTS) > 3:
             stale = sorted(
                 ((k, v.get('at', 0)) for k, v in _SCAN_SNAPSHOTS.items() if k != key),
                 key=lambda kv: kv[1],
             )
-            for old_key, _ in stale[:max(0, len(_SCAN_SNAPSHOTS) - 8)]:
+            for old_key, _ in stale[:max(0, len(_SCAN_SNAPSHOTS) - 3)]:
                 _SCAN_SNAPSHOTS.pop(old_key, None)
         _SCAN_SNAPSHOT_CV.notify_all()
-    return list(paths)
+    return ready_paths, scan_fingerprints
+
+
+def _queue_offline_previews_if_analysis_idle():
+    scan = state.get('scan') or {}
+    if not scan.get('preview_generation_pending'):
+        return False
+    if any(bool((state.get(k) or {}).get('running')) for k in ('cull', 'dedup', 'rank')):
+        return False
+    root_id = str(scan.get('catalog_root_id') or '')
+    if not root_id:
+        scan['preview_generation_pending'] = False
+        return False
+    try:
+        TASK_MANAGER.enqueue(
+            'build_offline_previews',
+            {'root_id': root_id, 'offset': 0},
+            priority=90,
+            idempotency_key=f"offline_previews:{root_id}:0",
+        )
+        scan['preview_generation_pending'] = False
+        return True
+    except Exception:
+        logger.debug("offline preview queue deferred", exc_info=True)
+        return False
 
 
 def current_scan_snapshot(folder=None):
@@ -2683,10 +2843,17 @@ def run_cull(folder, strictness, adaptive, rescue_on, recursive=True):
               # not feed its partial survivor list into Dedup/Rank.
               'complete': False, 'src_folder': str(folder), 'recursive': bool(recursive)})
     try:
-        images = _shared_list_images(folder, recursive=recursive)
-        current_paths = {str(p) for p in images}
-        cull_cache = _load_cull_metrics_map(images)
-        s['overrides'] = _load_review_overrides(images)
+        images, scan_fingerprints = _shared_list_images(folder, recursive=recursive)
+        fingerprints = scan_fingerprints
+        if len(fingerprints) < len(images):
+            # Demo/non-catalog sources may not have scan metadata; fill only the
+            # missing subset instead of re-statting the whole library.
+            missing = [p for p in images if str(p) not in fingerprints]
+            if missing:
+                fingerprints = dict(fingerprints)
+                fingerprints.update(_fingerprints(missing))
+        cull_cache = _load_cull_metrics_map(images, fingerprints=fingerprints)
+        s['overrides'] = _load_review_overrides(images, fingerprints=fingerprints)
         total = len(images) or 1
         items = []   # {name, path, region_s, q}
         cache_buffer = []
@@ -2714,7 +2881,10 @@ def run_cull(folder, strictness, adaptive, rescue_on, recursive=True):
             overrides = s.get('overrides', {})
             removed = s.get('removed_paths', set())
             for it in items:
-                if it['path'] in removed or not Path(it['path']).is_file():
+                # The file was successfully discovered/read earlier in this run.
+                # In-app removals are tracked explicitly; do not re-stat every
+                # processed path each time the live classifier refreshes.
+                if it['path'] in removed:
                     continue
                 tier, star = classify_sharpness(it['region_s'], it['q'],
                                                 blur_lo, sharp_hi, q_rescue, rescue_on)
@@ -2750,6 +2920,7 @@ def run_cull(folder, strictness, adaptive, rescue_on, recursive=True):
             s['sharp_paths'] = kept   # kept = sharp + soft (flows to Dedup/Rank)
 
         t0 = time.time()
+        last_status_tick = 0.0
 
         def _fmt(sec):
             sec = int(max(0, sec)); h, r = divmod(sec, 3600); m, s_ = divmod(r, 60)
@@ -2781,12 +2952,15 @@ def run_cull(folder, strictness, adaptive, rescue_on, recursive=True):
                 return
             done = idx + 1
             s['progress'] = int(done / total * 100)
-            elapsed = time.time() - t0
-            rate = done / elapsed if elapsed > 0 else 0
-            eta = (total - done) / rate if rate > 0 else 0
-            s['status'] = (f"模糊筛选 {p.name}（{done}/{total}，{done/total*100:.0f}%）· "
-                           f"{_tiers(done)} · 已用时 {_fmt(elapsed)} · 预计剩余 {_fmt(eta)}")
-            cached = cull_cache.get(str(p))
+            status_tick = time.monotonic()
+            if done == 1 or done == total or status_tick - last_status_tick >= 0.12:
+                elapsed = time.time() - t0
+                rate = done / elapsed if elapsed > 0 else 0
+                eta = (total - done) / rate if rate > 0 else 0
+                s['status'] = (f"模糊筛选 {p.name}（{done}/{total}，{done/total*100:.0f}%）· "
+                               f"{_tiers(done)} · 已用时 {_fmt(elapsed)} · 预计剩余 {_fmt(eta)}")
+                last_status_tick = status_tick
+            cached = cull_cache.pop(str(p), None)
             if cached is not None:
                 region_s, quality = cached
                 s['cache_hits'] = int(s.get('cache_hits', 0)) + 1
@@ -2797,7 +2971,11 @@ def run_cull(folder, strictness, adaptive, rescue_on, recursive=True):
                 gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
                 region_s = region_sharpness(gray)
                 quality = quick_quality(bgr, gray)
-                cache_buffer.append((str(p), region_s, quality))
+                fp = fingerprints.get(str(p))
+                if fp is not None:
+                    cache_buffer.append((str(p), region_s, quality, fp[0], fp[1]))
+                else:
+                    cache_buffer.append((str(p), region_s, quality))
                 if len(cache_buffer) >= 64:
                     _save_cull_metrics_batch(cache_buffer)
                     cache_buffer.clear()
@@ -2838,6 +3016,7 @@ def run_cull(folder, strictness, adaptive, rescue_on, recursive=True):
         s['status'] = f"发生错误：{e}"
     finally:
         s['running'] = False
+        _queue_offline_previews_if_analysis_idle()
 
 
 def _relocate_for_status(path, now_kept):
@@ -2863,7 +3042,7 @@ def _request_rank_score(path):
             return
         rank = state['rank']
         if any(getattr(sc, 'path', None) == p for sc in rank.get('scores', [])):
-            rank['preview_at'] = 0.0
+            _invalidate_rank_preview()
             return
         if rank.get('running'):
             rank.setdefault('pending_paths', set()).add(p)
@@ -2881,8 +3060,8 @@ def _request_rank_score(path):
                         rank.setdefault('scores', []).append(sc)
                     rank['analyzed'] = len(rank.get('scores', []))
                     rank['total'] = max(int(rank.get('total', 0) or 0), rank['analyzed'])
-                    rank['preview'] = build_topn()
-                    rank['preview_at'] = time.time()
+                    _invalidate_rank_preview()
+                    _get_rank_preview()
             except Exception:
                 logger.debug("incremental rank refresh failed", exc_info=True)
 
@@ -2914,7 +3093,8 @@ def _sync_dedup_with_cull():
     new_groups = []
     for group in dedup.get('groups_data', []):
         members = [m for m in group.get('members', [])
-                   if m.get('path') and Path(m.get('path')).is_file()]
+                   if m.get('path') and (m.get('lifecycle') or 'normal')
+                   not in ('permanently_deleted',)]
         if not members:
             continue
         group['members'] = members
@@ -2942,12 +3122,12 @@ def _sync_dedup_with_cull():
         source_singletons = dedup.get('singleton_paths') or []
     dedup['singleton_paths'] = [
         p for p in source_singletons
-        if p in allowed and Path(p).is_file()
+        if p in allowed
     ]
     dedup['kept_paths'] = list(dedup['singleton_paths']) + [
         p for g in new_groups for p in (g.get('selected_paths') or [])
     ]
-    state['rank']['preview_at'] = 0.0
+    _invalidate_rank_preview()
 
 
 # --------------------------------------------------------------------------- #
@@ -2970,7 +3150,7 @@ def run_dedup(folder, threshold, ftype='all', pair='both',
         # the eligibility gate for what the user can keep/process. This lets a
         # photo manually rescued from Blurry later enter an already-built
         # duplicate group without forcing a complete re-scan.
-        paths = _shared_list_images(folder, recursive=recursive)
+        paths, scan_fingerprints = _shared_list_images(folder, recursive=recursive)
         if chain_ok:
             logger.info(f"Dedup: indexing {len(paths)} source photos; "
                         f"{len(cull.get('sharp_paths') or [])} currently eligible after Cull")
@@ -3008,18 +3188,27 @@ def run_dedup(folder, threshold, ftype='all', pair='both',
         else:
             by_parent = {}
             for p in paths:
-                by_parent.setdefault(os.path.normcase(str(p.parent.resolve())), []).append(p)
+                by_parent.setdefault(os.path.normcase(os.path.dirname(str(p))), []).append(p)
             batches = [(relative_folder(ps[0], folder), ps)
                        for _, ps in sorted(by_parent.items(), key=lambda kv: kv[0])]
 
         total = len(paths)
-        cull_metric_cache = _load_cull_metrics_map(paths)
+        dedup_fingerprints = scan_fingerprints
+        if len(dedup_fingerprints) < len(paths):
+            missing = [p for p in paths if str(p) not in dedup_fingerprints]
+            if missing:
+                dedup_fingerprints = dict(dedup_fingerprints)
+                dedup_fingerprints.update(_fingerprints(missing))
+        cull_metric_cache = _load_cull_metrics_map(
+            paths, fingerprints=dedup_fingerprints
+        )
         processed = 0
         all_groups = []
         singleton_paths = []
         seen_paths = {str(p) for p in paths}
         kept = []
         t0 = time.time()
+        last_status_tick = 0.0
 
         def _fmt(sec):
             sec = int(max(0, sec)); h, r = divmod(sec, 3600); m, ss = divmod(r, 60)
@@ -3044,13 +3233,16 @@ def run_dedup(folder, threshold, ftype='all', pair='both',
                     break
                 processed += 1
                 s['progress'] = int(processed / total * 100)
-                elapsed = time.time() - t0
-                rate = processed / elapsed if elapsed > 0 else 0
-                eta = (total - processed) / rate if rate > 0 else 0
-                scope_txt = '全局对比' if compare_scope == 'global' else f'文件夹：{batch_label}'
-                s['status'] = (f"相似去重 · {scope_txt} · {p.name}（{processed}/{total}）· "
-                               f"已用时 {_fmt(elapsed)} · 预计剩余 {_fmt(eta)}")
-                cached_metrics = cull_metric_cache.get(str(p))
+                status_tick = time.monotonic()
+                if processed == 1 or processed == total or status_tick - last_status_tick >= 0.12:
+                    elapsed = time.time() - t0
+                    rate = processed / elapsed if elapsed > 0 else 0
+                    eta = (total - processed) / rate if rate > 0 else 0
+                    scope_txt = '全局对比' if compare_scope == 'global' else f'文件夹：{batch_label}'
+                    s['status'] = (f"相似去重 · {scope_txt} · {p.name}（{processed}/{total}）· "
+                                   f"已用时 {_fmt(elapsed)} · 预计剩余 {_fmt(eta)}")
+                    last_status_tick = status_tick
+                cached_metrics = cull_metric_cache.pop(str(p), None)
                 if cached_metrics is not None:
                     sharp = float(cached_metrics[0])
                 else:
@@ -3153,6 +3345,7 @@ def run_dedup(folder, threshold, ftype='all', pair='both',
         s['status'] = f"发生错误：{e}"
     finally:
         s['running'] = False
+        _queue_offline_previews_if_analysis_idle()
 
 
 # --------------------------------------------------------------------------- #
@@ -3162,6 +3355,23 @@ def weighted_overall(score, weights):
     wsum = sum(max(0, v) for v in weights.values()) or 1.0
     return sum(max(0, weights.get(k, 0)) * getattr(score, k, 0.0)
                for k in CATEGORIES) / wsum
+
+
+def _invalidate_rank_preview():
+    rank = state['rank']
+    rank['revision'] = int(rank.get('revision', 0) or 0) + 1
+    rank['preview_at'] = 0.0
+
+
+def _get_rank_preview(force=False):
+    rank = state['rank']
+    revision = int(rank.get('revision', 0) or 0)
+    if (force or rank.get('preview_revision') != revision
+            or (not rank.get('preview') and rank.get('scores'))):
+        rank['preview'] = build_topn()
+        rank['preview_revision'] = revision
+        rank['preview_at'] = time.time()
+    return rank.get('preview') or []
 
 
 def build_topn(weights=None, topn=None):
@@ -3228,8 +3438,10 @@ def build_topn(weights=None, topn=None):
 
 def run_rank(folder, ftype='all', pair='both', recursive=True):
     s = state['rank']
+    next_revision = int(s.get('revision', 0) or 0) + 1
     s.update({'running': True, 'cancel': False, 'progress': 0, 'status': '正在准备…',
               'scores': [], 'total': 0, 'analyzed': 0, 'preview': [], 'preview_at': 0.0,
+              'revision': next_revision, 'preview_revision': -1,
               'cache_hits': 0, 'pending_paths': set(), 'complete': False,
               'src_folder': str(folder), 'recursive': bool(recursive)})
     state['excluded'] = set()
@@ -3266,10 +3478,12 @@ def run_rank(folder, ftype='all', pair='both', recursive=True):
         total = len(paths)
         s['total'] = total
         analyzer = AdvancedPhotoAnalyzer()
-        rank_cache_map = _load_rank_scores_map(paths)
+        rank_fingerprints = _fingerprints(paths)
+        rank_cache_map = _load_rank_scores_map(paths, fingerprints=rank_fingerprints)
         rank_cache_buffer = []
 
         t0 = time.time()
+        last_status_tick = 0.0
 
         def _fmt(sec):
             sec = int(max(0, sec)); h, r = divmod(sec, 3600); m, s_ = divmod(r, 60)
@@ -3284,23 +3498,29 @@ def run_rank(folder, ftype='all', pair='both', recursive=True):
                 return
             done = idx + 1
             s['progress'] = int(done / total * 100)
-            elapsed = time.time() - t0
-            rate = done / elapsed if elapsed > 0 else 0
-            eta = (total - done) / rate if rate > 0 else 0
-            s['status'] = (f"智能优选 {p.name}（{done}/{total}，{done/total*100:.0f}%）· "
-                           f"已用时 {_fmt(elapsed)} · 预计剩余 {_fmt(eta)}")
-            sc = rank_cache_map.get(str(p))
+            status_tick = time.monotonic()
+            if done == 1 or done == total or status_tick - last_status_tick >= 0.12:
+                elapsed = time.time() - t0
+                rate = done / elapsed if elapsed > 0 else 0
+                eta = (total - done) / rate if rate > 0 else 0
+                s['status'] = (f"智能优选 {p.name}（{done}/{total}，{done/total*100:.0f}%）· "
+                               f"已用时 {_fmt(elapsed)} · 预计剩余 {_fmt(eta)}")
+                last_status_tick = status_tick
+            key = str(p)
+            sc = rank_cache_map.pop(key, None)
             if sc is not None:
                 s['cache_hits'] = int(s.get('cache_hits', 0)) + 1
             else:
                 sc = analyzer.analyze_image(str(p))
                 if sc:
-                    rank_cache_buffer.append((str(p), sc))
+                    fp = rank_fingerprints.get(key)
+                    rank_cache_buffer.append((key, sc, fp[0], fp[1]) if fp else (key, sc))
                     if len(rank_cache_buffer) >= 32:
                         _save_rank_scores_batch(rank_cache_buffer)
                         rank_cache_buffer.clear()
             if sc:
                 s['scores'].append(sc)
+            rank_fingerprints.pop(key, None)
             s['analyzed'] = len(s['scores'])
         _save_rank_scores_batch(rank_cache_buffer)
         rank_cache_buffer.clear()
@@ -3331,12 +3551,14 @@ def run_rank(folder, ftype='all', pair='both', recursive=True):
         s['status'] = (f"完成 · 已评分 {len(s['scores'])} 张 · 来源：{chain} · 用时 {_fmt(time.time()-t0)}"
                        + (f" · 已复用 {s.get('cache_hits',0)} 张历史评分" if s.get('cache_hits') else ""))
         s['complete'] = True
+        _get_rank_preview(force=True)
         _activity('完成精选评分', folder, f"评分 {len(s['scores'])} · 复用 {s.get('cache_hits',0)}")
     except Exception as e:
         logger.error(f"rank failed: {e}", exc_info=True)
         s['status'] = f"发生错误：{e}"
     finally:
         s['running'] = False
+        _queue_offline_previews_if_analysis_idle()
         # A manual Cull change can land between the final pending-path check and
         # task completion. Once running=False, re-dispatch anything left so no
         # user-approved photo is silently missed by the final recommendation.
@@ -3681,8 +3903,12 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
        border-bottom:1px solid rgba(255,255,255,.28);box-shadow:0 8px 28px rgba(52,72,140,.15)}
   .sidebar{background:rgba(255,255,255,.58);backdrop-filter:blur(24px) saturate(145%);-webkit-backdrop-filter:blur(24px) saturate(145%);
            border-right:1px solid rgba(255,255,255,.65)}
-  .panel-box,.shortcut,.folder-group,.dedup-group,.photo-card,.btn-ghost,.chip,input[type=text],input[type=number],.wgroup select{
+  .panel-box,.shortcut,.btn-ghost,.chip,input[type=text],input[type=number],.wgroup select{
     backdrop-filter:blur(18px) saturate(135%);-webkit-backdrop-filter:blur(18px) saturate(135%)}
+  /* High-cardinality gallery nodes deliberately avoid backdrop-filter. The
+     Aurora/iOS look is preserved by translucent surfaces + border + shadow,
+     while scrolling no longer asks WebView2 to re-composite hundreds of blurs. */
+  .folder-group,.dedup-group,.photo-card,.dedup-choice{backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
   .folder-group,.dedup-group,.photo-card{background:var(--glass);border-color:rgba(255,255,255,.72);box-shadow:0 8px 26px rgba(66,84,132,.08)}
   .folder-head{background:rgba(244,248,255,.72)}
   .main{padding-right:12px}
@@ -3745,7 +3971,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   body.sidebar-collapsed .nav-icon{width:auto}
   body.sidebar-collapsed .task-center{left:94px}
   .top button,.top input,.top .title-action,.top .window-controls{position:relative;z-index:2}
-  .folder-grid .photo-card{content-visibility:auto;contain-intrinsic-size:190px 240px}
+  .photo-card,.dedup-choice{content-visibility:auto;contain-intrinsic-size:190px 240px}
   body.processing #settingsPanel input,
   body.processing #settingsPanel select{opacity:.58;pointer-events:none}
 
@@ -3886,10 +4112,10 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
 
   /* One thumbnail size means one real card width in every photo result view. */
   .gallery,.folder-grid,.dedup-choices{
-    grid-template-columns:repeat(auto-fill,var(--thumb-size))!important;
-    justify-content:start!important;align-items:start!important;gap:12px!important
+    grid-template-columns:repeat(auto-fill,minmax(min(var(--thumb-size),100%),1fr))!important;
+    justify-content:stretch!important;align-items:start!important;gap:12px!important
   }
-  .photo-card,.dedup-choice{width:var(--thumb-size);max-width:100%}
+  .photo-card,.dedup-choice{width:100%;max-width:none}
   .photo-name{font-size:12px!important;font-weight:750}.photo-info{min-height:54px!important}
   #gallery.view-list .folder-grid,#gallery.view-list .dedup-choices{grid-template-columns:1fr!important}
   #gallery.view-list .photo-card,#gallery.view-list .dedup-choice{width:100%!important;max-width:none!important}
@@ -4369,31 +4595,47 @@ function loadActivity(){
   }).catch(()=>{});
 }
 document.getElementById('activityRefresh').onclick=loadActivity;
-loadActivity();
+if('requestIdleCallback' in window)requestIdleCallback(loadActivity,{timeout:1500});
+else setTimeout(loadActivity,700);
 
 /* Gallery thumbnail zoom: Ctrl + wheel changes photo-card size, never page zoom. */
-let thumbSize=260;
+let thumbSize=260,thumbTarget=260,thumbRaf=0,thumbPersistTimer=0;
 try{
-  const saved=parseInt(localStorage.getItem('pc-thumb-size-v170')||'260',10);
+  const saved=parseInt(localStorage.getItem('pc-thumb-size-v180')||localStorage.getItem('pc-thumb-size-v170')||'260',10);
   if(Number.isFinite(saved))thumbSize=Math.min(420,Math.max(160,saved));
 }catch(_){}
-function applyThumbSize(v){
+thumbTarget=thumbSize;
+function applyThumbSize(v,persist=true){
   thumbSize=Math.min(420,Math.max(160,Math.round(v/10)*10));
+  thumbTarget=thumbSize;
   document.documentElement.style.setProperty('--thumb-size',thumbSize+'px');
   const range=document.getElementById('thumbSizeRange');
   const label=document.getElementById('thumbSizeValue');
   if(range)range.value=String(thumbSize);
   if(label)label.textContent=String(thumbSize);
-  try{localStorage.setItem('pc-thumb-size-v170',String(thumbSize));}catch(_){}
+  if(persist){
+    clearTimeout(thumbPersistTimer);
+    thumbPersistTimer=setTimeout(()=>{
+      try{localStorage.setItem('pc-thumb-size-v180',String(thumbSize));}catch(_){}
+    },120);
+  }
 }
-applyThumbSize(thumbSize);
+function queueThumbSize(v){
+  thumbTarget=Math.min(420,Math.max(160,Math.round(v/10)*10));
+  if(thumbRaf)return;
+  thumbRaf=requestAnimationFrame(()=>{
+    thumbRaf=0;
+    applyThumbSize(thumbTarget,true);
+  });
+}
+applyThumbSize(thumbSize,false);
 document.getElementById('thumbSizeRange').oninput=e=>applyThumbSize(Number(e.target.value));
 document.getElementById('thumbSmaller').onclick=()=>applyThumbSize(thumbSize-20);
 document.getElementById('thumbLarger').onclick=()=>applyThumbSize(thumbSize+20);
 document.querySelector('.main').addEventListener('wheel',e=>{
   if(!e.ctrlKey||document.getElementById('lightbox').classList.contains('open'))return;
   e.preventDefault();
-  applyThumbSize(thumbSize+(e.deltaY<0?20:-20));
+  queueThumbSize(thumbTarget+(e.deltaY<0?20:-20));
 },{passive:false});
 
 const WORKSPACE_COPY={
@@ -4464,14 +4706,10 @@ document.getElementById('openRankTool').onclick=()=>{
 document.getElementById('appExit').onclick=async()=>{
   let activeSteps=[],fileTasks=0;
   try{
-    const [rows,tasks]=await Promise.all([
-      Promise.all(['cull','dedup','rank'].map(step=>
-        fetch('/api/progress/'+step).then(r=>r.json()).then(d=>({step,running:!!d.running}))
-      )),
-      fetch('/api/tasks').then(r=>r.json()).catch(()=>({active:0}))
-    ]);
-    activeSteps=rows.filter(x=>x.running).map(x=>x.step);
-    fileTasks=Math.max(0,Number(tasks.active)||0);
+    const snap=await fetchRuntimeStatus(true);
+    const analysis=snap.analysis||{};
+    activeSteps=['cull','dedup','rank'].filter(step=>analysis[step]&&analysis[step].running);
+    fileTasks=Math.max(0,Number((snap.tasks||{}).active)||0);
   }catch(_){
     if(coreRunning)activeSteps.push('cull','dedup');
     if(isRunning&&runningStep)activeSteps.push(runningStep);
@@ -4512,25 +4750,42 @@ function taskLabel(d){
   return st&&st!=='待开始'?'待继续':'待开始';
 }
 let lastBackgroundActive=0,lastBackgroundFailed=-1,lastAutoSyncAt=0;
+let runtimeStatusCache=null,runtimeStatusAt=0,runtimeStatusPromise=null;
+function fetchRuntimeStatus(force=false){
+  const now=Date.now();
+  if(!force&&runtimeStatusCache&&now-runtimeStatusAt<350)return Promise.resolve(runtimeStatusCache);
+  if(runtimeStatusPromise)return runtimeStatusPromise;
+  runtimeStatusPromise=fetch('/api/status').then(async r=>{
+    const d=await r.json();
+    if(!r.ok)throw new Error(d.error||('HTTP '+r.status));
+    runtimeStatusCache=d;runtimeStatusAt=Date.now();return d;
+  }).finally(()=>{runtimeStatusPromise=null;});
+  return runtimeStatusPromise;
+}
 function fileTaskLabel(kind){
   return ({move_to_trash:'移入软件回收站',permanent_delete:'永久删除',
     restore_trash:'恢复照片',purge_trash:'清理软件回收站'})[kind]||'文件操作';
 }
-async function refreshTaskCenter(){
+let taskCenterTimer=0,taskCenterBusy=false;
+async function refreshTaskCenter(force=false){
+  if(taskCenterBusy)return;
+  taskCenterBusy=true;
+  let nextDelay=8000;
   try{
-    const [rows,tasks]=await Promise.all([
-      Promise.all(['cull','dedup','rank'].map(k=>fetch('/api/progress/'+k).then(r=>r.json()).catch(()=>null))),
-      fetch('/api/tasks').then(r=>r.json()).catch(()=>({active:0,counts:{}}))
-    ]);
+    const snap=await fetchRuntimeStatus(force);
+    const analysisSnap=snap.analysis||{};
+    const rows=['cull','dedup','rank'].map(k=>analysisSnap[k]||null);
+    const tasks=snap.tasks||{active:0,counts:{}};
     document.getElementById('taskCull').textContent=taskLabel(rows[0]);
     document.getElementById('taskDedup').textContent=taskLabel(rows[1]);
     document.getElementById('taskRank').textContent=taskLabel(rows[2]);
     const counts=tasks.counts||{};
     const analysis=rows.some(x=>x&&x.running),queued=Math.max(0,Number(tasks.active)||0);
     const failed=Math.max(0,Number(counts.failed)||0);
+    nextDelay=(analysis||queued)?1200:8000;
     const fileStatus=document.getElementById('taskFiles');
     const fileHint=document.getElementById('taskFileHint');
-    const latestFailed=(tasks.items||[]).find(x=>x&&x.state==='failed');
+    const latestFailed=tasks.latest_failed||null;
     if(queued){
       fileStatus.textContent=queued+' 个处理中 / 待处理';
     }else if(failed){
@@ -4556,12 +4811,20 @@ async function refreshTaskCenter(){
     }
     lastBackgroundActive=queued;
     lastBackgroundFailed=failed;
-  }catch(_){}
+  }catch(_){
+    nextDelay=4000;
+  }finally{
+    taskCenterBusy=false;
+    clearTimeout(taskCenterTimer);
+    if(!document.hidden)taskCenterTimer=setTimeout(()=>refreshTaskCenter(false),nextDelay);
+  }
 }
-setInterval(refreshTaskCenter,1400);
-window.addEventListener('focus',()=>{refreshTaskCenter();syncCurrentView();});
-document.addEventListener('visibilitychange',()=>{if(!document.hidden){refreshTaskCenter();syncCurrentView();}});
-refreshTaskCenter();
+window.addEventListener('focus',()=>{refreshTaskCenter(true);syncCurrentView();});
+document.addEventListener('visibilitychange',()=>{
+  clearTimeout(taskCenterTimer);
+  if(!document.hidden){refreshTaskCenter(true);syncCurrentView();}
+});
+refreshTaskCenter(true);
 
 /* settings panels per step */
 function settingsHTML(step){
@@ -5365,8 +5628,8 @@ async function refreshEnvironment(){
   }catch(_){}
 }
 loadShortcuts();
-setTimeout(refreshEnvironment,5000);
-setInterval(refreshEnvironment,60000);
+setTimeout(()=>{if(!document.hidden)refreshEnvironment();},5000);
+setInterval(()=>{if(!document.hidden)refreshEnvironment();},60000);
 document.getElementById('folderInput').onchange=e=>selectFolderValue(e.target.value);
 document.getElementById('folderInput').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();selectFolderValue(e.target.value);}};
 document.getElementById('browseBtn').onclick=async()=>{
@@ -5526,10 +5789,7 @@ function applyLatestCoreSnapshot(){
   const d=coreSnapshots[currentStep];
   if(!d)return;
   if(currentStep==='cull'){
-    const rows=d.photos||[];
-    cullLiveStore.clear();rows.forEach(p=>{if(p&&p.path)cullLiveStore.set(p.path,p);});
-    renderCullStep(Array.from(cullLiveStore.values()));
-    if(!d.running)maybeLoadAllCull(d);
+    loadCullPage(true);
   }else if(currentStep==='dedup'){
     loadDedupPage(true);
   }
@@ -5540,7 +5800,9 @@ document.getElementById('loadNewResults').onclick=applyLatestCoreSnapshot;
 async function pollCore(){
   if(corePollTimer){clearTimeout(corePollTimer);corePollTimer=null;}
   try{
-    const rows=await Promise.all(['cull','dedup'].map(k=>fetch('/api/progress/'+k).then(r=>r.json())));
+    const snap=await fetchRuntimeStatus(false);
+    const analysis=snap.analysis||{};
+    const rows=[analysis.cull||{},analysis.dedup||{}];
     coreSnapshots.cull=rows[0];coreSnapshots.dedup=rows[1];
     if(currentStep==='cull')updateVisibleStepStatus('cull',rows[0]);
     if(currentStep==='dedup')updateVisibleStepStatus('dedup',rows[1]);
@@ -5549,14 +5811,14 @@ async function pollCore(){
     coreRunning=any;
     setStartBtn(any);
     if(any){
-      corePollTimer=setTimeout(pollCore,900);
+      corePollTimer=setTimeout(pollCore,document.hidden?3500:900);
     }else{
       document.getElementById('progressText').textContent='后台分析已完成 · 点击“查看最新结果”统一载入';
       updateNewResultsButton();
     }
   }catch(err){
     document.getElementById('progressText').textContent='后台状态同步中断，将自动重试';
-    if(coreRunning)corePollTimer=setTimeout(pollCore,1400);
+    if(coreRunning)corePollTimer=setTimeout(pollCore,document.hidden?4000:1400);
   }
 }
 async function coreRun(){
@@ -5692,7 +5954,7 @@ function poll(step){
     .then(d=>{
       pollFailures=0;
       if(d.src_folder && folder && !sameFolder(d.src_folder,folder)){
-        setTimeout(()=>poll(step),800);
+        setTimeout(()=>poll(step),document.hidden?3500:800);
         return;
       }
       updateVisibleStepStatus(step,d);
@@ -5703,7 +5965,7 @@ function poll(step){
       }
 
       if(d.running){
-        setTimeout(()=>poll(step),800);
+        setTimeout(()=>poll(step),document.hidden?3500:800);
         return;
       }
 
@@ -5728,7 +5990,7 @@ function poll(step){
       pollFailures++;
       if(pollFailures<=5 && runningStep===step){
         document.getElementById('progressText').textContent='连接本地处理服务中…（'+pollFailures+'/5）';
-        setTimeout(()=>poll(step),800);
+        setTimeout(()=>poll(step),document.hidden?3500:800);
         return;
       }
       const msg='无法读取处理进度：'+(err&&err.message?err.message:'本地服务连接失败');
@@ -5879,6 +6141,34 @@ function renderDedupGroups(groups){
   g.innerHTML=html;
   updateResultTools();
 }
+function patchDedupGroupSelection(group){
+  if(!group)return false;
+  const node=document.querySelector('.dedup-group[data-group="'+String(group.group_id)+'"]');
+  if(!node)return false;
+  const members=group.members||[];
+  const byPath=new Map(members.map(p=>[p.path,p]));
+  node.querySelectorAll('.dedup-choice').forEach(card=>{
+    const p=byPath.get(card.dataset.path);if(!p)return;
+    const [label,badgeClass,cardState]=dedupMemberState(group,p);
+    card.classList.toggle('selected',group.status==='reviewed'&&!!p.selected);
+    card.classList.toggle('pending-delete',cardState==='pending-delete');
+    card.classList.toggle('trashed',cardState==='trashed');
+    const btn=card.querySelector('.dedup-recommend');
+    if(btn){
+      btn.className='dedup-recommend '+badgeClass;
+      btn.textContent=label;
+      btn.dataset.life=p.lifecycle||'normal';
+      btn.dataset.trashId=p.trash_id||'';
+      btn.disabled=['pending_trash','pending_permanent_delete','permanently_deleted','pending_restore'].includes(p.lifecycle||'normal');
+    }
+  });
+  const active=members.filter(visibleInReview);
+  const kept=active.filter(p=>p.selected).length;
+  const deleted=members.length-active.length;
+  const meta=node.querySelector('.dedup-group-meta');
+  if(meta)meta.textContent='保留 '+kept+' · 删除 '+deleted+' · 待处理 '+Math.max(0,active.length-kept);
+  return true;
+}
 
 document.getElementById('gallery').addEventListener('click',e=>{
   const complete=e.target.closest('.group-complete');
@@ -5913,7 +6203,8 @@ function selectDedupPhoto(groupId,path){
     .then(d=>{
       (d.photos||[]).forEach(g=>{if(g&&g.group_id!=null)dedupLiveStore.set(String(g.group_id),g);});
       if(d.changed_group&&d.changed_group.group_id!=null)dedupLiveStore.set(String(d.changed_group.group_id),d.changed_group);
-      renderDedupGroups(Array.from(dedupLiveStore.values()));
+      photos=Array.from(dedupLiveStore.values());
+      if(!patchDedupGroupSelection(d.changed_group))renderDedupGroups(photos);
       toast(d.selected?'已加入保留':'已取消保留','good');
     })
     .catch(err=>toast('切换失败：'+(err.message||'未知错误'),'bad'));
@@ -6214,6 +6505,19 @@ function cullCardHtml(p,idx){const path=escHtml(p.path);
     ${moveSel}${tierBadge}${stateBadge}
     ${p.thumb?`<img class="photo-img" src="${p.thumb}" loading="lazy" decoding="async">`:'<div class="photo-img" style="display:grid;place-items:center;background:var(--panel2)">文件已删除</div>'}
     <div class="photo-info"><div class="pi-row"><span class="photo-name">${escHtml(p.name)}</span><span class="ftype${p.raw?'':(p.heic?' heic':' jpg')}">${p.fmt||(p.raw?'RAW':p.heic?'HEIC':'JPG')}</span>${deleted?'':`<button class="delete-btn" data-step="cull" data-path="${path}" title="删除">🗑 删除</button>`}</div><div class="source-path">${escHtml(p.rel_dir||'当前文件夹')}</div></div></div>`;}
+function findCullCardNode(path){
+  const nodes=document.querySelectorAll('#gallery .photo-card[data-path]');
+  for(const node of nodes)if(node.dataset.path===path)return node;
+  return null;
+}
+function replaceCullCardNode(oldPath,p){
+  const node=findCullCardNode(oldPath)||findCullCardNode(p.path);
+  if(!node)return false;
+  const idx=Number(node.dataset.i||0);
+  const w=document.createElement('div');w.innerHTML=cullCardHtml(p,idx);
+  node.replaceWith(w.firstElementChild);
+  return true;
+}
 function syncCullCardNode(node,p,idx){
   const moveOn=p.move_selected!==false,life=cullLifecycleInfo(p),deleted=!!life;
   node.dataset.i=idx;node.dataset.tier=p.tier;node.dataset.life=p.lifecycle||'normal';
@@ -6329,10 +6633,13 @@ function updateCullMoveButton(){
 function applyMoveSelectionResponse(path,d){
   if(path){
     const pp=photos.find(x=>x.path===path);
-    if(pp)pp.move_selected=!!d.move_selected;
+    if(pp){
+      pp.move_selected=!!d.move_selected;
+      const node=findCullCardNode(path);
+      if(node)syncCullCardNode(node,pp,Number(node.dataset.i||0));
+    }
   }
   lastCullSig='';lastCullMoveSig='';
-  renderCullStep(photos);
   updateCullMoveButton();
   if(document.getElementById('lightbox').classList.contains('open')&&currentStep==='cull')showLb();
 }
@@ -6348,8 +6655,13 @@ function setAllBlurryMoveSelection(selected){
     body:JSON.stringify({all:selected})})
     .then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;})
     .then(d=>{
-      photos.forEach(p=>{if(p.tier==='blurry')p.move_selected=selected;});
-      lastCullSig='';lastCullMoveSig='';renderCullStep(photos);updateCullMoveButton();
+      photos.forEach(p=>{
+        if(p.tier!=='blurry')return;
+        p.move_selected=selected;
+        const node=findCullCardNode(p.path);
+        if(node)syncCullCardNode(node,p,Number(node.dataset.i||0));
+      });
+      lastCullSig='';lastCullMoveSig='';updateCullMoveButton();
       toast(selected?'已选择全部模糊照片':'已取消全部模糊照片的移动选择','good');
     }).catch(err=>toast('批量选择失败：'+(err.message||'未知错误'),'bad'));
 }
@@ -6360,8 +6672,17 @@ function cullSetTier(path,tier){
     .then(d=>{
       document.getElementById('sSharp').textContent=d.sharp;document.getElementById('sSoft').textContent=d.soft;document.getElementById('sBlurry').textContent=d.blurry;
       const pp=photos.find(x=>x.path===path||x.path===d.path);
-      if(pp){pp.tier=d.tier;pp.badge=d.badge;pp.badgeType=d.badgeType;pp.kept=d.kept;pp.rejected=!d.kept;pp.move_selected=!!d.move_selected;if(d.path)pp.path=d.path;if(d.thumb)pp.thumb=d.thumb;}
-      lastCullSig='';lastCullMoveSig='';renderCullStep(photos);updateCullMoveButton();
+      if(pp){
+        const oldPath=pp.path;
+        pp.tier=d.tier;pp.badge=d.badge;pp.badgeType=d.badgeType;pp.kept=d.kept;pp.rejected=!d.kept;pp.move_selected=!!d.move_selected;
+        if(d.path)pp.path=d.path;if(d.thumb)pp.thumb=d.thumb;
+        // The default "全部" view can update one card in place. Filtered
+        // views may gain/lose membership, so only those need a full reconcile.
+        if(cullFilter==='all')replaceCullCardNode(oldPath,pp);
+        else renderCullStep(photos);
+      }
+      lastCullSig='';lastCullMoveSig='';
+      setupFilterBar();updateCullMoveButton();
     }).catch(err=>toast('分类修改失败：'+(err.message||'未知错误'),'bad'));
 }
 
@@ -6494,10 +6815,28 @@ function barRow(label,v,info,cat,color){const t=(info||'').replace(/"/g,'&quot;'
   const fillBg=color?color:barColor(v);
   const labStyle=color?` style="color:${color};font-weight:600;border-left:3px solid ${color};padding-left:6px"`:'';
   return `<div class="bar${cat?' cat':''}" title="${label}: ${t}"><span class="lab"${labStyle}>${label}</span><span class="track"><span class="fill" style="width:${v}%;background:${fillBg}"></span></span><span class="num">${v}</span></div>`;}
+const exifCache=new Map();
+const fullImagePreloads=new Map();
+function preloadFullImage(path){
+  if(!path||fullImagePreloads.has(path))return;
+  const img=new Image();
+  img.src='/api/image?path='+encodeURIComponent(path);
+  fullImagePreloads.set(path,img);
+  if(fullImagePreloads.size>2){
+    const first=fullImagePreloads.keys().next().value;
+    const old=fullImagePreloads.get(first);
+    if(old)old.src='';
+    fullImagePreloads.delete(first);
+  }
+}
 function showLb(){
   const p=lbList[lbIndex];if(!p)return;
   resetLbZoom();
   document.getElementById('lbImg').src='/api/image?path='+encodeURIComponent(p.path);
+  const prev=lbList[(lbIndex-1+lbList.length)%lbList.length];
+  const next=lbList[(lbIndex+1)%lbList.length];
+  if(prev&&prev!==p)preloadFullImage(prev.path);
+  if(next&&next!==p)preloadFullImage(next.path);
   document.getElementById('lbName').textContent=(p.rank!=null?'#'+p.rank+'  ':'')+p.name;
   const extra=(currentStep==='dedup')
     ? ((p.group>1)?('   ·   同组最佳 · 共 '+p.group+' 张（'+(p.group-1)+' 张相似照片已归组）'):'   ·   原始照片')
@@ -6543,7 +6882,14 @@ function exifRow(label,val,allowHtml=false){
 }
 function loadExif(path,side){
   const token=path;side.dataset.exifToken=token;
-  fetch('/api/exif?path='+encodeURIComponent(path)).then(r=>r.json()).then(e=>{
+  const source=exifCache.has(path)
+    ?Promise.resolve(exifCache.get(path))
+    :fetch('/api/exif?path='+encodeURIComponent(path)).then(r=>r.json()).then(e=>{
+      exifCache.set(path,e);
+      if(exifCache.size>256)exifCache.delete(exifCache.keys().next().value);
+      return e;
+    });
+  source.then(e=>{
     if(side.dataset.exifToken!==token)return; // user moved on
     let rows='',wantMap=null;
     if(e.date)rows+=exifRow('日期',e.date);
@@ -7392,9 +7738,13 @@ def api_progress(step):
     if step == 'rank':
         s = state['rank']
         now = time.time()
-        if (not s['running']) or now - float(s.get('preview_at', 0.0)) >= 1.0:
+        if s['running'] and now - float(s.get('preview_at', 0.0)) >= 1.0:
+            # Live ranking preview is intentionally rate-limited. Once the task
+            # is idle, the revision cache below makes progress polling O(1).
             s['preview'] = build_topn()
             s['preview_at'] = now
+        elif not s['running']:
+            _get_rank_preview()
         return jsonify({'running': s['running'], 'complete': bool(s.get('complete')),
                         'progress': s['progress'], 'status': s['status'],
                         'src_folder': s.get('src_folder'), 'photos': s.get('preview', []),
@@ -7489,7 +7839,7 @@ def api_dedup_select():
         for p in (g.get('selected_paths') or [])
     ]
     s['photos'] = [g for g in s.get('groups_data', []) if g.get('count', 0) > 1]
-    state['rank']['preview_at'] = 0.0
+    _invalidate_rank_preview()
     _activity('相似组选优', path, '保留' if now_selected else '取消保留')
     return jsonify({'ok': True, 'photos': s['photos'][:UI_RESULT_CHUNK],
                     'changed_group': group,
@@ -7572,7 +7922,7 @@ def api_dedup_group_action():
         p for g in s.get('groups_data', []) for p in (g.get('selected_paths') or [])
     ]
     s['photos'] = [g for g in s.get('groups_data', []) if g.get('count', 0) > 1]
-    state['rank']['preview_at'] = 0.0
+    _invalidate_rank_preview()
     _activity('相似组选优', '', f'组 {gid} · {mode} · 保留 {len(selected)} 张')
     return jsonify({'ok': True, 'photos': s['photos'][:UI_RESULT_CHUNK],
                     'changed_group': group,
@@ -7814,6 +8164,55 @@ def api_delete_photo():
     }), 202
 
 
+def _analysis_status_snapshot(step):
+    s = state[step]
+    payload = {
+        'running': bool(s.get('running')),
+        'complete': bool(s.get('complete')),
+        'progress': int(s.get('progress') or 0),
+        'status': str(s.get('status') or ''),
+        'src_folder': s.get('src_folder'),
+    }
+    if step == 'cull':
+        payload['result_total'] = len(s.get('photos') or [])
+        payload['stats'] = {
+            'images': len(s.get('photos') or []),
+            'sharp': int(s.get('sharp') or 0),
+            'soft': int(s.get('soft') or 0),
+            'blurry': int(s.get('blurry') or 0),
+        }
+    elif step == 'dedup':
+        groups = s.get('photos') or []
+        # Hot status polling must stay O(1). Per-status counts are calculated by
+        # /api/results/dedup only when that filtered result view is requested.
+        payload['result_total'] = len(groups)
+        payload['stats'] = {
+            'groups': int(s.get('groups') or 0),
+            'duplicate_groups': len(groups),
+        }
+    elif step == 'rank':
+        payload['result_total'] = len(s.get('preview') or [])
+        payload['stats'] = {
+            'images': int(s.get('total') or 0),
+            'cache_hits': int(s.get('cache_hits') or 0),
+        }
+    return payload
+
+
+@app.route('/api/status')
+def api_status():
+    """Compact hot-path snapshot: no thumbnails and no result payloads."""
+    tasks = TASK_MANAGER.status_snapshot()
+    return jsonify({
+        'analysis': {
+            key: _analysis_status_snapshot(key)
+            for key in ('cull', 'dedup', 'rank')
+        },
+        'tasks': tasks,
+        'scan': current_scan_snapshot(state.get('folder')),
+    })
+
+
 @app.route('/api/tasks')
 def api_tasks():
     """Lightweight task-center snapshot for the desktop UI / tray."""
@@ -7844,9 +8243,8 @@ def api_weights():
         return jsonify({'error': '评分参数无效'}), 400
     state['weights'] = clean
     state['topn'] = topn
-    state['rank']['preview'] = build_topn()
-    state['rank']['preview_at'] = time.time()
-    return jsonify({'ok': True, 'photos': state['rank']['preview']})
+    _invalidate_rank_preview()
+    return jsonify({'ok': True, 'photos': _get_rank_preview()})
 
 def _active_task_name():
     """Return the currently running processing step, if any."""
@@ -7881,7 +8279,8 @@ def api_exclude():
     if not _known_rank_path(path):
         return jsonify({'error': '当前优选结果中未找到这张照片'}), 404
     state['excluded'].add(path)
-    return jsonify({'ok': True, 'removed': len(state['excluded']), 'photos': build_topn()})
+    _invalidate_rank_preview()
+    return jsonify({'ok': True, 'removed': len(state['excluded']), 'photos': _get_rank_preview()})
 
 @app.route('/api/restore', methods=['POST'])
 def api_restore():
@@ -7893,7 +8292,8 @@ def api_restore():
         if not _known_rank_path(path):
             return jsonify({'error': '当前优选结果中未找到这张照片'}), 404
         state['excluded'].discard(path)
-    return jsonify({'ok': True, 'removed': len(state['excluded']), 'photos': build_topn()})
+    _invalidate_rank_preview()
+    return jsonify({'ok': True, 'removed': len(state['excluded']), 'photos': _get_rank_preview()})
 
 @app.route('/api/toggle-status', methods=['POST'])
 def api_toggle_status():
@@ -7931,7 +8331,7 @@ def api_toggle_status():
         sp.append(new_path)
         _request_rank_score(new_path)
     else:
-        state['rank']['preview_at'] = 0.0
+        _invalidate_rank_preview()
     s['sharp'] = sum(1 for p in s['photos'] if p['tier'] == 'sharp')
     s['soft'] = sum(1 for p in s['photos'] if p['tier'] == 'soft')
     s['blurry'] = sum(1 for p in s['photos'] if p['tier'] == 'blurry')
@@ -8047,7 +8447,8 @@ def api_export():
     if not folder or not Path(folder).is_dir():
         return jsonify({'error': '未选择有效的照片文件夹'}), 400
 
-    top = build_topn(topn=topn)
+    top = (_get_rank_preview() if topn == int(state.get('topn') or 50)
+           else build_topn(topn=topn))
     if not top:
         return jsonify({'error': '当前没有可导出的优选照片'}), 400
 
@@ -8138,7 +8539,7 @@ def api_export_phonebg():
     if not folder or not Path(folder).is_dir():
         return jsonify({'error': '未选择有效的照片文件夹'}), 400
 
-    top = build_topn()
+    top = _get_rank_preview()
     flagged = [item for item in top if item['path'] in state['phone_bg']]
     if not flagged:
         return jsonify({'ok': True, 'copied': 0, 'cropped': 0, 'failed': 0,

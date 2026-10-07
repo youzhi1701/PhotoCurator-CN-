@@ -4,7 +4,9 @@
 
 from __future__ import annotations
 
+import json
 import os
+import re
 import tempfile
 from pathlib import Path
 
@@ -128,7 +130,71 @@ def main():
         os.replace(db, moved_db)
         os.replace(moved_db, db)
 
-    print("Release gate invariants OK")
+    # Performance architecture is a release invariant too. These source-level
+    # checks protect hot paths from silently regressing in later UI work.
+    core = Path("photo_curator.py").read_text(encoding="utf-8")
+    catalog_src = Path("catalog.py").read_text(encoding="utf-8")
+    db_src = Path("db_runtime.py").read_text(encoding="utf-8")
+    tasks_src = Path("background_tasks.py").read_text(encoding="utf-8")
+    manifest = json.loads(
+        Path("packaging/release_manifest.json").read_text(encoding="utf-8")
+    )
+    version = re.search(r'^APP_VERSION = "([^"]+)"', core, re.M)
+    require(version and version.group(1) == str(manifest["version"]),
+            "runtime / release manifest version mismatch")
+    require("@app.route('/api/status')" in core,
+            "compact runtime status endpoint missing")
+    require("def status_snapshot(self):" in tasks_src,
+            "compact task status snapshot missing")
+    require("FOREGROUND_PRIORITY_MAX = 50" in tasks_src
+            and "AND priority<=?" in tasks_src,
+            "maintenance tasks can incorrectly throttle foreground analysis")
+    require("setInterval(refreshTaskCenter" not in core,
+            "task center regressed to unconditional fixed polling")
+    require("fetchRuntimeStatus" in core and "runtimeStatusCache" in core,
+            "runtime status request coalescing missing")
+    require("nextDelay=(analysis||queued)?1200:8000" in core,
+            "active/idle adaptive task polling missing")
+
+    scan_start = core.index("def _shared_list_images")
+    scan_end = core.index("def current_scan_snapshot", scan_start)
+    scan_src = core[scan_start:scan_end]
+    require("ready_paths = tuple(paths)" in scan_src,
+            "shared scan immutable snapshot missing")
+    require("entry['paths'] = list(paths)" not in scan_src,
+            "shared scan regressed to repeated full-list copies")
+
+    require("idx_media_catalog_current_path" in catalog_src
+            and "idx_media_catalog_original_path" in catalog_src,
+            "catalog path indexes missing")
+    require("_SCHEMA_READY" in catalog_src and "_SCHEMA_INIT_LOCK" in catalog_src,
+            "catalog schema one-time initialization guard missing")
+    require("_WAL_READY" in db_src and "_WAL_LOCK" in db_src,
+            "SQLite WAL one-time initialization guard missing")
+    require("_ALLOWED_ROOTS_CACHE_KEY" in core and "_RECENTS_CACHE" in core,
+            "thumbnail security-root cache missing")
+    require("def _catalog_media_id_cached" in core,
+            "thumbnail media-id cache missing")
+
+    require("queueThumbSize" in core and "requestAnimationFrame" in core,
+            "thumbnail resize is not frame-coalesced")
+    require(".folder-group,.dedup-group,.photo-card,.dedup-choice{backdrop-filter:none!important" in core,
+            "high-cardinality gallery blur returned")
+    require("grid-template-columns:repeat(auto-fill,minmax(min(var(--thumb-size),100%),1fr))" in core,
+            "adaptive gallery fill contract missing")
+    require(".photo-card,.dedup-choice{content-visibility:auto" in core,
+            "off-screen card rendering guard missing")
+    require("images, scan_fingerprints = _shared_list_images" in core
+            and "fingerprints = scan_fingerprints" in core,
+            "Cull scan-fingerprint reuse missing")
+    require("dedup_fingerprints = scan_fingerprints" in core,
+            "Dedup scan-fingerprint reuse missing")
+    require("rank_fingerprints = _fingerprints(paths)" in core,
+            "Rank metadata reuse missing")
+    require("Path(it['path']).is_file()" not in core,
+            "Cull live classification regressed to repeated filesystem probes")
+
+    print("Release gate invariants + performance architecture OK")
 
 
 if __name__ == "__main__":

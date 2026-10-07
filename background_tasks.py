@@ -15,6 +15,11 @@ from db_runtime import connect_db
 
 logger = logging.getLogger(__name__)
 
+# Lower numeric priority runs first. Only direct user file operations should
+# pre-empt analysis; maintenance such as offline-preview generation uses high
+# numeric priorities and must never throttle Cull/Dedup merely by existing.
+FOREGROUND_PRIORITY_MAX = 50
+
 class BackgroundTaskManager:
     def __init__(self, db_path, workers=2):
         self.db_path = Path(db_path)
@@ -24,8 +29,10 @@ class BackgroundTaskManager:
         self._cv = threading.Condition()
         self._foreground_pressure = threading.Event()
         self._threads = []
+        self._completed_since_prune = 0
         self._init_db()
         self._recover_interrupted()
+        self._prune_history()
         for i in range(self.workers):
             worker = threading.Thread(
                 target=self._worker, daemon=True,
@@ -69,8 +76,31 @@ class BackgroundTaskManager:
             for task_id, priority in rows:
                 self._seq += 1
                 heapq.heappush(self._heap, (int(priority), self._seq, int(task_id)))
-            if rows:
+            if any(int(priority) <= FOREGROUND_PRIORITY_MAX for _, priority in rows):
                 self._foreground_pressure.set()
+
+    def _prune_history(self):
+        """Keep the durable queue bounded without touching active work."""
+        try:
+            with self._connect() as db:
+                db.execute(
+                    """DELETE FROM background_task
+                       WHERE state='done' AND id NOT IN (
+                         SELECT id FROM background_task
+                         WHERE state='done' ORDER BY id DESC LIMIT 2000
+                       )"""
+                )
+                db.execute(
+                    """DELETE FROM background_task
+                       WHERE state='failed' AND id NOT IN (
+                         SELECT id FROM background_task
+                         WHERE state='failed' ORDER BY id DESC LIMIT 500
+                       )"""
+                )
+                db.commit()
+            self._completed_since_prune = 0
+        except Exception:
+            logger.debug("background task history prune skipped", exc_info=True)
 
     def register(self, kind, handler):
         self.handlers[str(kind)] = handler
@@ -96,7 +126,8 @@ class BackgroundTaskManager:
         with self._cv:
             self._seq += 1
             heapq.heappush(self._heap, (int(priority), self._seq, task_id))
-            self._foreground_pressure.set()
+            if int(priority) <= FOREGROUND_PRIORITY_MAX:
+                self._foreground_pressure.set()
             self._cv.notify()
         return task_id, True
 
@@ -141,6 +172,9 @@ class BackgroundTaskManager:
                     db.execute("UPDATE background_task SET state='done',updated_at=?,error=NULL,result_json=? WHERE id=?",
                                (time.time(), json.dumps(result, ensure_ascii=False, default=str), task_id))
                     db.commit()
+                self._completed_since_prune += 1
+                if self._completed_since_prune >= 128:
+                    self._prune_history()
                 self._refresh_pressure()
             except Exception as exc:
                 logger.exception("background task %s failed", task_id)
@@ -161,7 +195,9 @@ class BackgroundTaskManager:
         try:
             with self._connect() as db:
                 active = db.execute(
-                    "SELECT COUNT(*) FROM background_task WHERE state IN ('queued','running')"
+                    """SELECT COUNT(*) FROM background_task
+                       WHERE state IN ('queued','running') AND priority<=?""",
+                    (FOREGROUND_PRIORITY_MAX,),
                 ).fetchone()[0]
             if int(active or 0) > 0:
                 self._foreground_pressure.set()
@@ -169,6 +205,36 @@ class BackgroundTaskManager:
                 self._foreground_pressure.clear()
         except Exception:
             pass
+
+    def status_snapshot(self):
+        """Compact hot-path status for UI polling.
+
+        The task center only needs aggregate counts plus the most recent failure.
+        Avoid materializing the latest 30 rows every second while work is active.
+        """
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT state,COUNT(*) FROM background_task GROUP BY state"
+            ).fetchall()
+            failed = db.execute(
+                """SELECT id,kind,state,priority,created_at,updated_at,error
+                   FROM background_task
+                   WHERE state='failed'
+                   ORDER BY id DESC LIMIT 1"""
+            ).fetchone()
+        counts = {str(k): int(v) for k, v in rows}
+        latest_failed = None
+        if failed:
+            latest_failed = {
+                "id": int(failed[0]), "kind": failed[1], "state": failed[2],
+                "priority": int(failed[3]), "created_at": float(failed[4]),
+                "updated_at": float(failed[5]), "error": failed[6] or "",
+            }
+        return {
+            "counts": counts,
+            "active": counts.get("queued", 0) + counts.get("running", 0),
+            "latest_failed": latest_failed,
+        }
 
     def summary(self):
         with self._connect() as db:

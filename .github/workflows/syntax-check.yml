@@ -287,7 +287,7 @@ jobs:
           print("UI bootstrap order + critical interaction bindings OK")
           PY
 
-      - name: Check v1.5.0 runtime architecture
+      - name: Check stable runtime architecture
         run: |
           python - <<'PY'
           from pathlib import Path
@@ -319,7 +319,9 @@ jobs:
               "'trash_path': planned_trash",
               "'restore_path': restore_path",
               "'recovered': True",
+              "@app.route('/api/status')",
               "@app.route('/api/tasks')",
+              "fetchRuntimeStatus",
               "function coreRun()",
               "const coreSteps=['cull','dedup'];",
               "Promise.allSettled",
@@ -346,7 +348,7 @@ jobs:
           ]
           missing = [x for x in required_core if x not in core]
           if missing:
-              raise SystemExit("v1.5.0 core architecture regression: " + repr(missing))
+              raise SystemExit("core architecture regression: " + repr(missing))
 
           required_tasks = [
               "CREATE TABLE IF NOT EXISTS background_task",
@@ -356,6 +358,7 @@ jobs:
               "state='done'",
               "state='failed'",
               "def enqueue",
+              "def status_snapshot",
               "def summary",
           ]
           missing = [x for x in required_tasks if x not in tasks]
@@ -399,9 +402,9 @@ jobs:
           ]
           leftovers = [x for x in banned if x in (core + requirements)]
           if leftovers:
-              raise SystemExit("v1.5.0 legacy behavior returned: " + repr(leftovers))
+              raise SystemExit("legacy behavior returned: " + repr(leftovers))
 
-          print("v1.5.0 runtime architecture guards OK")
+          print("Stable runtime architecture guards OK")
           PY
 
       - name: Check core workflow and large-library guards
@@ -429,7 +432,7 @@ jobs:
               "data-view=\"small\"",
               "Gallery thumbnail zoom: Ctrl + wheel changes photo-card size, never page zoom.",
               "begin_catalog_scan(INDEX_DB, folder)",
-              "catalog_scan_batch(INDEX_DB, scan_session, pending_catalog)",
+              "fingerprints=scan_fingerprints",
               "finish_catalog_scan(",
               "note_catalog_scan_error(",
               "@app.route('/api/sources')",
@@ -451,7 +454,7 @@ jobs:
               "note_catalog_scan_error(",
               "on_error=_scan_walk_error",
               "begin_catalog_scan(INDEX_DB, folder)",
-              "catalog_scan_batch(INDEX_DB, scan_session, pending_catalog)",
+              "fingerprints=scan_fingerprints",
               "finish_catalog_scan(",
               "abort_catalog_scan(INDEX_DB, scan_session, str(exc))",
               "while entry and entry.get('state') == 'scanning':",
@@ -482,7 +485,7 @@ jobs:
           dedup_block = source.split("def run_dedup(", 1)[1].split(
               "# --------------------------------------------------------------------------- #\n#  RANK", 1
           )[0]
-          if "paths = _shared_list_images(folder, recursive=recursive)" not in dedup_block:
+          if "paths, scan_fingerprints = _shared_list_images(folder, recursive=recursive)" not in dedup_block:
               raise SystemExit("Dedup must reuse the shared source enumeration snapshot")
 
           run_api = source.split("@app.route('/api/run/<step>'", 1)[1].split(
@@ -567,12 +570,13 @@ jobs:
               "function showDashboard(",
               "function showPhotoView(",
               "function visibleInReview(",
-              "repeat(auto-fill,var(--thumb-size))",
-              "pc-thumb-size-v170",
+              "repeat(auto-fill,minmax(min(var(--thumb-size),100%),1fr))",
+              "pc-thumb-size-v180",
+              "queueThumbSize",
           )
           missing_ui = [item for item in required_ui if item not in ui]
           if missing_ui:
-              raise SystemExit("v1.7.0 workspace contract missing: " + repr(missing_ui))
+              raise SystemExit("v1.8.0 workspace contract missing: " + repr(missing_ui))
 
           shortcuts = core.split("@app.route('/api/shortcuts')", 1)[1].split(
               "@app.route('/api/sources')", 1
@@ -591,8 +595,8 @@ jobs:
               )
           if "catalog_list_sources(INDEX_DB, refresh=False)" not in shortcuts:
               raise SystemExit("First-paint source list must not probe physical drives")
-          if "setTimeout(refreshEnvironment,5000)" not in core:
-              raise SystemExit("Physical-drive refresh must be deferred after first paint")
+          if "setTimeout(()=>{if(!document.hidden)refreshEnvironment();},5000)" not in core:
+              raise SystemExit("Physical-drive refresh must be deferred after first paint and skipped while hidden")
 
           if "PILLOW_IMG_EXTS" not in core or "Image.registered_extensions()" not in core:
               raise SystemExit("Image discovery must follow installed decoder capability")
@@ -690,9 +694,9 @@ jobs:
               "function askDeleteMode",
               "function askBatchConfirm",
               "document.getElementById('appExit').onclick=async()=>",
-              "fetch('/api/tasks')",
+              "fetchRuntimeStatus",
               "document.getElementById('taskFiles')",
-              "const latestFailed=(tasks.items||[]).find",
+              "const latestFailed=tasks.latest_failed||null",
               "后台文件任务失败，请打开任务中心查看",
               "未完成的文件任务已持久化，将在下次启动后自动继续",
               "Promise.allSettled(activeSteps.map(step=>fetch('/api/stop/'+step",
