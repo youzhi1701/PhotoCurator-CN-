@@ -239,7 +239,7 @@ def _windows_work_area(point=None):
     """Return the Windows work area for a screen point.
 
     The desktop runtime stays on the proven pywebview lifecycle: this uses only
-    monitor geometry APIs and never reaches into window.native/DWM handles.
+    monitor geometry APIs and never reaches into pywebview native/DWM handles.
     """
     if os.name != "nt":
         return None
