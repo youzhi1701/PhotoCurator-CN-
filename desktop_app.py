@@ -417,6 +417,12 @@ def main():
             "请安装或修复 Microsoft Edge WebView2 Runtime。"
         ) from exc
     finally:
+        # Covers browser fallback, tray failure and native window teardown too.
+        # Explicit exits already call this helper; repeating it is harmless.
+        try:
+            stop_analysis_and_wait()
+        except Exception:
+            pass
         try:
             if tray is not None:
                 tray.stop()
