@@ -587,29 +587,46 @@ def storage_summary(data_root, db_path):
                 continue
         return total
 
+    thumb_dir = data_root / "cache" / "thumbnails"
+    persistent_preview_bytes = 0
+    temporary_preview_bytes = 0
+    if thumb_dir.is_dir():
+        for p in thumb_dir.iterdir():
+            if not p.is_file():
+                continue
+            try:
+                size = int(p.stat().st_size)
+            except OSError:
+                continue
+            if p.name.startswith("catalog_") and p.suffix.lower() == ".jpg":
+                persistent_preview_bytes += size
+            else:
+                temporary_preview_bytes += size
+
     db_bytes = tree_size(db_path)
-    preview_bytes = tree_size(data_root / "cache" / "thumbnails")
     feature_bytes = tree_size(data_root / "config" / "dedup_features")
     log_bytes = tree_size(data_root / "logs")
     demo_bytes = tree_size(data_root / "内置测试数据")
-    total = db_bytes + preview_bytes + feature_bytes + log_bytes + demo_bytes
+    total = (
+        db_bytes + persistent_preview_bytes + temporary_preview_bytes
+        + feature_bytes + log_bytes + demo_bytes
+    )
     return {
         "data_root": str(data_root),
         "database_bytes": db_bytes,
-        "preview_cache_bytes": preview_bytes,
+        "persistent_preview_bytes": persistent_preview_bytes,
+        "preview_cache_bytes": temporary_preview_bytes,
         "dedup_feature_bytes": feature_bytes,
         "log_bytes": log_bytes,
         "demo_bytes": demo_bytes,
         "total_bytes": total,
     }
 
-
 def clear_rebuildable_storage(data_root, category):
     """Clear only rebuildable runtime data; never touch catalog databases."""
     data_root = Path(data_root)
     category = str(category or "").strip().lower()
     targets = {
-        "previews": data_root / "cache" / "thumbnails",
         "features": data_root / "config" / "dedup_features",
     }
     if category == "logs":
@@ -626,6 +643,26 @@ def clear_rebuildable_storage(data_root, category):
                     removed += 1
                 except OSError:
                     continue
+        return {"category": category, "removed": removed, "freed_bytes": freed}
+
+    if category == "previews":
+        target = data_root / "cache" / "thumbnails"
+        removed = 0
+        freed = 0
+        if target.is_dir():
+            for p in target.iterdir():
+                if not p.is_file():
+                    continue
+                # catalog_* previews are durable offline-library assets.
+                if p.name.startswith("catalog_") and p.suffix.lower() == ".jpg":
+                    continue
+                try:
+                    freed += int(p.stat().st_size)
+                    p.unlink()
+                    removed += 1
+                except OSError:
+                    continue
+        target.mkdir(parents=True, exist_ok=True)
         return {"category": category, "removed": removed, "freed_bytes": freed}
 
     target = targets.get(category)
