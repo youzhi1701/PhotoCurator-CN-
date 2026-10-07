@@ -134,6 +134,22 @@ except Exception:
 URL = f"http://{HOST}:{PORT}"
 
 
+def stop_analysis_and_wait(timeout=3.0):
+    """Request every analysis worker to stop before an explicit process exit."""
+    active = [
+        key for key in ('cull', 'dedup', 'rank')
+        if state.get(key, {}).get('running')
+    ]
+    for key in active:
+        state[key]['cancel'] = True
+    deadline = time.monotonic() + max(0.0, float(timeout))
+    while active and time.monotonic() < deadline:
+        if all(not state.get(key, {}).get('running') for key in active):
+            break
+        time.sleep(0.05)
+    return all(not state.get(key, {}).get('running') for key in active)
+
+
 def resource_path(*parts):
     base = Path(getattr(sys, "_MEIPASS", INSTALL_ROOT))
     return base.joinpath(*parts)
@@ -186,6 +202,7 @@ class DesktopApi:
             return True
         if action == 'exit':
             self.allow_exit = True
+            stop_analysis_and_wait()
             try:
                 TASK_MANAGER.shutdown()
             except Exception:
@@ -314,6 +331,7 @@ def main():
 
     def exit_from_tray(icon=None, item=None):
         desktop_api.allow_exit = True
+        stop_analysis_and_wait()
         try:
             TASK_MANAGER.shutdown()
         except Exception:
