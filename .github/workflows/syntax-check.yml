@@ -355,6 +355,9 @@ jobs:
               "function askBatchConfirm",
               "document.getElementById('appExit').onclick=async()=>",
               "fetch('/api/tasks')",
+              "id=\"taskFiles\"",
+              "const latestFailed=(tasks.items||[]).find",
+              "后台文件任务失败，请打开任务中心查看",
               "未完成的文件任务已持久化，将在下次启动后自动继续",
               "Promise.allSettled(activeSteps.map(step=>fetch('/api/stop/'+step",
           ]
