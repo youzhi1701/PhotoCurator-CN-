@@ -42,6 +42,13 @@ from photo_ranking_v3 import AdvancedPhotoAnalyzer, PhotoScoreV3
 from photo_dedup_batch import FastBatchDeduplicator
 from background_tasks import BackgroundTaskManager
 from runtime_paths import resolve_data_root
+from catalog import (
+    catalog_media_scan,
+    init_catalog_schema,
+    list_sources as catalog_list_sources,
+    register_source as catalog_register_source,
+    storage_summary as catalog_storage_summary,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -631,6 +638,7 @@ def _save_rank_scores_batch(rows):
 
 try:
     _db_init()
+    init_catalog_schema(INDEX_DB)
 except Exception:
     logger.warning("library index unavailable", exc_info=True)
 
@@ -2119,6 +2127,16 @@ def _shared_list_images(folder, recursive=True, max_age=2.0):
 
     try:
         paths = list_images(folder, recursive=recursive)
+        if producer:
+            try:
+                catalog_media_scan(
+                    INDEX_DB,
+                    folder,
+                    paths,
+                    full_scan=bool(recursive),
+                )
+            except Exception:
+                logger.warning("catalog source/media snapshot update failed", exc_info=True)
     except Exception as exc:
         with _SCAN_SNAPSHOT_CV:
             _SCAN_SNAPSHOTS[key] = {'state': 'failed', 'at': time.time(), 'error': str(exc)}
@@ -5450,16 +5468,40 @@ def api_shortcuts():
         except Exception:
             recent.append(item)
 
+    try:
+        sources = catalog_list_sources(INDEX_DB)
+    except Exception:
+        sources = []
+        logger.warning("data source catalog list failed", exc_info=True)
+
     return jsonify({
         'sd': [] if CODESPACES_PUBLIC_HOST else detect_sd_cards(),
         'recent': recent,
+        'sources': sources,
         'rawpy': HAS_RAWPY,
         'heif': HAS_HEIF,
         'codespaces': bool(CODESPACES_PUBLIC_HOST),
         'demo_folder': demo_folder,
-        'demo_count': 12 if demo_folder else 0,
-        'demo_breakdown': {'sharp': 4, 'soft': 4, 'blurry': 4} if demo_folder else {},
+        'demo_count': 36 if demo_folder else 0,
+        'demo_breakdown': {'sharp': 12, 'soft': 12, 'blurry': 12} if demo_folder else {},
     })
+
+
+@app.route('/api/sources')
+def api_sources():
+    try:
+        return jsonify({'sources': catalog_list_sources(INDEX_DB)})
+    except Exception as exc:
+        logger.warning("data source catalog list failed", exc_info=True)
+        return jsonify({'sources': [], 'error': str(exc)}), 500
+
+
+@app.route('/api/storage-summary')
+def api_storage_summary():
+    try:
+        return jsonify(catalog_storage_summary(DATA_ROOT, INDEX_DB))
+    except Exception as exc:
+        return jsonify({'error': str(exc)}), 500
 
 
 @app.route('/api/browse', methods=['POST'])
@@ -5468,7 +5510,12 @@ def api_browse():
     if folder and Path(folder).is_dir():
         state['folder'] = folder
         save_recent(folder)
-        return jsonify({'folder': folder})
+        source = None
+        try:
+            source = catalog_register_source(INDEX_DB, folder)
+        except Exception:
+            logger.warning("data source registration failed", exc_info=True)
+        return jsonify({'folder': folder, 'source': source})
     return jsonify({'folder': None})
 
 
