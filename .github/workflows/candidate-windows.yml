@@ -18,6 +18,8 @@ jobs:
     runs-on: windows-latest
     env:
       CANDIDATE_VERSION: "1.7.0"
+      PYTHONUTF8: "1"
+      PYTHONIOENCODING: "utf-8"
 
     steps:
       - uses: actions/checkout@v7
@@ -103,10 +105,15 @@ jobs:
         shell: powershell
         run: |
           python -m py_compile db_runtime.py desktop_app.py runtime_paths.py catalog.py photo_curator.py background_tasks.py raw_loader.py ui_smoke_test.py windows_smoke_test.py
-          python "基础冒烟测试.py"
+          if ($LASTEXITCODE -ne 0) { throw "py_compile failed" }
+          python -c "import runpy; runpy.run_path('\u57fa\u7840\u5192\u70df\u6d4b\u8bd5.py', run_name='__main__')"
+          if ($LASTEXITCODE -ne 0) { throw "base smoke test failed" }
           python release_gate_test.py
+          if ($LASTEXITCODE -ne 0) { throw "release_gate_test failed" }
           python ui_smoke_test.py
+          if ($LASTEXITCODE -ne 0) { throw "ui_smoke_test failed" }
           pip-audit -r requirements.txt
+          if ($LASTEXITCODE -ne 0) { throw "pip-audit failed" }
 
       - name: Build approved app icon
         shell: powershell
@@ -205,7 +212,7 @@ jobs:
               [DllImport("user32.dll")] public static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint flags);
               [DllImport("user32.dll")] public static extern bool GetMonitorInfo(IntPtr hMonitor, ref MONITORINFO info);
             }
-'@
+          '@
             $wr = New-Object PhotoCuratorGeometry+RECT
             if (-not [PhotoCuratorGeometry]::GetWindowRect($p.MainWindowHandle, [ref]$wr)) {
               throw "Unable to read candidate window geometry"

@@ -428,7 +428,10 @@ jobs:
               "data-view=\"list\"",
               "data-view=\"small\"",
               "Gallery thumbnail zoom: Ctrl + wheel changes photo-card size, never page zoom.",
-              "catalog_media_scan(",
+              "begin_catalog_scan(INDEX_DB, folder)",
+              "catalog_scan_batch(INDEX_DB, scan_session, pending_catalog)",
+              "finish_catalog_scan(",
+              "note_catalog_scan_error(",
               "@app.route('/api/sources')",
               "id=\"sourcesList\"",
               "id=\"thumbSizeRange\"",
@@ -444,7 +447,9 @@ jobs:
               "# --------------------------------------------------------------------------- #\n#  CULL", 1
           )[0]
           required_scan = [
-              "for p in iter_images(folder, recursive=recursive):",
+              "def _scan_walk_error(exc):",
+              "note_catalog_scan_error(",
+              "on_error=_scan_walk_error",
               "begin_catalog_scan(INDEX_DB, folder)",
               "catalog_scan_batch(INDEX_DB, scan_session, pending_catalog)",
               "finish_catalog_scan(",
@@ -498,6 +503,7 @@ jobs:
       - name: Check stable Windows shell contract
         run: |
           python - <<'PY'
+          import ast
           from pathlib import Path
 
           desktop = Path("desktop_app.py").read_text(encoding="utf-8")
@@ -601,21 +607,38 @@ jobs:
               raise SystemExit("Periodic environment refresh must not scan camera-card filesystems")
 
           catalog = Path("catalog.py").read_text(encoding="utf-8")
-          mount_probe = catalog.split("def _mounted_volume_map()", 1)[1].split(
-              "def refresh_connections", 1
-          )[0]
-          for banned_probe in (
-              "volume_info_for_path(",
-              "Path.resolve(",
-              "shutil.disk_usage(",
-              "os.stat(",
-              "os.scandir(",
-          ):
-              if banned_probe in mount_probe:
-                  raise SystemExit(
-                      "Periodic mounted-volume probe performs blocking filesystem work: "
-                      + banned_probe
-                  )
+          catalog_tree = ast.parse(catalog)
+          mount_fn = next(
+              (
+                  node for node in catalog_tree.body
+                  if isinstance(node, ast.FunctionDef)
+                  and node.name == "_mounted_volume_map"
+              ),
+              None,
+          )
+          if mount_fn is None:
+              raise SystemExit("Mounted-volume presence probe is missing")
+
+          blocking_calls = []
+          for call in (node for node in ast.walk(mount_fn) if isinstance(node, ast.Call)):
+              fn = call.func
+              if isinstance(fn, ast.Name) and fn.id == "volume_info_for_path":
+                  blocking_calls.append("volume_info_for_path")
+                  continue
+              if not isinstance(fn, ast.Attribute):
+                  continue
+              owner = fn.value.id if isinstance(fn.value, ast.Name) else ""
+              qualified = f"{owner}.{fn.attr}" if owner else fn.attr
+              if (
+                  qualified in {"shutil.disk_usage", "os.stat", "os.scandir", "Path.resolve"}
+                  or fn.attr == "resolve"
+              ):
+                  blocking_calls.append(qualified)
+          if blocking_calls:
+              raise SystemExit(
+                  "Periodic mounted-volume probe performs blocking filesystem work: "
+                  + repr(sorted(set(blocking_calls)))
+              )
 
           db_runtime = Path("db_runtime.py").read_text(encoding="utf-8")
           for required_db in (
@@ -637,6 +660,8 @@ jobs:
               "def abort_catalog_scan",
               "def update_media_lifecycle",
               "def discover_mounted_devices",
+              "def note_catalog_scan_error",
+              "terminal_state = \"completed\" if error_count == 0 else \"partial\"",
           ):
               if required_catalog not in catalog:
                   raise SystemExit("Catalog release contract missing: " + required_catalog)

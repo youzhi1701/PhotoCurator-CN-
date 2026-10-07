@@ -15,12 +15,13 @@ from catalog import (
     begin_catalog_scan,
     catalog_scan_batch,
     finish_catalog_scan,
+    recent_scan_sessions,
     root_snapshot,
     storage_summary,
     clear_rebuildable_storage,
     update_media_lifecycle,
 )
-from db_runtime import quick_check
+from db_runtime import connect_db, quick_check
 from raw_loader import imread_bgr
 
 
@@ -49,6 +50,20 @@ def main():
         require(snap and snap["counts"].get("present") == 2,
                 "initial catalog scan did not persist both photos")
 
+        # Recoverable I/O/stat errors make the generation partial.  A partial
+        # generation may update observations but must not declare unseen media missing.
+        partial = begin_catalog_scan(db, root)
+        catalog_scan_batch(db, partial, [a, root / "temporarily-unreadable.jpg"])
+        finish_catalog_scan(db, partial, full_scan=True)
+        snap = root_snapshot(db, first["root_id"], limit=20)
+        require(snap["counts"].get("present") == 2,
+                "partial scan incorrectly marked unseen media missing")
+        latest_session = recent_scan_sessions(db, first["root_id"], limit=1)[0]
+        require(latest_session["state"] == "partial",
+                "scan I/O errors were not persisted as a partial generation")
+        require(int(latest_session["error_count"] or 0) >= 1,
+                "partial scan did not retain its error count")
+
         # Interrupted scans may add/update observations, but must never declare
         # older rows missing because the walk did not reach the end.
         interrupted = begin_catalog_scan(db, root)
@@ -74,8 +89,11 @@ def main():
         row = next(item for item in snap["items"] if item["name"] == "A.jpg")
         require(row["lifecycle"] == "pending_trash",
                 "catalog lifecycle did not follow accepted file operation")
-        require(os.path.normcase(row["current_path"]) == os.path.normcase(str(moved)),
-                "catalog current_path did not follow accepted file operation")
+        require(
+            os.path.normcase(os.path.realpath(row["current_path"]))
+            == os.path.normcase(os.path.realpath(str(moved))),
+            "catalog current_path did not follow accepted file operation",
+        )
 
         # Durable offline previews are outside rebuildable thumbnail cache.
         offline = data / "offline_previews"
@@ -102,6 +120,13 @@ def main():
                 "Pillow-readable TIFF could not enter the analysis path")
 
         require(quick_check(db) == ["ok"], "SQLite quick_check failed")
+
+        # Prove managed SQLite contexts release the file handle on Windows.
+        with connect_db(db, timeout=5) as probe_db:
+            probe_db.execute("SELECT 1").fetchone()
+        moved_db = db.with_name("library_index.handle-check.sqlite3")
+        os.replace(db, moved_db)
+        os.replace(moved_db, db)
 
     print("Release gate invariants OK")
 

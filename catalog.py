@@ -36,6 +36,28 @@ def _connect(db_path):
     return connect_db(db_path, timeout=30, row_factory=sqlite3.Row)
 
 
+def _canonical_path(path):
+    """Return one stable path spelling for persisted catalog comparisons."""
+    return os.path.normpath(os.path.realpath(os.fspath(path)))
+
+
+def note_catalog_scan_error(db_path, session, error, path=""):
+    """Record a recoverable scan I/O error without unsafe missing reconciliation."""
+    now = time.time()
+    where = str(path or getattr(error, "filename", "") or "")
+    detail = (f"{where}: {error}" if where else str(error))[:2000]
+    with _connect(db_path) as db:
+        db.execute(
+            """UPDATE scan_session
+               SET error_count=error_count+1,updated_at=?,
+                   error=CASE WHEN error='' THEN ? ELSE error END
+               WHERE session_id=? AND state='running'""",
+            (now, detail, session["session_id"]),
+        )
+        db.commit()
+    session["error_count"] = int(session.get("error_count") or 0) + 1
+
+
 def init_catalog_schema(db_path):
     with _connect(db_path) as db:
         db.execute("""CREATE TABLE IF NOT EXISTS schema_meta (
@@ -677,20 +699,26 @@ def catalog_scan_batch(db_path, session, paths):
     if not paths:
         return 0
     now = time.time()
-    root = os.path.realpath(str(session["root_path"]))
+    root = _canonical_path(session["root_path"])
     root_path = Path(root)
     generation = int(session["generation"])
     rows = []
+    errors = []
     for raw in paths:
-        path = Path(raw)
+        canonical = _canonical_path(raw)
+        path = Path(canonical)
         try:
             st = path.stat()
-        except OSError:
+        except OSError as exc:
+            errors.append(f"{canonical}: {exc}")
             continue
         try:
-            rel = str(path.resolve().relative_to(root_path.resolve()))
+            rel = str(path.relative_to(root_path))
         except Exception:
-            rel = path.name
+            try:
+                rel = str(path.resolve().relative_to(root_path.resolve()))
+            except Exception:
+                rel = path.name
         media_key = hashlib.sha256(
             f"{session['root_id']}|{os.path.normcase(rel)}".encode(
                 "utf-8", errors="replace"
@@ -698,54 +726,67 @@ def catalog_scan_batch(db_path, session, paths):
         ).hexdigest()
         rows.append((
             media_key, session["source_id"], session["root_id"], rel,
-            str(path), str(path), int(st.st_size), int(st.st_mtime_ns),
+            canonical, canonical, int(st.st_size), int(st.st_mtime_ns),
             "present", "normal", generation, now, now,
         ))
 
-    if not rows:
+    if not rows and not errors:
         return 0
     with _connect(db_path) as db:
-        db.executemany(
-            """INSERT INTO media_catalog
-               (media_id,source_id,root_id,relative_path,original_path,current_path,
-                size,mtime_ns,state,lifecycle,scan_generation,first_seen_at,last_seen_at)
-               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
-               ON CONFLICT(root_id,relative_path) DO UPDATE SET
-                 current_path=excluded.current_path,
-                 size=excluded.size,
-                 mtime_ns=excluded.mtime_ns,
-                 state='present',
-                 scan_generation=excluded.scan_generation,
-                 last_seen_at=excluded.last_seen_at,
-                 missing_since=NULL""",
-            rows,
-        )
-        db.execute(
-            """UPDATE scan_session
-               SET files_seen=files_seen+?,updated_at=?
-               WHERE session_id=? AND state='running'""",
-            (len(rows), now, session["session_id"]),
-        )
+        if rows:
+            db.executemany(
+                """INSERT INTO media_catalog
+                   (media_id,source_id,root_id,relative_path,original_path,current_path,
+                    size,mtime_ns,state,lifecycle,scan_generation,first_seen_at,last_seen_at)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+                   ON CONFLICT(root_id,relative_path) DO UPDATE SET
+                     original_path=excluded.original_path,
+                     current_path=excluded.current_path,
+                     size=excluded.size,
+                     mtime_ns=excluded.mtime_ns,
+                     state='present',
+                     scan_generation=excluded.scan_generation,
+                     last_seen_at=excluded.last_seen_at,
+                     missing_since=NULL""",
+                rows,
+            )
+            db.execute(
+                """UPDATE scan_session
+                   SET files_seen=files_seen+?,updated_at=?
+                   WHERE session_id=? AND state='running'""",
+                (len(rows), now, session["session_id"]),
+            )
+        if errors:
+            db.execute(
+                """UPDATE scan_session
+                   SET error_count=error_count+?,updated_at=?,
+                       error=CASE WHEN error='' THEN ? ELSE error END
+                   WHERE session_id=? AND state='running'""",
+                (len(errors), now, errors[0][:2000], session["session_id"]),
+            )
         db.execute(
             """UPDATE library_root SET last_seen_at=? WHERE root_id=?""",
             (now, session["root_id"]),
         )
         db.commit()
     session["files_seen"] = int(session.get("files_seen") or 0) + len(rows)
+    session["error_count"] = int(session.get("error_count") or 0) + len(errors)
     return len(rows)
 
 
 def finish_catalog_scan(db_path, session, *, full_scan=True):
-    """Commit a successful generation and only then mark unseen rows missing."""
+    """Commit a generation; only an error-free full walk may mark media missing."""
     now = time.time()
     with _connect(db_path) as db:
         row = db.execute(
-            "SELECT state FROM scan_session WHERE session_id=?",
+            "SELECT state,error_count FROM scan_session WHERE session_id=?",
             (session["session_id"],),
         ).fetchone()
         if not row or str(row["state"]) != "running":
             raise RuntimeError("scan session is not active")
-        if full_scan:
+        error_count = int(row["error_count"] or 0)
+        reconcile_missing = bool(full_scan and error_count == 0)
+        if reconcile_missing:
             db.execute(
                 """UPDATE media_catalog
                    SET state='missing',missing_since=COALESCE(missing_since,?)
@@ -777,15 +818,23 @@ def finish_catalog_scan(db_path, session, *, full_scan=True):
                WHERE root_id=?""",
             (present, analyzed, now, now, session["root_id"]),
         )
+        terminal_state = "completed" if error_count == 0 else "partial"
         db.execute(
             """UPDATE scan_session
-               SET state='completed',finished_at=?,updated_at=?,files_seen=?
+               SET state=?,finished_at=?,updated_at=?,files_seen=?
                WHERE session_id=?""",
-            (now, now, int(session.get("files_seen") or present), session["session_id"]),
+            (
+                terminal_state, now, now,
+                int(session.get("files_seen") or present),
+                session["session_id"],
+            ),
         )
         db.commit()
     session["photo_count"] = present
     session["analyzed_count"] = analyzed
+    session["error_count"] = error_count
+    session["state"] = terminal_state
+    session["missing_reconciled"] = reconcile_missing
     return session
 
 
@@ -820,13 +869,14 @@ def catalog_media_scan(db_path, folder, paths, *, full_scan=True):
 
 def update_media_lifecycle(db_path, original_path, current_path, lifecycle):
     """Keep Media Catalog path/lifecycle aligned with accepted file operations."""
-    original = os.path.realpath(str(original_path))
-    current = os.path.realpath(str(current_path or original_path))
+    original = _canonical_path(original_path)
+    current = _canonical_path(current_path or original_path)
     with _connect(db_path) as db:
         db.execute(
             """UPDATE media_catalog
                SET current_path=?,lifecycle=?,last_seen_at=?
-               WHERE original_path=? OR current_path=?""",
+               WHERE original_path COLLATE NOCASE = ?
+                  OR current_path COLLATE NOCASE = ?""",
             (current, str(lifecycle), time.time(), original, original),
         )
         db.commit()
@@ -965,12 +1015,13 @@ def media_record(db_path, media_id):
 
 
 def media_id_for_path(db_path, path):
-    real = os.path.realpath(str(path))
+    real = _canonical_path(path)
     init_catalog_schema(db_path)
     with _connect(db_path) as db:
         row = db.execute(
             """SELECT media_id FROM media_catalog
-               WHERE current_path=? OR original_path=?
+               WHERE current_path COLLATE NOCASE = ?
+                  OR original_path COLLATE NOCASE = ?
                ORDER BY last_seen_at DESC LIMIT 1""",
             (real, real),
         ).fetchone()

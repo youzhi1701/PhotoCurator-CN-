@@ -65,6 +65,7 @@ from catalog import (
     media_id_for_path as catalog_media_id_for_path,
     update_media_lifecycle as catalog_update_media_lifecycle,
     recent_scan_sessions as catalog_recent_scan_sessions,
+    note_catalog_scan_error,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -1119,12 +1120,11 @@ def _is_output_dir_name(name):
             or low.startswith('phonebg'))
 
 
-def iter_images(folder, recursive=False):
+def iter_images(folder, recursive=False, on_error=None):
     """Yield supported image paths without preloading the whole library.
 
-    Recursive os.walk already tells us which entries are files, so extension
-    filtering happens before any extra stat/open call.  This matters on slow
-    multi-terabyte USB disks.
+    Recoverable traversal errors are reported to on_error so a catalog scan can
+    avoid treating unreadable entries as deleted files.
     """
     root = Path(folder)
     if not root.is_dir():
@@ -1135,13 +1135,26 @@ def iter_images(folder, recursive=False):
             return False
         return Path(name).suffix.lower() in IMG_EXTS
 
+    def report_error(exc):
+        if on_error is None:
+            return
+        try:
+            on_error(exc)
+        except Exception:
+            logger.debug("scan error callback failed", exc_info=True)
+
     if not recursive:
         try:
             for p in root.iterdir():
-                if supported_name(p.name) and p.is_file():
-                    yield p
-        except OSError:
-            return
+                if not supported_name(p.name):
+                    continue
+                try:
+                    if p.is_file():
+                        yield p
+                except OSError as exc:
+                    report_error(exc)
+        except OSError as exc:
+            report_error(exc)
         return
 
     custom_cmp = None
@@ -1153,7 +1166,7 @@ def iter_images(folder, recursive=False):
     except Exception:
         custom_cmp = None
 
-    for cur, dirs, files in os.walk(root):
+    for cur, dirs, files in os.walk(root, onerror=report_error):
         base = Path(cur)
         kept_dirs = []
         for d in dirs:
@@ -2550,7 +2563,22 @@ def _shared_list_images(folder, recursive=True, max_age=2.0):
                 scan_session = None
                 logger.warning("catalog scan session start failed", exc_info=True)
 
-        for p in iter_images(folder, recursive=recursive):
+        def _scan_walk_error(exc):
+            logger.warning("filesystem scan read error: %s", exc)
+            if scan_session is not None:
+                try:
+                    note_catalog_scan_error(
+                        INDEX_DB,
+                        scan_session,
+                        exc,
+                        getattr(exc, "filename", "") or "",
+                    )
+                except Exception:
+                    logger.warning("catalog scan error recording failed", exc_info=True)
+
+        for p in iter_images(
+            folder, recursive=recursive, on_error=_scan_walk_error
+        ):
             paths.append(p)
             if scan_session is not None:
                 pending_catalog.append(p)

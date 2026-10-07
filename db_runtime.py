@@ -17,11 +17,25 @@ from pathlib import Path
 DEFAULT_BUSY_TIMEOUT_MS = 8_000
 
 
+class PhotoCuratorConnection(sqlite3.Connection):
+    """Close the OS database handle when a managed transaction exits.
+
+    Python's stock sqlite3 context manager commits or rolls back but leaves the
+    connection open. On Windows that can retain file locks after the with block.
+    """
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        try:
+            return super().__exit__(exc_type, exc_value, traceback)
+        finally:
+            self.close()
+
+
 def connect_db(db_path, *, timeout=30.0, row_factory=None):
     """Open a PhotoCurator SQLite connection with release-grade defaults."""
     path = Path(db_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    db = sqlite3.connect(str(path), timeout=float(timeout))
+    db = sqlite3.connect(str(path), timeout=float(timeout), factory=PhotoCuratorConnection)
     if row_factory is not None:
         db.row_factory = row_factory
 
