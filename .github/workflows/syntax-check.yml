@@ -110,6 +110,8 @@ jobs:
 
           required_core = [
               "BackgroundTaskManager",
+              "_RUN_GATE_LOCK = threading.Lock()",
+              "with _RUN_GATE_LOCK:",
               "media_state",
               "similarity_group_state",
               "similarity_group_member",
@@ -254,6 +256,18 @@ jobs:
           )[0]
           if "paths = _shared_list_images(folder, recursive=recursive)" not in dedup_block:
               raise SystemExit("Dedup must reuse the shared source enumeration snapshot")
+
+          run_api = source.split("@app.route('/api/run/<step>'", 1)[1].split(
+              "@app.route('/api/stop/<step>'", 1
+          )[0]
+          gate_pos = run_api.find("with _RUN_GATE_LOCK:")
+          active_pos = run_api.find("active = [k for k in ('cull', 'dedup', 'rank')")
+          reserve_pos = run_api.find("state[step]['running'] = True")
+          start_pos = run_api.find("threading.Thread(")
+          if min(gate_pos, active_pos, reserve_pos, start_pos) < 0:
+              raise SystemExit("Atomic analysis admission gate is incomplete")
+          if not (gate_pos < active_pos < reserve_pos < start_pos):
+              raise SystemExit("Analysis admission order must be gate -> check -> reserve -> start")
 
           print("Core workflow / large-library guards OK")
           PY
