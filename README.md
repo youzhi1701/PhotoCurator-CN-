@@ -8,17 +8,17 @@
 [**点击下载 PhotoCurator-Setup-v1.5.0.exe**](https://github.com/youzhi1701/PhotoCurator-CN-/releases/download/v1.5.0/PhotoCurator-Setup-v1.5.0.exe)
 
 > Windows 10 / 11 x64 · 正式安装版 EXE  
-> 当前源码 / 实机修复版本为 **v1.6.0**；只有新的 EXE 真正生成并发布后，这里的下载链接才会切到 v1.6.0。
+> 当前源码为 **v1.7.0 Candidate**；只有 Windows Candidate、数据完整性、安装/升级与发布验证全部通过，并且新的 EXE 真正发布后，这里的正式下载链接才会切到 v1.7.0。
 <!-- LATEST_RELEASE_END -->
 
-> 面向大图库的 Windows 照片清理工具。v1.6.0 以稳定桌面运行层为基线，集中收口左侧控制区、照片缩放、删除后的即时视图状态、Windows 工作区最大化和图片格式发现；数据源、离线图库、持久索引与后台任务机制继续保留。
+> 面向大图库的 Windows 照片清理工具。v1.7.0 Candidate 在稳定桌面运行层基础上继续收口持久 Catalog、扫描会话与缺失判定、离线图库与设备识别、文件生命周期、数据库升级保护和 Windows 发布门禁；当前仍处于 Candidate 验证阶段，不等同于已发布 Stable。
 
 | 项目 | 信息 |
 | --- | --- |
-| 当前版本 | **v1.6.0** |
+| 当前源码版本 | **v1.7.0 Candidate** |
 | 项目类型 | Windows 照片筛选桌面应用 |
 | 上游基线 | Photo Curator v7.0 |
-| 当前状态 | **v1.6.0 源码实机修复版 / Windows 安装包待构建** |
+| 当前状态 | **v1.7.0 发布候选版 / Windows Candidate 与 Release Gate 验证中** |
 
 ## 产品定位
 
@@ -31,7 +31,7 @@ PhotoCurator 的两个核心任务：
 
 图片扫描不再只依赖固定短名单：运行时会自动纳入当前 Pillow 实际可解码的全部扩展格式，并在可用时加入 HEIC/HEIF/HIF 与 RAW（CR2/CR3/NEF/ARW/DNG/RAF/ORF/RW2/PEF 等）支持。
 
-## v1.6.0 运行与界面架构
+## v1.7.0 运行与界面架构
 
 ### 前台优先
 
@@ -192,17 +192,19 @@ GitHub Actions：
 - `.github/workflows/syntax-check.yml`
 - `.github/workflows/build-release.yml`
 
-开发阶段每次推送到 `main` 都会构建 Windows 安装包用于验证，但**不会自动覆盖正式 Release**。
+普通 `main` 推送只运行源码/结构门禁，不会反复消耗 Windows 正式安装包构建；Windows Candidate 通过 Pull Request 或手动触发完成真实 EXE、窗口存活和测试安装包验证。正式 Release 仅由显式发布请求或匹配版本标签触发。
 
-发布版本由 `packaging/release_manifest.json` 驱动。当前版本为 **1.6.0**，因此当前正式标签应为：
+发布目标由 `packaging/release_manifest.json` 驱动。当前目标为 **1.7.0 Candidate**；只有全部 Release Gate 通过后，才允许创建正式标签：
 
-`v1.6.0`
+`v1.7.0`
 
 发布工作流接受 `v*` 标签，但会在构建开始时强制检查：**Git 标签必须与 manifest 中的版本完全一致**。标签不一致会直接失败，避免误把旧代码发布成新版本或把新代码挂到旧标签。
 
-当前安装包：
+当前 Candidate 安装包目标名称：
 
-`PhotoCurator-Setup-v1.6.0.exe`
+`PhotoCurator-Setup-v1.7.0.exe`
+
+当前已经公开可下载的 Stable 安装包仍为 **v1.5.0**。
 
 CI 同时校验以下版本必须一致：
 - `desktop_app.py` / `photo_curator.py` 的应用版本
@@ -227,7 +229,7 @@ PhotoCurator 使用固定 AppId 原位覆盖升级。正式安装与运行数据
 
 正式 EXE 位于安装目录的 `app/PhotoCurator.exe`，运行数据固定写入 `%LOCALAPPDATA%/PhotoCurator/data`。即使以后把程序安装到其它磁盘或受保护目录，也不会改变用户数据位置。覆盖升级只清理并替换程序 `app/`，不会把运行数据混进程序替换目录。
 
-从旧版 `{app}/data` 升级时，v1.6.0 首次启动会自动迁移并合并历史 `config` 持久化状态（SQLite 索引、人工筛选决策、相似组状态、后台任务、最近目录和相似特征存储）。缓存、日志和内置测试数据属于可重建数据，不作为迁移阻塞条件；若迁移异常，桌面壳会继续使用旧数据目录并写入迁移告警，避免出现“升级后像丢数据”的空白状态。
+从旧版 `{app}/data` 升级时，自 v1.6.0 建立的数据迁移机制会在首次启动时自动迁移并合并历史 `config` 持久化状态（SQLite 索引、人工筛选决策、相似组状态、后台任务、最近目录和相似特征存储）。缓存、日志和内置测试数据属于可重建数据，不作为迁移阻塞条件；若迁移异常，桌面壳会继续使用旧数据目录并写入迁移告警，避免出现“升级后像丢数据”的空白状态。
 
 升级原则：
 - 只替换程序文件
@@ -297,18 +299,26 @@ PhotoCurator-CN-/
 
 许可证保持原项目 **MIT License**。
 
-## v1.6.0 发布门槛
+## v1.7.0 Stable 发布门槛
 
 正式发布前必须同时满足：
 - Python / 嵌入式 JavaScript / HTML / CSS 自动检查通过
-- Windows 基础冒烟测试通过
-- 模糊和相似两条核心分析可并行
+- Windows Candidate 从源码测试一路通过到打包 EXE、原生窗口响应性、测试 Installer 与 artifact
+- Catalog 完整扫描只有在零 I/O 错误时才允许执行“未见到 → missing”；中断或 partial 扫描不得误判缺失
+- SQLite 数据库迁移前有可验证备份，运行时连接不会在 Windows 残留文件锁
+- 设备拔插、盘符变化、离线图库和 Preview Store 不破坏稳定 media identity
+- 模糊和相似两条核心分析可并行，人工复核状态不会串组或被后台结果覆盖
 - 后台文件任务不阻塞前台筛选
-- 软件回收站删除 / 恢复 / 永久删除链路一致
+- 软件回收站删除 / 恢复 / 永久删除 / 跨盘移动链路一致，异常中断可恢复
 - 相似组历史状态和新增成员逻辑正确
+- 支持格式必须给出明确处理结果，Pillow fallback、RAW / HEIF 与 sidecar 路径可回归验证
+- 大图库使用分页 / 虚拟化 / 增量机制，不因几十万媒体一次性渲染拖死 UI
 - 内置测试数据可正常使用
 - Windows 托盘和正式图标随安装包可用
-- 安装包自检通过
+- 安装包自检、SHA256 与发布后 Release asset 验证通过
 - 正式程序目录与运行数据目录完全分离
 - 旧版安装目录数据可安全迁移或异常回退
-- 覆盖升级不破坏用户数据
+- 覆盖升级不破坏用户数据库、索引、设置、日志、任务状态和用户照片
+- GitHub Release 中真实存在与版本一致、非空且校验通过的 Windows 安装包
+
+在上述门槛没有全部满足前，v1.7.0 只能保持 **Candidate**，不能标记为 Stable。
