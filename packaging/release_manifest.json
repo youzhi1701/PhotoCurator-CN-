@@ -1,8 +1,8 @@
 {
   "product": "PhotoCurator",
   "channel": "stable",
-  "version": "1.5.0",
-  "installer": "PhotoCurator-Setup-v1.5.0.exe",
+  "version": "1.5.4",
+  "installer": "PhotoCurator-Setup-v1.5.4.exe",
   "upgrade_mode": "in_place",
   "same_app_id": true,
   "data_root": "%LOCALAPPDATA%/PhotoCurator/data",
@@ -22,6 +22,6 @@
   "replace": [
     "app"
   ],
-  "notes": "v1.5.0 可直接覆盖 v1.4.2 / v1.4.1 / v1.4.0 / v1.3.0；仅替换 app。运行数据固定在 %LOCALAPPDATA%/PhotoCurator/data，首次启动会从旧 {app}/data/config 安全迁移持久化状态；缓存与日志可重建，用户照片、筛选结果、自定义输出目录及 PhotoCurator 软件回收站不受程序升级影响。",
+  "notes": "v1.5.4 稳定化 Windows 原生壳层，首屏改为零阻塞数据库摘要，Dashboard 与 Gallery 完全分离，硬盘探测/测试图库改为按需加载，并加入 20 秒真实打包 EXE 响应探针。可直接覆盖 v1.5.0 及更早版本；用户运行数据继续保存在 %LOCALAPPDATA%/PhotoCurator/data。",
   "release_date": "2026-10-07"
 }
