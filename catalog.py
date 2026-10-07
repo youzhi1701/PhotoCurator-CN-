@@ -553,6 +553,19 @@ def media_record(db_path, media_id):
     return dict(row) if row else None
 
 
+def media_id_for_path(db_path, path):
+    real = os.path.realpath(str(path))
+    init_catalog_schema(db_path)
+    with _connect(db_path) as db:
+        row = db.execute(
+            """SELECT media_id FROM media_catalog
+               WHERE current_path=? OR original_path=?
+               ORDER BY last_seen_at DESC LIMIT 1""",
+            (real, real),
+        ).fetchone()
+    return str(row["media_id"]) if row else None
+
+
 def storage_summary(data_root, db_path):
     data_root = Path(data_root)
 
