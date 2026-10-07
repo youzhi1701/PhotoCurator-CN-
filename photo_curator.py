@@ -2737,6 +2737,11 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   .remove-btn:hover{background:#dc2626;color:#fff}
   .delete-btn{flex:0 0 auto;border:none;background:rgba(220,38,38,.12);color:#dc2626;border-radius:5px;font-size:10px;font-weight:700;padding:2px 7px;cursor:pointer;line-height:1.5}
   .delete-btn:hover{background:#dc2626;color:#fff}
+  .photo-card.pending-delete{border-color:#f59e0b!important;background:color-mix(in srgb,#f59e0b 7%,var(--panel2))}
+  .photo-card.trashed{border-color:#ef4444!important;background:color-mix(in srgb,#ef4444 6%,var(--panel2))}
+  .photo-card.pending-delete .photo-img,.photo-card.trashed .photo-img{filter:saturate(.82) brightness(.92)}
+  .lifecycle-badge{position:absolute;top:7px;right:7px;z-index:3;padding:4px 7px;border-radius:7px;font-size:10px;font-weight:800;color:#fff;background:#d97706}
+  .lifecycle-badge.trash{background:#dc2626}
   .dedup-choice.pending-delete{border-color:#f59e0b;background:color-mix(in srgb,#f59e0b 7%,var(--panel2))}
   .dedup-choice.trashed{border-color:#ef4444;background:color-mix(in srgb,#ef4444 6%,var(--panel2))}
   .dedup-choice.trashed img,.dedup-choice.pending-delete img{filter:saturate(.82) brightness(.92)}
@@ -2857,7 +2862,11 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   .zoomctl button{border:0;background:transparent;color:#fff;min-width:28px;height:26px;border-radius:6px;cursor:pointer;font-weight:700}
   .zoomctl button:hover{background:rgba(255,255,255,.18)}
   .zoomctl .zoomval{min-width:48px;text-align:center;font-size:11px;font-weight:700;user-select:none}
-  @media (max-width: 820px){.zoomctl .zoomval{min-width:42px}.zoomctl button{min-width:26px}}
+  @media (max-width: 820px){
+    .task-center{left:12px;right:12px;bottom:12px}
+    .task-center.open{grid-template-columns:1fr 1fr}
+    .task-center-head,.task-tip{grid-column:1/-1}
+.zoomctl .zoomval{min-width:42px}.zoomctl button{min-width:26px}}
   @media (max-width: 620px){
     .lb-shortcuts{display:none}.zoomctl{order:2}.zoomctl .zoomval{display:none}}
 
@@ -2981,16 +2990,16 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   .dedup-quick{display:flex;gap:6px;flex-wrap:wrap;margin:-2px 0 10px}
   .dedup-quick button{border:1px solid var(--border);border-radius:8px;background:rgba(255,255,255,.72);color:var(--text);padding:5px 9px;font-size:10px;font-weight:700;cursor:pointer}
   .dedup-quick button:hover{border-color:var(--accent);color:var(--accent)}
-  .task-center{position:fixed;right:18px;top:72px;width:300px;z-index:180;display:none;padding:12px;border-radius:16px;
-    background:rgba(255,255,255,.72);border:1px solid rgba(255,255,255,.86);box-shadow:0 18px 48px rgba(45,62,120,.18);
+  .task-center{position:fixed;left:calc(clamp(260px,22vw,320px) + 18px);right:18px;bottom:14px;z-index:180;display:none;padding:10px 14px;border-radius:16px;
+    background:rgba(255,255,255,.80);border:1px solid rgba(255,255,255,.90);box-shadow:0 16px 42px rgba(45,62,120,.15);
     backdrop-filter:blur(26px) saturate(150%);-webkit-backdrop-filter:blur(26px) saturate(150%)}
-  .task-center.open{display:block}
-  .task-center-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+  .task-center.open{display:grid;grid-template-columns:auto repeat(3,minmax(130px,1fr)) auto;gap:8px 16px;align-items:center}
+  .task-center-head{display:flex;justify-content:space-between;align-items:center;margin:0}
   .task-center-head button{border:0;background:transparent;font-size:20px;color:var(--muted);cursor:pointer}
-  .task-row{display:flex;justify-content:space-between;gap:12px;padding:8px 4px;border-top:1px solid rgba(120,135,170,.12);font-size:12px}
+  .task-row{display:flex;justify-content:space-between;gap:10px;padding:6px 8px;border:1px solid rgba(120,135,170,.10);border-radius:10px;font-size:11px;background:rgba(255,255,255,.42)}
   .task-row b{color:var(--accent);font-weight:700}
-  .task-tip{font-size:10px;color:var(--muted);line-height:1.5;padding-top:7px}
-  .task-exit{width:100%;margin-top:10px;padding:8px;border:1px solid rgba(220,38,38,.18);border-radius:9px;background:rgba(255,255,255,.5);color:#b91c1c;font-size:11px;font-weight:700;cursor:pointer}
+  .task-tip{grid-column:1/-1;font-size:10px;color:var(--muted);line-height:1.4;padding-top:2px}
+  .task-exit{width:auto;margin-top:0;padding:8px 12px;border:1px solid rgba(220,38,38,.18);border-radius:9px;background:rgba(255,255,255,.5);color:#b91c1c;font-size:11px;font-weight:700;cursor:pointer}
   .task-exit:hover{background:rgba(254,226,226,.8)}
   .sidebar-nav{display:flex;flex-direction:column;gap:5px;padding:0 0 10px;margin-bottom:10px;border-bottom:1px solid var(--border)}
   .sidebar-nav button{display:flex;align-items:center;gap:10px;width:100%;height:40px;padding:0 11px;border:1px solid transparent;border-radius:11px;background:transparent;color:var(--text);font-weight:700;cursor:pointer;text-align:left}
@@ -3014,6 +3023,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   body.sidebar-collapsed .nav-label{display:none}
   body.sidebar-collapsed .sidebar-nav button{justify-content:center;padding:0}
   body.sidebar-collapsed .nav-icon{width:auto}
+  body.sidebar-collapsed .task-center{left:94px}
   .top button,.top input,.top .theme,.top .window-controls{position:relative;z-index:2}
   .folder-grid .photo-card{content-visibility:auto;contain-intrinsic-size:190px 240px}
   body.processing #settingsPanel input,
@@ -3623,7 +3633,7 @@ function setupFilterBar(){
       ...(rawFmts.length>1?rawFmts.map(f=>['ext:'+f.toLowerCase(),'仅 '+f]):[])];
     if(!types.some(([k])=>k===cullType))cullType='all';
     bar.style.display='flex';
-    const blurry=photos.filter(p=>p.tier==='blurry');
+    const blurry=photos.filter(p=>p.tier==='blurry'&&!['pending_trash','pending_permanent_delete','trashed','permanently_deleted'].includes(p.lifecycle));
     const moveSelected=blurry.filter(p=>p.move_selected!==false).length;
     bar.innerHTML=opts.map(([k,l])=>`<button class="chip${k===cullFilter?' active':''}" data-f="${k}">${l}</button>`).join('')
       +`<span class="chip-sep"></span>`
@@ -4565,45 +4575,55 @@ async function syncCurrentView(){
 let cullView=[], rankView=[], lastCullSig='', lastCullMoveSig='';
 const TIER_NAME={sharp:'清晰',soft:'轻微软',blurry:'模糊'};
 const NEXT_TIER={sharp:'soft',soft:'blurry',blurry:'sharp'};
+function cullLifecycleInfo(p){
+  const life=p.lifecycle||'normal';
+  if(life==='pending_trash')return ['待移入回收站','pending-delete',''];
+  if(life==='pending_permanent_delete')return ['待彻底删除','pending-delete',''];
+  if(life==='trashed')return ['已移入回收站','trashed','trash'];
+  if(life==='permanently_deleted')return ['已彻底删除','trashed','trash'];
+  if(life==='pending_restore')return ['正在恢复','pending-delete',''];
+  return null;
+}
 function cullCardHtml(p,idx){const path=escHtml(p.path);
-  const cls=p.tier==='sharp'?'kept':p.tier==='soft'?'soft':'rejected';
+  const life=cullLifecycleInfo(p),deleted=!!life;
+  const cls=(p.tier==='sharp'?'kept':p.tier==='soft'?'soft':'rejected')+(life?' '+life[1]:'');
   const moveOn=p.move_selected!==false;
-  const moveSel=p.tier==='blurry'
-    ?`<button class="move-select${moveOn?'':' off'}" data-path="${path}" data-selected="${moveOn?'1':'0'}" title="${moveOn?'已加入本次移动，点击保留在原位置':'保留在原位置，点击重新加入本次移动'}">${moveOn?'✓':'□'}</button>`
+  const moveSel=!deleted&&p.tier==='blurry'
+    ?`<button class="move-select${moveOn?'':' off'}" data-path="${path}" data-selected="${moveOn?'1':'0'}" title="${moveOn?'已加入本次删除，点击保留在原位置':'保留在原位置，点击重新加入本次删除'}">${moveOn?'✓':'□'}</button>`
     :'';
-  return `<div class="photo-card ${cls}" data-i="${idx}" data-path="${path}" data-tier="${p.tier}" data-move-selected="${moveOn?'1':'0'}">
-    ${moveSel}
-    <button class="badge ${p.badgeType} badge-tier" data-path="${path}" data-tier="${p.tier}" title="点击切换：清晰 → 轻微软 → 模糊">⇄ ${p.badge}</button>
-    <img class="photo-img" src="${p.thumb}" loading="lazy" decoding="async">
-    <div class="photo-info"><div class="pi-row"><span class="photo-name">${escHtml(p.name)}</span><span class="ftype${p.raw?'':(p.heic?' heic':' jpg')}">${p.fmt||(p.raw?'RAW':p.heic?'HEIC':'JPG')}</span><button class="delete-btn" data-step="cull" data-path="${path}" title="移入软件回收站">🗑 删除</button></div><div class="source-path">${escHtml(p.rel_dir||'当前文件夹')}</div></div></div>`;}
-
+  const stateBadge=life?`<span class="lifecycle-badge ${life[2]}">${life[0]}</span>`:'';
+  const tierBadge=!deleted
+    ?`<button class="badge ${p.badgeType} badge-tier" data-path="${path}" data-tier="${p.tier}" title="点击切换：清晰 → 轻微软 → 模糊">⇄ ${p.badge}</button>`
+    :'';
+  return `<div class="photo-card ${cls}" data-i="${idx}" data-path="${path}" data-tier="${p.tier}" data-life="${p.lifecycle||'normal'}" data-move-selected="${moveOn?'1':'0'}">
+    ${moveSel}${tierBadge}${stateBadge}
+    ${p.thumb?`<img class="photo-img" src="${p.thumb}" loading="lazy" decoding="async">`:'<div class="photo-img" style="display:grid;place-items:center;background:var(--panel2)">文件已删除</div>'}
+    <div class="photo-info"><div class="pi-row"><span class="photo-name">${escHtml(p.name)}</span><span class="ftype${p.raw?'':(p.heic?' heic':' jpg')}">${p.fmt||(p.raw?'RAW':p.heic?'HEIC':'JPG')}</span>${deleted?'':`<button class="delete-btn" data-step="cull" data-path="${path}" title="删除">🗑 删除</button>`}</div><div class="source-path">${escHtml(p.rel_dir||'当前文件夹')}</div></div></div>`;}
 function syncCullCardNode(node,p,idx){
-  const moveOn=p.move_selected!==false;
-  node.dataset.i=idx;
-  node.dataset.tier=p.tier;
+  const moveOn=p.move_selected!==false,life=cullLifecycleInfo(p),deleted=!!life;
+  node.dataset.i=idx;node.dataset.tier=p.tier;node.dataset.life=p.lifecycle||'normal';
   node.dataset.moveSelected=moveOn?'1':'0';
   node.classList.toggle('kept',p.tier==='sharp');
   node.classList.toggle('soft',p.tier==='soft');
   node.classList.toggle('rejected',p.tier==='blurry');
-
+  node.classList.toggle('pending-delete',!!life&&life[1]==='pending-delete');
+  node.classList.toggle('trashed',!!life&&life[1]==='trashed');
+  if(deleted){
+    const existing=node.querySelector('.delete-btn');if(existing)existing.remove();
+  }
   const badge=node.querySelector('.badge-tier');
-  if(badge){
+  if(badge&&!deleted){
     badge.dataset.tier=p.tier;
-    badge.classList.remove('good','soft','bad');
-    badge.classList.add(p.badgeType);
+    badge.classList.remove('good','soft','bad');badge.classList.add(p.badgeType);
     badge.textContent='⇄ '+p.badge;
   }
-
   const ms=node.querySelector('.move-select');
-  if(p.tier==='blurry'&&ms){
-    ms.dataset.selected=moveOn?'1':'0';
-    ms.classList.toggle('off',!moveOn);
+  if(p.tier==='blurry'&&ms&&!deleted){
+    ms.dataset.selected=moveOn?'1':'0';ms.classList.toggle('off',!moveOn);
     ms.textContent=moveOn?'✓':'□';
-    ms.title=moveOn
-      ?'已加入本次移动，点击保留在原位置'
-      :'保留在原位置，点击重新加入本次移动';
   }
 }
+
 function renderCullStep(items){
   photos=items;
   const fSig=[...new Set(items.filter(p=>p.raw).map(p=>p.fmt||'RAW'))].sort().join(',');
@@ -4638,7 +4658,7 @@ function renderCullStep(items){
   const moveSig=items.filter(p=>p.tier==='blurry')
     .map(p=>p.path+':'+(p.move_selected===false?'0':'1')).join('|');
   if(moveSig!==lastCullMoveSig){lastCullMoveSig=moveSig;setupFilterBar();}
-  const sig=gPage+'#'+cullView.map(p=>p.path+':'+p.tier+':'+(p.move_selected===false?'0':'1')).join('|');
+  const sig=gPage+'#'+cullView.map(p=>p.path+':'+p.tier+':'+(p.lifecycle||'normal')+':'+(p.move_selected===false?'0':'1')).join('|');
   if(sig===lastCullSig&&lastStep===currentStep){
     document.getElementById('sShowing').textContent=filtered.length;
     updatePager();
@@ -4650,7 +4670,7 @@ function renderCullStep(items){
   const frag=document.createDocumentFragment();
   cullView.forEach((p,idx)=>{
     let node=existing[p.path];
-    if(node&&node.dataset.tier===p.tier){
+    if(node&&node.dataset.tier===p.tier&&node.dataset.life===(p.lifecycle||'normal')){
       // A card can keep the same classification while its independent
       // "move this file" choice changes. Reused DOM must still mirror that
       // state immediately, otherwise the counters and checkmarks disagree.
@@ -4668,7 +4688,7 @@ function renderCullStep(items){
   updatePager();
 }
 function cullMoveCounts(){
-  const blurry=photos.filter(p=>p.tier==='blurry');
+  const blurry=photos.filter(p=>p.tier==='blurry'&&!['pending_trash','pending_permanent_delete','trashed','permanently_deleted'].includes(p.lifecycle));
   return {total:blurry.length,selected:blurry.filter(p=>p.move_selected!==false).length};
 }
 function updateCullMoveButton(){
@@ -5564,6 +5584,8 @@ def api_dedup_select():
     group['selected_paths'] = [p for p in member_paths if p in selected]
     for member in group.get('members', []):
         member['selected'] = member.get('path') in selected
+    if group.get('group_key'):
+        _persist_similarity_group_members(group['group_key'], group.get('members', []))
 
     s['kept_paths'] = list(s.get('singleton_paths') or []) + [
         p for g in s.get('groups_data', [])
@@ -5604,6 +5626,7 @@ def api_dedup_complete():
     group['status'] = 'reviewed'
     if group.get('group_key'):
         _set_similarity_group_status(group['group_key'], 'reviewed')
+        _persist_similarity_group_members(group['group_key'], group.get('members', []))
     state['dedup']['kept_paths'] = list(state['dedup'].get('singleton_paths') or []) + [
         p for g in state['dedup'].get('groups_data', [])
         for p in (g.get('selected_paths') or [])
@@ -5644,6 +5667,10 @@ def api_dedup_group_action():
     selected_set = set(selected)
     for m in members:
         m['selected'] = m.get('path') in selected_set
+    group['status'] = 'reviewed'
+    if group.get('group_key'):
+        _set_similarity_group_status(group['group_key'], 'reviewed')
+        _persist_similarity_group_members(group['group_key'], members)
     s['kept_paths'] = list(s.get('singleton_paths') or []) + [
         p for g in s.get('groups_data', []) for p in (g.get('selected_paths') or [])
     ]
