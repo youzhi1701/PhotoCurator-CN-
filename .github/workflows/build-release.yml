@@ -20,6 +20,9 @@ jobs:
     if: "${{ github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v') || (github.ref == 'refs/heads/main' && startsWith(github.event.head_commit.message, 'release: publish v')) }}"
     runs-on: windows-latest
     timeout-minutes: 120
+    env:
+      PYTHONUTF8: "1"
+      PYTHONIOENCODING: "utf-8"
     steps:
       - uses: actions/checkout@v7
 
@@ -74,10 +77,16 @@ jobs:
         shell: powershell
         run: |
           python -m py_compile db_runtime.py desktop_app.py runtime_paths.py catalog.py photo_curator.py background_tasks.py raw_loader.py ui_smoke_test.py windows_smoke_test.py
+          if ($LASTEXITCODE -ne 0) { throw "py_compile failed" }
           python "基础冒烟测试.py"
+          if ($LASTEXITCODE -ne 0) { throw "基础冒烟测试 failed" }
           python release_gate_test.py
+          if ($LASTEXITCODE -ne 0) { throw "release_gate_test failed" }
           python ui_smoke_test.py
+          if ($LASTEXITCODE -ne 0) { throw "ui_smoke_test failed" }
           pip-audit -r requirements.txt
+          if ($LASTEXITCODE -ne 0) { throw "pip-audit failed" }
+
       - name: Build approved app icon
         shell: powershell
         run: |
