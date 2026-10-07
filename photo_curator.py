@@ -678,7 +678,7 @@ def _prune_index_db():
 threading.Thread(target=_prune_index_db, daemon=True,
                  name='photocurator-index-prune').start()
 
-APP_VERSION = "1.5.0"
+APP_VERSION = "1.5.4"
 IS_CODESPACES = os.environ.get('CODESPACES', '').strip().lower() == 'true'
 CODESPACE_NAME = os.environ.get('CODESPACE_NAME', '').strip()
 _CODESPACES_DOMAIN_RAW = os.environ.get(
@@ -3482,7 +3482,6 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
     radial-gradient(circle at 88% 12%,rgba(196,181,253,.18),transparent 34%),
     linear-gradient(135deg,#f7fbff 0%,#fbf8ff 100%)!important}
   .appbar{height:52px;display:flex;align-items:center;gap:12px;padding:0 12px;border-bottom:1px solid rgba(128,145,195,.16);background:rgba(242,247,255,.86);backdrop-filter:blur(22px) saturate(150%);z-index:60}
-  .appbar .brand{min-width:155px;display:flex;align-items:center;gap:8px}.appbar .brand-mark{width:30px;height:30px;border-radius:9px;display:grid;place-items:center;background:linear-gradient(145deg,#8bc5ff,#9686ef);color:#fff;font-weight:900;box-shadow:0 5px 14px rgba(83,104,196,.18)}.appbar .brand-copy{display:flex;flex-direction:column;line-height:1.08}.appbar .brand-copy b{font-size:13px}.appbar .brand-copy small{font-size:9px;color:var(--muted);margin-top:2px}
   .workspace-tabs{display:flex;align-items:center;gap:4px;padding:3px;border:1px solid rgba(124,139,192,.16);border-radius:11px;background:rgba(255,255,255,.55)}
   .workspace-tabs .step{min-width:auto;height:34px;padding:0 12px;border:0;border-radius:8px;background:transparent;color:#64748b;font-size:11px;font-weight:800;display:flex;align-items:center;gap:6px;cursor:pointer}
   .workspace-tabs .step.active{background:#fff;color:#4861cf;box-shadow:0 3px 10px rgba(75,91,160,.11)}
@@ -3496,6 +3495,8 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   .source-path-input{height:34px!important;margin-bottom:8px!important;border-radius:9px!important;font-size:10px!important}
   .source-browser{flex:1!important;min-height:0;overflow-y:auto;margin:0!important;padding:0 1px 8px!important}.library-footer{padding-top:8px;border-top:1px solid rgba(124,139,192,.14)}.library-footer .sidebar-collapse{width:100%;height:32px;border:1px solid rgba(124,139,192,.16);border-radius:9px;background:rgba(255,255,255,.52);color:var(--muted);font-size:10px;font-weight:700;cursor:pointer}
   .main{flex:1;min-width:0;min-height:0;padding:14px 15px 10px!important;overflow-y:auto!important;background:transparent!important}
+  .dashboard-view{display:block;width:100%;min-width:0;min-height:100%;}.dashboard-view[hidden]{display:none!important}.photo-view{display:block;width:100%;min-width:0;min-height:100%}.photo-view[hidden]{display:none!important}
+  .workspace-overview{width:100%!important;min-width:0!important;max-width:none!important;grid-column:1/-1!important}
   .content-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}.content-title{min-width:0}.content-title b{font-size:18px}.content-title span{display:block;margin-top:2px;color:var(--muted);font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:760px}.workspace-actions{display:flex;align-items:center;gap:6px;flex:0 0 auto}
   .content-toolbar{display:flex;align-items:center;justify-content:space-between;gap:8px}.filter-bar{flex-wrap:nowrap!important;overflow-x:auto}.result-tools{margin:0!important}
   .gallery{min-height:calc(100% - 88px)}
@@ -3513,15 +3514,10 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   body.inspector-open .inspector-drawer{transform:translateX(0);opacity:1;pointer-events:auto}.inspector-head{padding:12px!important}.inspector-scroll{padding:10px!important}.drawer-scrim{position:fixed;inset:52px 0 34px 0;z-index:80;background:rgba(25,33,56,.10);backdrop-filter:blur(1px);opacity:0;pointer-events:none;transition:opacity .18s ease}body.inspector-open .drawer-scrim{opacity:1;pointer-events:auto}
   .statusbar{height:34px!important;padding:0 10px 0 12px!important;z-index:70!important}
   body.sidebar-collapsed .library-sidebar{width:58px!important;flex-basis:58px!important;padding-left:7px!important;padding-right:7px!important}body.sidebar-collapsed .library-head>div,body.sidebar-collapsed .library-head .source-add,body.sidebar-collapsed .source-path-input,body.sidebar-collapsed .source-browser{display:none!important}body.sidebar-collapsed .library-head{height:28px;margin:0}body.sidebar-collapsed .library-footer{margin-top:auto}body.sidebar-collapsed .sidebar-collapse{font-size:0}body.sidebar-collapsed .sidebar-collapse::after{content:'⇥';font-size:16px}
-  @media(max-width:1050px){.source-pill{max-width:220px;min-width:150px}.workspace-tabs .step{padding:0 9px}.appbar .brand{min-width:130px}.library-sidebar{width:205px;flex-basis:205px}}
-  @media(max-width:900px){.source-pill{display:none}.appbar .brand-copy small{display:none}.content-title span{display:none}.library-sidebar{width:190px;flex-basis:190px}}
+  @media(max-width:1050px){.source-pill{max-width:220px;min-width:150px}.workspace-tabs .step{padding:0 9px}.library-sidebar{width:205px;flex-basis:205px}}
+  @media(max-width:900px){.source-pill{display:none}.content-title span{display:none}.library-sidebar{width:190px;flex-basis:190px}}
 </style></head><body>
 <header class="appbar">
-  <div class="brand">
-    <span class="brand-mark">C</span>
-    <span class="brand-copy"><b>PhotoCurator</b><small>v{{ app_version }}</small></span>
-  </div>
-
   <nav class="workspace-tabs" aria-label="照片整理工作区">
     <button class="step active" data-step="cull"><span class="nav-icon">◐</span><span class="nav-label">模糊废片</span></button>
     <button class="step" data-step="dedup"><span class="nav-icon">▱</span><span class="nav-label">相似照片</span></button>
@@ -3564,43 +3560,47 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   </aside>
 
   <main class="main">
-    <section class="content-head">
-      <div class="content-title">
-        <b id="workspaceTitle">模糊废片</b>
-        <span id="workspaceHint">快速复核模糊与失焦照片，后台分析不会打断当前操作。</span>
+    <section class="dashboard-view" id="dashboardView"></section>
+
+    <section class="photo-view" id="photoView" hidden>
+      <section class="content-head" id="contentHead">
+        <div class="content-title">
+          <b id="workspaceTitle">模糊废片</b>
+          <span id="workspaceHint">快速复核模糊与失焦照片，后台分析不会打断当前操作。</span>
+        </div>
+        <div class="workspace-actions">
+          <button class="workspace-action" id="exportBtn" style="display:none">⬇ 导出</button>
+          <button class="workspace-action" id="exportPbgBtn" style="display:none">📱 壁纸</button>
+          <button class="workspace-action danger-soft" id="moveBlurryBtn" style="display:none">🗑 移入回收站</button>
+          <button class="workspace-action" id="dedupApplyBtn" style="display:none!important" aria-hidden="true">旧版批量处理</button>
+        </div>
+      </section>
+
+      <div class="progress-wrap" id="progressWrap">
+        <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+        <div class="progress-line">
+          <div class="progress-text" id="progressText">…</div>
+          <button class="chip new-results" id="loadNewResults" style="display:none">加载新结果</button>
+        </div>
       </div>
-      <div class="workspace-actions">
-        <button class="workspace-action" id="exportBtn" style="display:none">⬇ 导出</button>
-        <button class="workspace-action" id="exportPbgBtn" style="display:none">📱 壁纸</button>
-        <button class="workspace-action danger-soft" id="moveBlurryBtn" style="display:none">🗑 移入回收站</button>
-        <button class="workspace-action" id="dedupApplyBtn" style="display:none!important" aria-hidden="true">旧版批量处理</button>
+
+      <div class="content-toolbar">
+        <div class="filter-bar" id="filterBar" style="display:none"></div>
+        <div class="result-tools" id="resultTools" style="display:none">
+          <div class="result-tools-left">
+            <button class="chip" id="expandAllBtn">全部展开</button>
+            <button class="chip" id="collapseAllBtn">全部收起</button>
+          </div>
+          <div class="result-tools-right">
+            <button class="chip" data-view="small">网格</button>
+            <button class="chip" data-view="list">列表</button>
+          </div>
+        </div>
       </div>
+
+      <div class="pager" id="pager" style="display:none!important"></div>
+      <div class="gallery" id="gallery"></div>
     </section>
-
-    <div class="progress-wrap" id="progressWrap">
-      <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
-      <div class="progress-line">
-        <div class="progress-text" id="progressText">…</div>
-        <button class="chip new-results" id="loadNewResults" style="display:none">加载新结果</button>
-      </div>
-    </div>
-
-    <div class="content-toolbar">
-      <div class="filter-bar" id="filterBar" style="display:none"></div>
-      <div class="result-tools" id="resultTools" style="display:none">
-        <div class="result-tools-left">
-          <button class="chip" id="expandAllBtn">全部展开</button>
-          <button class="chip" id="collapseAllBtn">全部收起</button>
-        </div>
-        <div class="result-tools-right">
-          <button class="chip" data-view="small">网格</button>
-          <button class="chip" data-view="list">列表</button>
-        </div>
-      </div>
-    </div>
-
-    <div class="pager" id="pager" style="display:none!important"></div>
-    <div class="gallery" id="gallery"></div>
   </main>
 </div>
 
@@ -4256,10 +4256,10 @@ function activateStep(step){
   document.getElementById('dedupApplyBtn').style.display='none';
   document.getElementById('progressWrap').style.display='none';  // clear stale summary
   document.getElementById('resultTools').style.display='none';
-  if(folder&&!photos.length&&!isRunning&&!coreRunning&&!catalogRootView){
-    document.getElementById('gallery').innerHTML=sourceReadyHTML();
-    bindWorkspaceLanding();
+  if(!photos.length&&!isRunning&&!coreRunning&&!catalogRootView){
+    renderWorkspaceLanding();
   }else{
+    showPhotoView();
     document.getElementById('gallery').innerHTML=emptyHTML(currentStep);
   }
   lastRankSig='';lastStep=null;
@@ -4273,6 +4273,7 @@ document.querySelectorAll('.step').forEach(t=>t.onclick=()=>{
   if(currentStep==='trash'){loadTrash();return;}
   fetch('/api/progress/'+currentStep).then(r=>r.json()).then(d=>{
     if(d.src_folder && folder && !sameFolder(d.src_folder,folder)){
+      showPhotoView();
       document.getElementById('gallery').innerHTML=emptyHTML(currentStep);
       document.getElementById('progressWrap').style.display='none';
       return;
@@ -4562,7 +4563,7 @@ function sourceReadyHTML(){
     +'</aside></div>';
 }
 function bindWorkspaceLanding(){
-  const g=document.getElementById('gallery');
+  const g=document.getElementById('dashboardView');
   g.querySelectorAll('[data-overview-action="add"]').forEach(b=>b.onclick=()=>document.getElementById('browseBtn').click());
   g.querySelectorAll('[data-overview-action="demo"]').forEach(b=>b.onclick=()=>{
     if(!demoShortcutPath)return;
@@ -4582,11 +4583,20 @@ function bindWorkspaceLanding(){
   const settings=g.querySelector('[data-ready-action="settings"]');
   if(settings)settings.onclick=()=>document.getElementById('settingsQuick').click();
 }
+function showDashboard(html){
+  const dashboard=document.getElementById('dashboardView');
+  const photoView=document.getElementById('photoView');
+  dashboard.innerHTML=html||'';
+  dashboard.hidden=false;
+  photoView.hidden=true;
+}
+function showPhotoView(){
+  document.getElementById('dashboardView').hidden=true;
+  document.getElementById('photoView').hidden=false;
+}
 function renderWorkspaceLanding(){
   if(isRunning||coreRunning||photos.length||catalogRootView)return;
-  const g=document.getElementById('gallery');
-  g.className='gallery';
-  g.innerHTML=folder?sourceReadyHTML():workspaceOverviewHTML();
+  showDashboard(folder?sourceReadyHTML():workspaceOverviewHTML());
   bindWorkspaceLanding();
 }
 
@@ -4641,6 +4651,7 @@ function renderSources(){
 }
 
 async function loadCatalogRoot(rootId){
+  showPhotoView();
   try{
     const r=await fetch('/api/catalog-root/'+encodeURIComponent(rootId));
     const d=await r.json();
@@ -4739,15 +4750,16 @@ function loadShortcuts(){
     }
 
     demoShortcutPath=d.demo_folder||'';
-    demoShortcutCount=Number(d.demo_count||36);
+    demoShortcutCount=Number(d.demo_count||0);
     if(d.demo_folder){
       const p=d.demo_folder;
+      const ready=!!d.demo_ready;
       const n=d.demo_count||36;
-      h+='<button class="shortcut demo-shortcut" data-p="'+escHtml(p)+'">'
+      h+='<button class="shortcut demo-shortcut" data-p="'+escHtml(p)+'" data-demo="1" data-ready="'+(ready?'1':'0')+'">'
         +'<span class="tag recent">示例</span>'
-        +'<span><b>多目录演示图库 · '+n+' 张</b>'
-        +'<small>6 个子文件夹 · 清晰/轻微软/模糊/近似连拍</small></span></button>';
-      if(codespacesMode&&!folder){selectFolderValue(p);fi.value=p;}
+        +'<span><b>'+(ready?('多目录演示图库 · '+n+' 张'):'准备演示图库')+'</b>'
+        +'<small>'+(ready?'6 个子文件夹 · 清晰/轻微软/模糊/近似连拍':'首次点击时后台生成，不阻塞软件启动')+'</small></span></button>';
+      if(codespacesMode&&!folder&&ready){selectFolderValue(p);fi.value=p;}
     }
 
     (d.sd||[]).forEach(o=>{
@@ -4763,17 +4775,57 @@ function loadShortcuts(){
     document.getElementById('shortcuts').innerHTML=h;
     document.querySelectorAll('.shortcut').forEach(b=>{
       b.disabled=isRunning||coreRunning;
-      b.onclick=()=>{
+      b.onclick=async()=>{
         if(isRunning||coreRunning)return;
+        if(b.dataset.demo==='1'&&b.dataset.ready!=='1'){
+          const before=b.innerHTML;
+          b.disabled=true;
+          b.innerHTML='<span class="tag recent">示例</span><span><b>正在准备演示图库…</b><small>后台生成真实多目录测试照片</small></span>';
+          try{
+            const r=await fetch('/api/demo-prepare?wait=1',{method:'POST'});
+            const d=await r.json();
+            if(!r.ok||!d.ready)throw new Error(d.error||'演示图库准备失败');
+            demoShortcutPath=d.folder||b.dataset.p;
+            demoShortcutCount=Number(d.count||36);
+            selectFolderValue(demoShortcutPath);fi.value=folder||'';
+            loadShortcuts();
+          }catch(err){
+            b.innerHTML=before;b.disabled=false;
+            toast('演示图库准备失败：'+(err.message||'未知错误'),'bad');
+          }
+          return;
+        }
         selectFolderValue(b.dataset.p);fi.value=folder||'';
       };
     });
-    loadStorageSummary();
     if(!folder&&!catalogRootView&&!isRunning&&!coreRunning&&!photos.length)renderWorkspaceLanding();
   }).catch(()=>{});
 }
+async function refreshEnvironment(){
+  if(document.hidden||isRunning||coreRunning)return;
+  try{
+    const d=await fetch('/api/environment-refresh').then(r=>r.json());
+    if(Array.isArray(d.sources))sourceCatalog=d.sources;
+    renderSources();updateSourceUi();
+    const shortcuts=document.getElementById('shortcuts');
+    if(shortcuts&&Array.isArray(d.sd)&&d.sd.length){
+      const existing=new Set([...shortcuts.querySelectorAll('.shortcut')].map(x=>x.dataset.p));
+      d.sd.forEach(o=>{
+        const p=(typeof o==='string')?o:o.path;
+        if(!p||existing.has(p))return;
+        const br=(o&&o.brand)?(' · '+o.brand):'';
+        const b=document.createElement('button');
+        b.className='shortcut';b.dataset.p=p;
+        b.innerHTML='<span class="tag sd">相机卡'+escHtml(br)+'</span><span>'+escHtml(sdLabel(p))+'</span>';
+        b.onclick=()=>{selectFolderValue(p);document.getElementById('folderInput').value=folder||'';};
+        shortcuts.appendChild(b);
+      });
+    }
+  }catch(_){}
+}
 loadShortcuts();
-setInterval(()=>{if(!document.hidden&&!isRunning&&!coreRunning)loadShortcuts();},30000);
+setTimeout(refreshEnvironment,1800);
+setInterval(refreshEnvironment,30000);
 document.getElementById('folderInput').onchange=e=>selectFolderValue(e.target.value);
 document.getElementById('folderInput').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();selectFolderValue(e.target.value);}};
 document.getElementById('browseBtn').onclick=async()=>{
@@ -5214,6 +5266,7 @@ function dedupMemberState(group,p){
   return ['待筛选','state-neutral',''];
 }
 function renderDedupGroups(groups){
+  showPhotoView();
   photos=groups||[];
   const g=document.getElementById('gallery');
   document.getElementById('sShowing').textContent=groups.length;
@@ -5379,6 +5432,7 @@ function rankCard(p,idx){const path=escHtml(p.path);
       <button class="delete-btn" data-step="rank" data-path="${path}" title="移入软件回收站">🗑 删除</button></div>
       <div class="source-path">${escHtml(p.rel_dir||'当前文件夹')}</div></div></div>`;}
 function renderRank(items){
+  showPhotoView();
   photos=items;const g=document.getElementById('gallery');
   if(lastStep!==currentStep){g.innerHTML='';lastRankSig='';lastStep=currentStep;gPage=0;}
   const fbar=document.getElementById('filterBar');
@@ -5466,6 +5520,7 @@ function trashCard(p,idx){
   </div>`;
 }
 function renderTrash(items){
+  showPhotoView();
   photos=items||[];
   const g=document.getElementById('gallery');
   document.getElementById('sTrash').textContent=photos.length;
@@ -5630,6 +5685,7 @@ function syncCullCardNode(node,p,idx){
 }
 
 function renderCullStep(items){
+  showPhotoView();
   photos=items;
   const fSig=[...new Set(items.filter(p=>p.raw).map(p=>p.fmt||'RAW'))].sort().join(',');
   if(fSig!==lastFmtSig){lastFmtSig=fSig;setupFilterBar();}
@@ -6104,7 +6160,7 @@ if(showingNode){
   syncShowing();
 }
 updateSourceUi();
-loadStorageSummary();
+renderWorkspaceLanding();
 document.documentElement.dataset.uiReady='1';
 </script></body></html>'''
 
@@ -6124,48 +6180,77 @@ def index():
 
 @app.route('/api/shortcuts')
 def api_shortcuts():
-    # Built-in demo is part of the application experience, not a temporary
-    # Codespaces-only fixture. It is available on desktop and online preview.
-    demo_folder = ensure_builtin_demo()
-    demo_real = os.path.realpath(demo_folder) if demo_folder else None
+    # First-paint contract: this route must be database-only and fast.
+    demo = builtin_demo_status()
+    demo_real = os.path.normcase(os.path.realpath(demo.get('folder') or str(DEMO_ROOT)))
     recent = []
     for item in load_recents():
         try:
-            real = os.path.realpath(item)
-            # Do not repeat the permanent built-in test entry in "最近";
-            # also hide the obsolete Codespaces sample directory left by older
-            # builds so the sidebar stays compact.
-            if demo_real and os.path.normcase(real) == os.path.normcase(demo_real):
-                continue
-            if Path(real).name.lower() == '.codespaces_demo':
+            real = os.path.normcase(os.path.realpath(item))
+            if real == demo_real or Path(real).name.lower() == '.codespaces_demo':
                 continue
             recent.append(item)
         except Exception:
             recent.append(item)
 
     try:
-        sources = catalog_list_sources(INDEX_DB)
+        sources = catalog_list_sources(INDEX_DB, refresh=False)
     except Exception:
         sources = []
-        logger.warning("data source catalog list failed", exc_info=True)
+        logger.warning("fast data source catalog list failed", exc_info=True)
 
     return jsonify({
-        'sd': [] if CODESPACES_PUBLIC_HOST else detect_sd_cards(),
+        'sd': [],
         'recent': recent,
         'sources': sources,
         'rawpy': HAS_RAWPY,
         'heif': HAS_HEIF,
         'codespaces': bool(CODESPACES_PUBLIC_HOST),
-        'demo_folder': demo_folder,
-        'demo_count': 36 if demo_folder else 0,
-        'demo_breakdown': {'sharp': 12, 'soft': 12, 'blurry': 12} if demo_folder else {},
+        'demo_folder': demo.get('folder'),
+        'demo_ready': bool(demo.get('ready')),
+        'demo_preparing': bool(demo.get('preparing')),
+        'demo_count': int(demo.get('count') or 0),
+        'demo_folders': int(demo.get('folders') or 0),
     })
+
+
+@app.route('/api/environment-refresh')
+def api_environment_refresh():
+    # This is intentionally separate from first paint.
+    try:
+        sources = catalog_list_sources(INDEX_DB, refresh=True)
+    except Exception:
+        sources = []
+        logger.warning("data source connection refresh failed", exc_info=True)
+    sd = []
+    if not CODESPACES_PUBLIC_HOST:
+        try:
+            sd = detect_sd_cards()
+        except Exception:
+            logger.warning("camera-card detection failed", exc_info=True)
+    return jsonify({'sources': sources, 'sd': sd})
+
+
+@app.route('/api/demo-status')
+def api_demo_status():
+    return jsonify(builtin_demo_status())
+
+
+@app.route('/api/demo-prepare', methods=['POST'])
+def api_demo_prepare():
+    wait = str(request.args.get('wait') or '').strip() in {'1', 'true', 'yes'}
+    status = (
+        prepare_builtin_demo_wait(timeout=30.0)
+        if wait else prepare_builtin_demo_async()
+    )
+    return jsonify(status)
 
 
 @app.route('/api/sources')
 def api_sources():
     try:
-        return jsonify({'sources': catalog_list_sources(INDEX_DB)})
+        refresh = request.args.get('refresh', '1') not in {'0', 'false', 'no'}
+        return jsonify({'sources': catalog_list_sources(INDEX_DB, refresh=refresh)})
     except Exception as exc:
         logger.warning("data source catalog list failed", exc_info=True)
         return jsonify({'sources': [], 'error': str(exc)}), 500
