@@ -42,16 +42,24 @@ from photo_ranking_v3 import AdvancedPhotoAnalyzer, PhotoScoreV3
 from photo_dedup_batch import FastBatchDeduplicator
 from background_tasks import BackgroundTaskManager
 from runtime_paths import resolve_data_root
+from db_runtime import connect_db, quick_check as sqlite_quick_check
 from catalog import (
     catalog_media_scan,
+    begin_catalog_scan,
+    catalog_scan_batch,
+    finish_catalog_scan,
+    abort_catalog_scan,
     init_catalog_schema,
     list_sources as catalog_list_sources,
+    discover_mounted_devices as catalog_discover_devices,
     register_source as catalog_register_source,
     storage_summary as catalog_storage_summary,
     clear_rebuildable_storage,
     root_snapshot as catalog_root_snapshot,
     media_record as catalog_media_record,
     media_id_for_path as catalog_media_id_for_path,
+    update_media_lifecycle as catalog_update_media_lifecycle,
+    recent_scan_sessions as catalog_recent_scan_sessions,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -105,7 +113,7 @@ _GEOCODE_LAST_AT = 0.0
 CULL_METRICS_VERSION = 1
 
 def _db_init():
-    with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=15) as db:
+    with _DB_LOCK, connect_db(INDEX_DB, timeout=15) as db:
         db.execute("""CREATE TABLE IF NOT EXISTS cull_cache (
             path TEXT PRIMARY KEY, size INTEGER NOT NULL, mtime_ns INTEGER NOT NULL,
             region_s REAL NOT NULL, quality REAL NOT NULL, updated_at REAL NOT NULL
@@ -188,7 +196,7 @@ def _media_state_set(original_path, current_path=None, state_name='normal',
     original = os.path.realpath(str(original_path))
     current = os.path.realpath(str(current_path or original_path))
     try:
-        with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=15) as db:
+        with _DB_LOCK, connect_db(INDEX_DB, timeout=15) as db:
             db.execute(
                 """INSERT INTO media_state
                    (original_path,current_path,state,source_step,group_key,updated_at,detail)
@@ -212,7 +220,7 @@ def _media_state_set(original_path, current_path=None, state_name='normal',
 def _media_state_get(original_path):
     original = os.path.realpath(str(original_path))
     try:
-        with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=10) as db:
+        with _DB_LOCK, connect_db(INDEX_DB, timeout=10) as db:
             row = db.execute(
                 "SELECT current_path,state,source_step,group_key,updated_at,detail "
                 "FROM media_state WHERE original_path=?", (original,)
@@ -232,7 +240,7 @@ def _similarity_group_key(folder_root, compare_scope, member_paths):
     if originals:
         try:
             marks = ','.join('?' for _ in originals)
-            with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=15) as db:
+            with _DB_LOCK, connect_db(INDEX_DB, timeout=15) as db:
                 rows = db.execute(
                     f"""SELECT group_key,COUNT(*) AS hits
                         FROM similarity_group_member
@@ -270,7 +278,7 @@ def _persist_similarity_group_members(group_key, member_rows):
     if not rows:
         return
     try:
-        with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=15) as db:
+        with _DB_LOCK, connect_db(INDEX_DB, timeout=15) as db:
             db.executemany(
                 """INSERT INTO similarity_group_member
                    (group_key,original_path,current_path,name,rel_dir,score,selected,lifecycle,updated_at)
@@ -300,7 +308,7 @@ def _merge_historical_group_members(group_key, live_rows):
         for m in live_rows if m.get('path') or m.get('original_path')
     }
     try:
-        with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=15) as db:
+        with _DB_LOCK, connect_db(INDEX_DB, timeout=15) as db:
             rows = db.execute(
                 """SELECT original_path,current_path,name,rel_dir,score,selected,lifecycle
                    FROM similarity_group_member WHERE group_key=? ORDER BY original_path""",
@@ -338,7 +346,7 @@ def _similarity_group_state(group_key, folder_root, member_paths):
     ).hexdigest()
     now = time.time()
     try:
-        with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=15) as db:
+        with _DB_LOCK, connect_db(INDEX_DB, timeout=15) as db:
             row = db.execute(
                 "SELECT status,member_hash,revision FROM similarity_group_state WHERE group_key=?",
                 (str(group_key),)
@@ -376,7 +384,7 @@ def _set_similarity_group_status(group_key, status):
     if status not in ('pending', 'reviewed', 'updated'):
         status = 'pending'
     try:
-        with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=15) as db:
+        with _DB_LOCK, connect_db(INDEX_DB, timeout=15) as db:
             db.execute(
                 "UPDATE similarity_group_state SET status=?,updated_at=? WHERE group_key=?",
                 (status, time.time(), str(group_key))
@@ -388,7 +396,7 @@ def _set_similarity_group_status(group_key, status):
 
 def _activity(action, path='', detail=''):
     try:
-        with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=10) as db:
+        with _DB_LOCK, connect_db(INDEX_DB, timeout=10) as db:
             db.execute("INSERT INTO activity_log(ts,action,path,detail) VALUES(?,?,?,?)",
                        (time.time(), str(action), str(path or ''), str(detail or '')))
             db.execute("""DELETE FROM activity_log
@@ -400,7 +408,7 @@ def _activity(action, path='', detail=''):
 def _cached_cull_metrics(path):
     try:
         p = Path(path); st = p.stat()
-        with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=10) as db:
+        with _DB_LOCK, connect_db(INDEX_DB, timeout=10) as db:
             row = db.execute(
                 "SELECT region_s,quality FROM cull_cache WHERE path=? AND size=? AND mtime_ns=?",
                 (str(p), int(st.st_size), int(st.st_mtime_ns))
@@ -412,7 +420,7 @@ def _cached_cull_metrics(path):
 def _save_cull_metrics(path, region_s, quality):
     try:
         p = Path(path); st = p.stat()
-        with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=10) as db:
+        with _DB_LOCK, connect_db(INDEX_DB, timeout=10) as db:
             db.execute("""INSERT INTO cull_cache(path,size,mtime_ns,region_s,quality,updated_at)
                           VALUES(?,?,?,?,?,?)
                           ON CONFLICT(path) DO UPDATE SET size=excluded.size,mtime_ns=excluded.mtime_ns,
@@ -441,7 +449,7 @@ def _query_cache_rows(table, columns, path_keys, chunk_size=400):
     if not path_keys:
         return []
     rows = []
-    with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=30) as db:
+    with _DB_LOCK, connect_db(INDEX_DB, timeout=30) as db:
         keys = list(path_keys)
         for i in range(0, len(keys), chunk_size):
             chunk = keys[i:i + chunk_size]
@@ -530,7 +538,7 @@ def _save_review_overrides(rows):
     if not payload:
         return
     try:
-        with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=20) as db:
+        with _DB_LOCK, connect_db(INDEX_DB, timeout=20) as db:
             db.executemany("""INSERT INTO review_override(path,size,mtime_ns,tier,move_selected,updated_at)
                               VALUES(?,?,?,?,?,?)
                               ON CONFLICT(path) DO UPDATE SET size=excluded.size,mtime_ns=excluded.mtime_ns,
@@ -543,7 +551,7 @@ def _save_review_overrides(rows):
 
 def _delete_review_override(path):
     try:
-        with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=10) as db:
+        with _DB_LOCK, connect_db(INDEX_DB, timeout=10) as db:
             db.execute("DELETE FROM review_override WHERE path=?", (str(path),))
             db.commit()
     except Exception:
@@ -555,7 +563,7 @@ RANK_CACHE_VERSION = 1
 def _cached_rank_score(path):
     try:
         p = Path(path); st = p.stat()
-        with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=10) as db:
+        with _DB_LOCK, connect_db(INDEX_DB, timeout=10) as db:
             row = db.execute(
                 "SELECT score_json FROM rank_cache WHERE path=? AND size=? AND mtime_ns=?",
                 (str(p), int(st.st_size), int(st.st_mtime_ns))
@@ -574,7 +582,7 @@ def _save_rank_score(path, score):
         p = Path(path); st = p.stat()
         payload = asdict(score)
         payload['_cache_version'] = RANK_CACHE_VERSION
-        with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=10) as db:
+        with _DB_LOCK, connect_db(INDEX_DB, timeout=10) as db:
             db.execute("""INSERT INTO rank_cache(path,size,mtime_ns,score_json,updated_at)
                           VALUES(?,?,?,?,?)
                           ON CONFLICT(path) DO UPDATE SET size=excluded.size,mtime_ns=excluded.mtime_ns,
@@ -601,7 +609,7 @@ def _save_cull_metrics_batch(rows):
     if not payload:
         return
     try:
-        with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=20) as db:
+        with _DB_LOCK, connect_db(INDEX_DB, timeout=20) as db:
             db.executemany("""INSERT INTO cull_cache(path,size,mtime_ns,region_s,quality,updated_at)
                               VALUES(?,?,?,?,?,?)
                               ON CONFLICT(path) DO UPDATE SET size=excluded.size,mtime_ns=excluded.mtime_ns,
@@ -629,7 +637,7 @@ def _save_rank_scores_batch(rows):
     if not payload:
         return
     try:
-        with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=20) as db:
+        with _DB_LOCK, connect_db(INDEX_DB, timeout=20) as db:
             db.executemany("""INSERT INTO rank_cache(path,size,mtime_ns,score_json,updated_at)
                               VALUES(?,?,?,?,?)
                               ON CONFLICT(path) DO UPDATE SET size=excluded.size,mtime_ns=excluded.mtime_ns,
@@ -652,7 +660,7 @@ def _prune_index_db():
     """Keep indexes bounded without doing multi-million-row DELETE work every launch."""
     try:
         geo_cutoff = time.time() - 180 * 86400
-        with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=30) as db:
+        with _DB_LOCK, connect_db(INDEX_DB, timeout=30) as db:
             # Analysis/review caches intentionally have no time-based expiry:
             # an unchanged archive should remain incremental even a year later.
             db.execute("DELETE FROM geocode_cache WHERE updated_at < ?", (geo_cutoff,))
@@ -678,7 +686,7 @@ def _prune_index_db():
 threading.Thread(target=_prune_index_db, daemon=True,
                  name='photocurator-index-prune').start()
 
-APP_VERSION = "1.6.0"
+APP_VERSION = "1.7.0"
 IS_CODESPACES = os.environ.get('CODESPACES', '').strip().lower() == 'true'
 CODESPACE_NAME = os.environ.get('CODESPACE_NAME', '').strip()
 _CODESPACES_DOMAIN_RAW = os.environ.get(
@@ -1175,7 +1183,7 @@ def _active_restore_reservations():
     """Return destinations already owned by queued/running restore tasks."""
     reserved = set()
     try:
-        with sqlite3.connect(str(INDEX_DB), timeout=15) as db:
+        with connect_db(INDEX_DB, timeout=15) as db:
             rows = db.execute(
                 """SELECT payload_json FROM background_task
                    WHERE kind='restore_trash' AND state IN ('queued','running')"""
@@ -1253,7 +1261,7 @@ def _write_trash_manifest(root):
         return
     try:
         root_real = os.path.realpath(str(root))
-        with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=15) as db:
+        with _DB_LOCK, connect_db(INDEX_DB, timeout=15) as db:
             rows = db.execute(
                 "SELECT original_path,trash_path,source_step,deleted_at FROM software_trash"
             ).fetchall()
@@ -1290,7 +1298,7 @@ def _import_trash_manifest(root):
             rows.append((original, trash_path, str(item.get('source_step') or ''),
                          float(item.get('deleted_at') or time.time())))
         if rows:
-            with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=15) as db:
+            with _DB_LOCK, connect_db(INDEX_DB, timeout=15) as db:
                 db.executemany(
                     "INSERT OR IGNORE INTO software_trash "
                     "(original_path,trash_path,source_step,deleted_at) VALUES(?,?,?,?)", rows
@@ -1316,7 +1324,7 @@ def _ensure_software_trash_record(original, trash_path, source_step):
     """Idempotently persist one reversible-trash record and return its id."""
     original = os.path.realpath(str(original))
     trash_path = os.path.realpath(str(trash_path))
-    with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=15) as db:
+    with _DB_LOCK, connect_db(INDEX_DB, timeout=15) as db:
         row = db.execute(
             "SELECT id FROM software_trash WHERE trash_path=?",
             (trash_path,)
@@ -1385,7 +1393,7 @@ def _trash_rows(root=None):
     root_cmp = os.path.normcase(os.path.realpath(str(root))) if root else None
     stale = []
     rows = []
-    with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=15) as db:
+    with _DB_LOCK, connect_db(INDEX_DB, timeout=15) as db:
         for row in db.execute(
             "SELECT id,original_path,trash_path,source_step,deleted_at "
             "FROM software_trash ORDER BY deleted_at DESC"
@@ -1419,7 +1427,7 @@ def _trash_rows(root=None):
 
 
 def _restore_trash_item(trash_id):
-    with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=15) as db:
+    with _DB_LOCK, connect_db(INDEX_DB, timeout=15) as db:
         row = db.execute(
             "SELECT original_path,trash_path FROM software_trash WHERE id=?",
             (int(trash_id),)
@@ -1434,7 +1442,7 @@ def _restore_trash_item(trash_id):
     desired.parent.mkdir(parents=True, exist_ok=True)
     restored = _unique_destination(desired)
     shutil.move(str(src), str(restored))
-    with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=15) as db:
+    with _DB_LOCK, connect_db(INDEX_DB, timeout=15) as db:
         db.execute("DELETE FROM software_trash WHERE id=?", (int(trash_id),))
         db.commit()
     _write_trash_manifest(state.get('folder'))
@@ -1443,7 +1451,7 @@ def _restore_trash_item(trash_id):
 
 
 def _purge_trash_item(trash_id):
-    with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=15) as db:
+    with _DB_LOCK, connect_db(INDEX_DB, timeout=15) as db:
         row = db.execute(
             "SELECT trash_path FROM software_trash WHERE id=?", (int(trash_id),)
         ).fetchone()
@@ -1452,7 +1460,7 @@ def _purge_trash_item(trash_id):
     target = Path(str(row[0]))
     if target.is_file():
         target.unlink()
-    with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=15) as db:
+    with _DB_LOCK, connect_db(INDEX_DB, timeout=15) as db:
         db.execute("DELETE FROM software_trash WHERE id=?", (int(trash_id),))
         db.commit()
     _write_trash_manifest(state.get('folder'))
@@ -1463,7 +1471,7 @@ def _find_original_for_path(path):
     """Resolve a current/trash path back to the stable original identity."""
     raw = os.path.realpath(str(path))
     try:
-        with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=10) as db:
+        with _DB_LOCK, connect_db(INDEX_DB, timeout=10) as db:
             row = db.execute(
                 "SELECT original_path FROM media_state WHERE current_path=? OR original_path=? "
                 "ORDER BY updated_at DESC LIMIT 1", (raw, raw)
@@ -1481,7 +1489,7 @@ def _apply_media_lifecycle(original_path, current_path, lifecycle, source_step='
     is_deleted = lifecycle in deleted_states
     _media_state_set(original, current, lifecycle, source_step, detail=str(trash_id or ''))
     try:
-        with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=15) as db:
+        with _DB_LOCK, connect_db(INDEX_DB, timeout=15) as db:
             db.execute(
                 """UPDATE similarity_group_member
                    SET current_path=?,lifecycle=?,selected=0,updated_at=?
@@ -1646,7 +1654,7 @@ def _background_permanent_delete(payload):
     try:
         if target.is_file():
             target.unlink()
-        with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=15) as db:
+        with _DB_LOCK, connect_db(INDEX_DB, timeout=15) as db:
             db.execute("DELETE FROM software_trash WHERE trash_path=? OR original_path=?",
                        (path, original))
             db.commit()
@@ -1669,7 +1677,7 @@ def _background_restore_trash(payload):
     original_hint = str(payload.get('original_path') or '').strip()
     restore_hint = str(payload.get('restore_path') or '').strip()
 
-    with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=15) as db:
+    with _DB_LOCK, connect_db(INDEX_DB, timeout=15) as db:
         row = db.execute(
             "SELECT original_path,trash_path,source_step FROM software_trash WHERE id=?", (trash_id,)
         ).fetchone()
@@ -1703,7 +1711,7 @@ def _background_restore_trash(payload):
         elif not restored_file.is_file():
             raise FileNotFoundError("回收站中的照片和计划恢复目标均不存在")
 
-        with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=15) as db:
+        with _DB_LOCK, connect_db(INDEX_DB, timeout=15) as db:
             db.execute("DELETE FROM software_trash WHERE id=?", (trash_id,))
             db.commit()
         _write_trash_manifest(state.get('folder'))
@@ -1722,7 +1730,7 @@ def _background_restore_trash(payload):
 
 def _background_purge_trash(payload):
     trash_id = int(payload['trash_id'])
-    with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=15) as db:
+    with _DB_LOCK, connect_db(INDEX_DB, timeout=15) as db:
         row = db.execute(
             "SELECT original_path,trash_path,source_step FROM software_trash WHERE id=?", (trash_id,)
         ).fetchone()
@@ -6690,7 +6698,7 @@ def api_exif():
 def api_activity():
     try:
         limit = min(200, max(1, int(request.args.get('limit', 60))))
-        with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=10) as db:
+        with _DB_LOCK, connect_db(INDEX_DB, timeout=10) as db:
             rows = db.execute(
                 "SELECT ts,action,path,detail FROM activity_log ORDER BY id DESC LIMIT ?",
                 (limit,)
@@ -6714,7 +6722,7 @@ def api_reverse_geocode():
         return jsonify({'label': ''}), 400
     key = f"{lat:.4f},{lon:.4f}"
     try:
-        with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=10) as db:
+        with _DB_LOCK, connect_db(INDEX_DB, timeout=10) as db:
             row = db.execute("SELECT label FROM geocode_cache WHERE key=?", (key,)).fetchone()
         if row:
             return jsonify({'label': row[0], 'cached': True})
@@ -6739,7 +6747,7 @@ def api_reverse_geocode():
                 _GEOCODE_LAST_AT = time.monotonic()
         label = str(data.get('display_name') or '')
         if label:
-            with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=10) as db:
+            with _DB_LOCK, connect_db(INDEX_DB, timeout=10) as db:
                 db.execute("INSERT OR REPLACE INTO geocode_cache(key,label,updated_at) VALUES(?,?,?)",
                            (key, label, time.time()))
                 db.commit()
