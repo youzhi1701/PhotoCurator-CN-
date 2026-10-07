@@ -2458,6 +2458,34 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   .remove-btn:hover{background:#dc2626;color:#fff}
   .delete-btn{flex:0 0 auto;border:none;background:rgba(220,38,38,.12);color:#dc2626;border-radius:5px;font-size:10px;font-weight:700;padding:2px 7px;cursor:pointer;line-height:1.5}
   .delete-btn:hover{background:#dc2626;color:#fff}
+  .dedup-choice.pending-delete{border-color:#f59e0b;background:color-mix(in srgb,#f59e0b 7%,var(--panel2))}
+  .dedup-choice.trashed{border-color:#ef4444;background:color-mix(in srgb,#ef4444 6%,var(--panel2))}
+  .dedup-choice.trashed img,.dedup-choice.pending-delete img{filter:saturate(.82) brightness(.92)}
+  .dedup-recommend.state-trash{background:#dc2626}
+  .dedup-recommend.state-pending{background:#d97706}
+  .dedup-recommend.state-neutral{background:rgba(17,24,39,.62)}
+  .dedup-more{margin-top:7px;font-size:11px}
+  .dedup-more summary{cursor:pointer;color:var(--muted);user-select:none}
+  .dedup-more .dedup-quick{margin-top:7px}
+  .group-status{display:inline-flex;align-items:center;padding:2px 7px;border-radius:999px;font-size:10px;font-weight:700}
+  .group-status.pending{background:#eef2ff;color:#4f46e5}
+  .group-status.reviewed{background:#dcfce7;color:#15803d}
+  .group-status.updated{background:#fef3c7;color:#b45309}
+  .pc-modal-backdrop{position:fixed;inset:0;z-index:520;display:none;align-items:center;justify-content:center;
+    background:rgba(24,32,52,.20);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
+  .pc-modal-backdrop.open{display:flex}
+  .pc-modal{width:min(440px,calc(100vw - 32px));padding:20px;border-radius:22px;
+    background:rgba(255,255,255,.86);border:1px solid rgba(255,255,255,.92);
+    box-shadow:0 28px 70px rgba(46,61,110,.24);backdrop-filter:blur(28px) saturate(145%)}
+  .pc-modal h3{margin:0 0 8px;font-size:18px}.pc-modal p{margin:0;color:var(--muted);font-size:13px;line-height:1.65}
+  .pc-modal-file{margin-top:10px;padding:9px 11px;border-radius:10px;background:rgba(255,255,255,.58);
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12px}
+  .pc-modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:18px;flex-wrap:wrap}
+  .pc-modal-actions button{border:1px solid var(--border);border-radius:10px;padding:9px 13px;background:rgba(255,255,255,.74);
+    color:var(--text);font-weight:700;cursor:pointer}
+  .pc-modal-actions .danger{color:#b91c1c;border-color:rgba(185,28,28,.22);background:rgba(254,226,226,.72)}
+  .pc-modal-actions .primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  .pc-modal-hint{margin-top:10px!important;font-size:11px!important}
   .trash-restore-btn{flex:0 0 auto;border:none;background:rgba(37,99,235,.12);color:#2563eb;border-radius:5px;font-size:10px;font-weight:700;padding:2px 7px;cursor:pointer;line-height:1.5}
   .trash-restore-btn:hover{background:#2563eb;color:#fff}
   .trash-purge-btn{flex:0 0 auto;border:none;background:rgba(185,28,28,.12);color:#b91c1c;border-radius:5px;font-size:10px;font-weight:700;padding:2px 7px;cursor:pointer;line-height:1.5}
@@ -2798,6 +2826,20 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   <button class="lb-nav lb-next" id="lbNext" title="下一张" aria-label="下一张">›</button>
   <div class="lb-side" id="lbSide"></div>
   <div class="lb-shortcuts" style="position:absolute;left:16px;bottom:10px;color:rgba(255,255,255,.55);font-size:10px;z-index:21;pointer-events:none">大图快捷键：← → 切换 · Esc 关闭 · B 壁纸 · X 移除</div>
+</div>
+
+<div class="pc-modal-backdrop" id="deleteModal" aria-hidden="true">
+  <div class="pc-modal" role="dialog" aria-modal="true" aria-labelledby="deleteModalTitle">
+    <h3 id="deleteModalTitle">删除照片</h3>
+    <p>默认移入 PhotoCurator 软件回收站，可在回收站中恢复。只有“彻底删除”会永久移除原文件。</p>
+    <div class="pc-modal-file" id="deleteModalFile">—</div>
+    <p class="pc-modal-hint">Enter：移入软件回收站　·　P：彻底删除　·　Esc：取消</p>
+    <div class="pc-modal-actions">
+      <button id="deleteCancel">取消</button>
+      <button class="danger" id="deletePermanent">彻底删除（P）</button>
+      <button class="primary" id="deleteTrash">移入软件回收站（Enter）</button>
+    </div>
+  </div>
 </div>
 
 <aside class="task-center" id="taskCenter">
