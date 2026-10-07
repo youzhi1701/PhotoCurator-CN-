@@ -714,8 +714,13 @@ def begin_catalog_scan(db_path, folder):
     }
 
 
-def catalog_scan_batch(db_path, session, paths):
-    """Persist one discovered batch without declaring unseen rows missing."""
+def catalog_scan_batch(db_path, session, paths, fingerprints=None):
+    """Persist one discovered batch without declaring unseen rows missing.
+
+    When a mutable fingerprints mapping is supplied, publish the size/mtime
+    already obtained for catalog persistence so sibling analysis stages do not
+    stat the same external-drive files again.
+    """
     if not paths:
         return 0
     now = time.time()
@@ -749,6 +754,11 @@ def catalog_scan_batch(db_path, session, paths):
             canonical, canonical, int(st.st_size), int(st.st_mtime_ns),
             "present", "normal", generation, now, now,
         ))
+        if fingerprints is not None:
+            try:
+                fingerprints[str(raw)] = (int(st.st_size), int(st.st_mtime_ns))
+            except Exception:
+                pass
 
     if not rows and not errors:
         return 0
