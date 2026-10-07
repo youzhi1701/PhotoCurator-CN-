@@ -94,7 +94,4 @@ require("catalogLoadEarlier" in catalog and "catalogLoadMore" in catalog,
 pbg_css = block(".pbg-toggle{", ".pbg-toggle:hover")
 require("backdrop-filter" not in pbg_css, "per-card backdrop blur reintroduced")
 
-print(
-    "性能回归门禁通过：任务心跳、Rank 预览、共享扫描、增量渲染、"
-    "缩略图节流与卡片合成契约均保持有效"
-)
+print("Performance regression gate OK: task heartbeat, Rank preview, shared scan, rendering, zoom, Catalog window and card compositing contracts are intact")
