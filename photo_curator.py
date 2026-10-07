@@ -632,7 +632,7 @@ try:
 except Exception:
     logger.warning("library index unavailable", exc_info=True)
 
-TASK_MANAGER = BackgroundTaskManager(INDEX_DB, workers=2)
+TASK_MANAGER = BackgroundTaskManager(INDEX_DB, workers=1)
 
 def _prune_index_db():
     """Keep indexes bounded without doing multi-million-row DELETE work every launch."""
