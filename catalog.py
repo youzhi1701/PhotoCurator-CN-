@@ -714,12 +714,11 @@ def begin_catalog_scan(db_path, folder):
     }
 
 
-def catalog_scan_batch(db_path, session, paths, fingerprints=None):
+def catalog_scan_batch(db_path, session, paths, fingerprints=None, media_ids=None):
     """Persist one discovered batch without declaring unseen rows missing.
 
-    When a mutable fingerprints mapping is supplied, publish the size/mtime
-    already obtained for catalog persistence so sibling analysis stages do not
-    stat the same external-drive files again.
+    Optional mutable mappings expose metadata already computed here so sibling
+    analysis/UI stages do not repeat stat() or path->media-id database lookups.
     """
     if not paths:
         return 0
@@ -757,6 +756,11 @@ def catalog_scan_batch(db_path, session, paths, fingerprints=None):
         if fingerprints is not None:
             try:
                 fingerprints[str(raw)] = (int(st.st_size), int(st.st_mtime_ns))
+            except Exception:
+                pass
+        if media_ids is not None:
+            try:
+                media_ids[str(raw)] = media_key
             except Exception:
                 pass
 
