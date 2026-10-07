@@ -216,6 +216,8 @@ class DesktopApi:
         self.allow_exit = False
         self.tray = None
         self.window = None
+        self._close_to_tray_lock = threading.Lock()
+        self._close_to_tray_pending = False
 
     def attach_tray(self, tray):
         self.tray = tray
@@ -329,6 +331,45 @@ class DesktopApi:
         except Exception:
             return False
 
+    def hide_to_tray_async(self, delay=0.04):
+        """Hide the native window only after a blocking close event returns.
+
+        pywebview's closing event is synchronous. Calling window.hide()
+        directly from that handler can deadlock the GUI message loop on
+        Windows/WebView2. Always dispatch the window call to a worker.
+        """
+        with self._close_to_tray_lock:
+            if self._close_to_tray_pending:
+                return True
+            self._close_to_tray_pending = True
+
+        def worker():
+            try:
+                if delay:
+                    time.sleep(max(0.0, float(delay)))
+                window = self._window()
+                if window is not None:
+                    window.hide()
+            except Exception:
+                _write_early_error_log()
+            finally:
+                with self._close_to_tray_lock:
+                    self._close_to_tray_pending = False
+
+        threading.Thread(
+            target=worker,
+            daemon=True,
+            name="photocurator-hide-to-tray",
+        ).start()
+        return True
+
+    def native_close_decision(self, has_tray):
+        """Return the synchronous closing-event decision without UI calls."""
+        if self.allow_exit or not has_tray:
+            return True
+        self.hide_to_tray_async()
+        return False
+
     def restore_from_work_area(self):
         window = self._window()
         if window is None:
@@ -360,12 +401,8 @@ class DesktopApi:
             window.minimize()
             return True
         if action == 'close':
-            # Close-to-tray keeps background analysis and queued file work alive.
-            try:
-                window.hide()
-            except Exception:
-                window.minimize()
-            return True
+            # Never block the WebView bridge waiting on the native GUI thread.
+            return self.hide_to_tray_async(delay=0.0)
         if action == 'exit':
             self.allow_exit = True
             stop_analysis_and_wait()
@@ -531,30 +568,37 @@ def main():
             _write_early_error_log()
 
     def on_closing():
-        if desktop_api.allow_exit:
-            return True
-        # Native close / Alt+F4 follows the same close-to-tray rule as the
-        # custom title-bar button. Background tasks are never stopped here.
-        if tray is not None:
-            try:
-                window.hide()
-            except Exception:
-                pass
-            return False
-        return True
+        # IMPORTANT: pywebview's closing event is synchronous/blocking.
+        # Do not call window.hide()/destroy()/minimize()/maximize() here.
+        return desktop_api.native_close_decision(tray is not None)
 
     window.events.closing += on_closing
 
-    def on_shown():
-        # Start maximized inside the monitor work area instead of fullscreen.
-        # For frameless windows this avoids covering the Windows taskbar.
-        try:
-            if not desktop_api._maximized:
-                desktop_api.maximize_to_work_area()
-        except Exception:
-            pass
+    initial_layout_started = threading.Event()
 
-    window.events.shown += on_shown
+    def on_loaded():
+        # Frameless windows are laid out only after WebView2 has finished
+        # loading, and from a detached worker. This avoids competing with
+        # WebView2 initialization while still respecting the taskbar work area.
+        if initial_layout_started.is_set():
+            return
+        initial_layout_started.set()
+
+        def apply_initial_layout():
+            try:
+                time.sleep(0.12)
+                if not desktop_api._maximized:
+                    desktop_api.maximize_to_work_area()
+            except Exception:
+                _write_early_error_log()
+
+        threading.Thread(
+            target=apply_initial_layout,
+            daemon=True,
+            name="photocurator-initial-window-layout",
+        ).start()
+
+    window.events.loaded += on_loaded
 
     try:
         # On Windows force Edge WebView2. Falling back to IE/MSHTML would open
