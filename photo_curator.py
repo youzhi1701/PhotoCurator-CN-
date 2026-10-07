@@ -892,8 +892,8 @@ CATEGORIES = ['composition', 'technical', 'sharpness', 'color', 'aesthetic']
 
 # Keep the WebView responsive on very large folders. Processing/state remains
 # complete; this cap affects only one HTTP response rendered by the UI.
-UI_LIVE_RESULT_CAP = 1200
-UI_RESULT_CHUNK = 5000
+UI_LIVE_RESULT_CAP = 300
+UI_RESULT_CHUNK = 200
 UI_RESULT_CAP = UI_RESULT_CHUNK
 
 
@@ -3467,11 +3467,15 @@ document.querySelectorAll('.step').forEach(t=>t.onclick=()=>{
       return;
     }
     if(currentStep==='cull')renderCullStep(cullRowsForPayload(d));
-    else if(currentStep==='dedup')renderDedupGroups(dedupRowsForPayload(d));
-    else renderRank(d.photos||[]);
+    else if(currentStep==='dedup'){
+      const st=d.stats||{};
+      dedupStatusCounts={
+        pending:Number(st.pending_groups||0),reviewed:Number(st.reviewed_groups||0),updated:Number(st.updated_groups||0)
+      };
+      loadDedupPage(true);
+    }else renderRank(d.photos||[]);
     updateVisibleStepStatus(currentStep,d);
     if(currentStep==='cull')maybeLoadAllCull(d);
-    if(currentStep==='dedup')maybeLoadAllDedup(d);
   }).catch(()=>{});
 });
 renderSettings();
@@ -3506,6 +3510,17 @@ function setupFilterBar(){
     if(ma)ma.onclick=()=>setAllBlurryMoveSelection(true);
     if(mn)mn.onclick=()=>setAllBlurryMoveSelection(false);
     updateCullMoveButton();
+    return;
+  }
+  if(currentStep==='dedup'){
+    bar.style.display='flex';
+    const counts=dedupStatusCounts||{};
+    const opts=[['pending','待筛选'],['reviewed','已筛选'],['updated','新增待复核']];
+    bar.innerHTML=opts.map(([k,l])=>`<button class="chip${dedupStatusFilter===k?' active':''}" data-dstatus="${k}">${l} <span>${Number(counts[k]||0)}</span></button>`).join('')
+      +'<span class="chip-sep"></span><button class="chip" id="dedupLoadMore" style="display:none"></button>';
+    bar.querySelectorAll('[data-dstatus]').forEach(b=>b.onclick=()=>{dedupStatusFilter=b.dataset.dstatus;loadDedupPage(true);});
+    const more=document.getElementById('dedupLoadMore');if(more)more.onclick=()=>loadDedupPage(false);
+    updateDedupLoadMore();
     return;
   }
   if(currentStep==='rank'){
@@ -3917,34 +3932,35 @@ function dedupRowsForPayload(d){
   return Array.from(dedupLiveStore.values());
 }
 let dedupChunkToken=0;
-async function loadRemainingDedup(total,offset){
-  const token=++dedupChunkToken;
-  const merged=new Map((photos||[]).map(g=>[String(g.group_id),g]));
-  let pos=offset||merged.size;
-  while(currentStep==='dedup' && token===dedupChunkToken && pos<total){
-    try{
-      const d=await fetch('/api/results/dedup?offset='+pos+'&limit=5000').then(r=>{
-        if(!r.ok)throw new Error('HTTP '+r.status);return r.json();
-      });
-      const rows=d.photos||[];
-      if(!rows.length)break;
-      rows.forEach(g=>merged.set(String(g.group_id),g));
-      pos=d.next_offset||pos+rows.length;
-      const combined=Array.from(merged.values());
-      dedupLiveStore.clear();combined.forEach(g=>dedupLiveStore.set(String(g.group_id),g));
-      renderDedupGroups(combined);
-      document.getElementById('progressText').textContent='相似组结果载入 '+combined.length+' / '+total+' · 可继续复核';
-      await new Promise(res=>setTimeout(res,0));
-    }catch(err){
-      toast('继续载入相似组失败，可切换视图后重试：'+(err.message||'未知错误'),'bad');
-      break;
-    }
-  }
+let dedupStatusFilter='pending',dedupVisibleTotal=0,dedupStatusCounts={pending:0,reviewed:0,updated:0};
+async function loadDedupPage(reset=false){
+  if(currentStep!=='dedup')return;
+  const offset=reset?0:dedupLiveStore.size;
+  try{
+    const d=await fetch('/api/results/dedup?offset='+offset+'&limit=200&status='+encodeURIComponent(dedupStatusFilter))
+      .then(async r=>{const x=await r.json();if(!r.ok)throw new Error(x.error||('HTTP '+r.status));return x;});
+    if(reset)dedupLiveStore.clear();
+    (d.photos||[]).forEach(g=>dedupLiveStore.set(String(g.group_id),g));
+    dedupVisibleTotal=Number(d.total||0);dedupStatusCounts=d.counts||dedupStatusCounts;
+    photos=Array.from(dedupLiveStore.values());
+    renderDedupGroups(photos);
+    setupFilterBar();
+    updateDedupLoadMore();
+  }catch(err){toast('载入相似组失败：'+(err.message||'未知错误'),'bad');}
 }
+function updateDedupLoadMore(){
+  const btn=document.getElementById('dedupLoadMore');
+  if(!btn)return;
+  const left=Math.max(0,dedupVisibleTotal-dedupLiveStore.size);
+  btn.style.display=left?'inline-flex':'none';
+  btn.textContent=left?'加载更多（剩余 '+left+'）':'';
+}
+async function loadRemainingDedup(total,offset){return loadDedupPage(false);}
+
 function maybeLoadAllDedup(d){
-  if(currentStep!=='dedup'||d.running)return;
-  const have=(d.photos||[]).length,total=Number(d.result_total||have);
-  if(total>have)loadRemainingDedup(total,have);
+  // v1.5 deliberately keeps a bounded foreground window. Full libraries are
+  // loaded on demand so background completion never freezes the review UI.
+  updateDedupLoadMore();
 }
 
 function poll(step){
@@ -5326,10 +5342,18 @@ def api_dedup_results_chunk():
         limit = min(UI_RESULT_CHUNK, max(1, int(request.args.get('limit', UI_RESULT_CHUNK))))
     except (TypeError, ValueError):
         return jsonify({'error': '结果范围无效'}), 400
+    status_filter = str(request.args.get('status') or 'all')
     all_groups = s.get('photos', [])
+    if status_filter in ('pending','reviewed','updated'):
+        all_groups = [g for g in all_groups if str(g.get('status') or 'pending') == status_filter]
     rows = all_groups[offset:offset + limit]
+    counts = {
+        key: sum(1 for g in s.get('photos', []) if str(g.get('status') or 'pending') == key)
+        for key in ('pending','reviewed','updated')
+    }
     return jsonify({'photos': rows, 'offset': offset, 'next_offset': offset + len(rows),
-                    'total': len(all_groups), 'done': offset + len(rows) >= len(all_groups)})
+                    'total': len(all_groups), 'done': offset + len(rows) >= len(all_groups),
+                    'status': status_filter, 'counts': counts})
 
 
 @app.route('/api/dedup-select', methods=['POST'])
