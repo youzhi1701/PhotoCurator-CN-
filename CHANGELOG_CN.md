@@ -1,3 +1,13 @@
+## v1.5.6
+
+### Windows 实机未响应：回退到已验证稳定的桌面壳
+- v1.5.5 在用户 Windows 实机上仍出现“PhotoCurator（未响应）”，因此排除 DWM/Handle 主题化是唯一根因。
+- 对照同一台机器上可正常运行的 v1.5.0，根因范围收敛到 v1.5.4 起引入的原生 WinForms frame + 改写后的启动生命周期。
+- 恢复 `frameless=True` 的 WebView2 壳、恢复托盘在 GUI loop 前初始化，并让 `webview.start()` 不再接收启动回调。
+- 窗口操作只通过 pywebview 公共 API 完成，不访问 WinForms 原生 Handle/DWM。
+- UI 恢复单层自定义标题栏：品牌、工作区导航、最小化、最大化、关闭到后台在同一层，不再叠加原生标题栏。
+- CI 改为锁定这套已验证的 frameless 生命周期，禁止再次引入 native Handle/DWM 或启动回调链。
+
 ## v1.5.5
 
 ### Windows 壳层死锁修复
