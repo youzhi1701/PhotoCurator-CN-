@@ -3479,6 +3479,9 @@ let dedupStatusCounts={pending:0,reviewed:0,updated:0};
 // Define them before the first setupFilterBar() call to avoid TDZ failures
 // that would stop Codespaces shortcut/sample initialization.
 const startBtn=document.getElementById('startBtn');
+startBtn.disabled=true;
+startBtn.setAttribute('aria-disabled','true');
+startBtn.title='请先选择照片文件夹';
 let cullReady=false;
 const CATS=[['aesthetic','综合观感'],['composition','构图'],['technical','技术质量'],['sharpness','清晰度'],['color','色彩']];
 const catColor=(i,n)=>`hsl(${Math.round(i*360/(n||CATS.length))},80%,62%)`;
@@ -3905,6 +3908,11 @@ let cullFilter='all', cullType='all', rankFilter='all', lastFmtSig='';
 function setupFilterBar(){
   const bar=document.getElementById('filterBar');
   if(currentStep==='cull'){
+    if(!photos.length && !coreRunning && !isRunning){
+      bar.style.display='none';
+      bar.innerHTML='';
+      return;
+    }
     const opts=[['all','全部'],['sharp','清晰'],['soft','轻微软 ★'],['blurry','模糊']];
     // Per-format chips (NEF, CR2, ARW, ...) built from what's actually loaded.
     const rawFmts=[...new Set(photos.filter(p=>p.raw).map(p=>p.fmt||'RAW'))].sort();
@@ -3994,11 +4002,23 @@ function resetWorkspaceForFolder(){
   document.getElementById('dedupApplyBtn').style.display='none';
   document.getElementById('gallery').innerHTML=emptyHTML(currentStep);
 }
+function updateStartAvailability(){
+  if(!startBtn)return;
+  if(isRunning||coreRunning){
+    startBtn.disabled=false;
+    return;
+  }
+  const ready=!!String(folder||'').trim();
+  startBtn.disabled=!ready;
+  startBtn.setAttribute('aria-disabled',ready?'false':'true');
+  startBtn.title=ready?'开始分析当前照片文件夹':'请先选择照片文件夹';
+}
 function selectFolderValue(value){
   const next=String(value||'').trim();
-  if(next===folder)return;
+  if(next===folder){updateStartAvailability();return;}
   folder=next||null;
   resetWorkspaceForFolder();
+  updateStartAvailability();
 }
 
 /* shortcuts */
@@ -4060,14 +4080,20 @@ document.getElementById('browseBtn').onclick=async()=>{
   try{
     let selected=null;
     let nativeError=null;
-    if(window.pywebview&&window.pywebview.api&&window.pywebview.api.pick_folder){
+    let nativeAttempted=false;
+    const nativeApi=(window.pywebview&&window.pywebview.api)||null;
+    if(nativeApi&&nativeApi.pick_folder){
+      nativeAttempted=true;
       try{
-        selected=await window.pywebview.api.pick_folder();
+        selected=await nativeApi.pick_folder();
       }catch(err){
         nativeError=err;
       }
     }
-    if(selected==null && (!window.pywebview||nativeError)){
+    // The pywebview object can exist briefly before its API bridge is ready.
+    // In that state, do not silently do nothing: use the HTTP/native-dialog
+    // fallback. A real user cancellation from the native picker is respected.
+    if(selected==null && (!nativeAttempted||nativeError)){
       const r=await fetch('/api/browse',{method:'POST'});
       if(!r.ok)throw new Error('HTTP '+r.status);
       const d=await r.json();
@@ -4080,7 +4106,8 @@ document.getElementById('browseBtn').onclick=async()=>{
   }catch(err){
     toast('无法打开文件夹选择器：'+(err.message||'未知错误'),'bad');
   }finally{
-    btn.disabled=false;btn.textContent=old;
+    btn.disabled=isRunning||coreRunning||codespacesMode;
+    btn.textContent=old;
   }
 };
 
@@ -4094,8 +4121,9 @@ function setStartBtn(running){
   const fi=document.getElementById('folderInput');
   const bb=document.getElementById('browseBtn');
   if(fi)fi.disabled=busy;
-  if(bb)bb.disabled=busy||codespacesMode;
-  document.querySelectorAll('.shortcut').forEach(x=>x.disabled=busy);
+  if(bb)bb.disabled=busy||coreRunning||codespacesMode;
+  document.querySelectorAll('.shortcut').forEach(x=>x.disabled=busy||coreRunning);
+  updateStartAvailability();
 }
 function snapshotPipelineConfig(){
   return {
