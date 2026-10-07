@@ -1952,23 +1952,36 @@ _SCAN_SNAPSHOT_CV = threading.Condition()
 _SCAN_SNAPSHOTS = {}
 
 
-def _shared_list_images(folder, recursive=True, max_age=15.0):
-    key = (os.path.normcase(os.path.realpath(str(folder))), bool(recursive))
+def _shared_list_images(folder, recursive=True, max_age=2.0):
+    scan_cfg = state.get('scan') or {}
+    output_mode = str(scan_cfg.get('output_mode') or 'source')
+    custom_output = ''
+    if output_mode == 'custom' and scan_cfg.get('custom_output'):
+        custom_output = os.path.normcase(os.path.realpath(
+            os.path.expanduser(str(scan_cfg.get('custom_output')))
+        ))
+    key = (
+        os.path.normcase(os.path.realpath(str(folder))),
+        bool(recursive),
+        output_mode,
+        custom_output,
+    )
     now = time.time()
     producer = False
     with _SCAN_SNAPSHOT_CV:
         entry = _SCAN_SNAPSHOTS.get(key)
         if entry and entry.get('state') == 'ready' and now - entry.get('at', 0) <= max_age:
             return list(entry.get('paths') or [])
-        if entry and entry.get('state') == 'scanning':
-            deadline = now + 60.0
-            while time.time() < deadline:
-                _SCAN_SNAPSHOT_CV.wait(timeout=0.25)
-                entry = _SCAN_SNAPSHOTS.get(key)
-                if entry and entry.get('state') == 'ready':
-                    return list(entry.get('paths') or [])
-                if not entry or entry.get('state') == 'failed':
-                    break
+        while entry and entry.get('state') == 'scanning':
+            # A 4 TB HDD can legitimately need well over a minute just to walk
+            # a deep directory tree. Wait for the single producer rather than
+            # starting a second full enumeration after an arbitrary timeout.
+            _SCAN_SNAPSHOT_CV.wait(timeout=0.25)
+            entry = _SCAN_SNAPSHOTS.get(key)
+            if entry and entry.get('state') == 'ready':
+                return list(entry.get('paths') or [])
+            if not entry or entry.get('state') == 'failed':
+                break
         _SCAN_SNAPSHOTS[key] = {'state': 'scanning', 'at': time.time(), 'paths': []}
         producer = True
 
