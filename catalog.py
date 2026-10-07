@@ -395,6 +395,105 @@ def _mounted_volume_map():
     return out
 
 
+def _rebase_path(path, old_root, new_root):
+    raw = str(path or "")
+    if not raw:
+        return raw
+    try:
+        old_cmp = os.path.normcase(os.path.realpath(str(old_root)))
+        raw_real = os.path.realpath(raw)
+        if os.path.commonpath([
+            os.path.normcase(raw_real), old_cmp
+        ]) != old_cmp:
+            return raw
+        rel = os.path.relpath(raw_real, os.path.realpath(str(old_root)))
+        return os.path.realpath(os.path.join(str(new_root), rel))
+    except Exception:
+        return raw
+
+
+def _rebase_persisted_paths(db, root_id, old_root, new_root):
+    """Rebase drive-letter/mount changes without changing stable media_id."""
+    if not old_root or not new_root:
+        return 0
+    if os.path.normcase(os.path.realpath(str(old_root))) == os.path.normcase(
+        os.path.realpath(str(new_root))
+    ):
+        return 0
+
+    media_rows = db.execute(
+        """SELECT media_id,original_path,current_path FROM media_catalog
+           WHERE root_id=?""",
+        (str(root_id),),
+    ).fetchall()
+    path_map = {}
+    for row in media_rows:
+        old_original = str(row["original_path"] or "")
+        old_current = str(row["current_path"] or "")
+        new_original = _rebase_path(old_original, old_root, new_root)
+        new_current = _rebase_path(old_current, old_root, new_root)
+        db.execute(
+            """UPDATE media_catalog SET original_path=?,current_path=?
+               WHERE media_id=?""",
+            (new_original, new_current, row["media_id"]),
+        )
+        if old_original != new_original:
+            path_map[old_original] = new_original
+        if old_current != new_current:
+            path_map[old_current] = new_current
+
+    tables = {
+        str(row["name"])
+        for row in db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+    }
+    for old_path, new_path in path_map.items():
+        for table in ("cull_cache", "rank_cache", "review_override"):
+            if table in tables:
+                db.execute(
+                    f"UPDATE OR REPLACE {table} SET path=? WHERE path=?",
+                    (new_path, old_path),
+                )
+        if "media_state" in tables:
+            # original_path is a legacy identity key; rebase it together with
+            # current_path while stable media identity remains media_catalog.media_id.
+            db.execute(
+                """UPDATE OR REPLACE media_state
+                   SET original_path=?,current_path=
+                     CASE WHEN current_path=? THEN ? ELSE current_path END
+                   WHERE original_path=?""",
+                (new_path, old_path, new_path, old_path),
+            )
+            db.execute(
+                "UPDATE media_state SET current_path=? WHERE current_path=?",
+                (new_path, old_path),
+            )
+        if "similarity_group_member" in tables:
+            db.execute(
+                """UPDATE OR REPLACE similarity_group_member
+                   SET original_path=?,current_path=
+                     CASE WHEN current_path=? THEN ? ELSE current_path END
+                   WHERE original_path=?""",
+                (new_path, old_path, new_path, old_path),
+            )
+            db.execute(
+                """UPDATE similarity_group_member SET current_path=?
+                   WHERE current_path=?""",
+                (new_path, old_path),
+            )
+        if "software_trash" in tables:
+            db.execute(
+                "UPDATE OR REPLACE software_trash SET original_path=? WHERE original_path=?",
+                (new_path, old_path),
+            )
+            db.execute(
+                "UPDATE OR REPLACE software_trash SET trash_path=? WHERE trash_path=?",
+                (new_path, old_path),
+            )
+    return len(path_map)
+
+
 def refresh_connections(db_path):
     """Refresh only presence/mount state; never scan media or storage usage."""
     init_catalog_schema(db_path)
@@ -406,11 +505,8 @@ def refresh_connections(db_path):
             identity = str(row["identity_key"])
             if os.name == "nt":
                 info = mounted.get(identity)
-                if not info:
-                    last_mount = str(row["last_mount"] or "")
-                    drive, _ = os.path.splitdrive(last_mount)
-                    mount_key = "win-mount:" + ((drive + "\\").lower() if drive else "")
-                    info = mounted.get(mount_key) if drive else None
+                if not info and identity.startswith("win-mount:"):
+                    info = mounted.get(identity)
                 connected = bool(info)
                 mount_path = info["mount_path"] if info else str(row["last_mount"] or "")
             else:
@@ -424,12 +520,16 @@ def refresh_connections(db_path):
                     (mount_path, now, row["source_id"]),
                 )
                 roots = db.execute(
-                    "SELECT root_id,relative_root FROM library_root WHERE source_id=?",
+                    "SELECT root_id,relative_root,current_root FROM library_root WHERE source_id=?",
                     (row["source_id"],),
                 ).fetchall()
                 for root in roots:
                     current = os.path.realpath(
                         os.path.join(mount_path, str(root["relative_root"] or ""))
+                    )
+                    old_current = str(root["current_root"] or "")
+                    _rebase_persisted_paths(
+                        db, root["root_id"], old_current, current
                     )
                     db.execute(
                         """UPDATE library_root SET current_root=?,last_seen_at=?
