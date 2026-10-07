@@ -5893,9 +5893,12 @@ def api_dedup_apply():
             if allowed is not None and p not in allowed:
                 continue
             original = _find_original_for_path(p)
+            planned_trash = str(_trash_destination(Path(p), folder).resolve())
             _apply_media_lifecycle(original, p, 'pending_trash', 'dedup')
             task_id, _ = TASK_MANAGER.enqueue(
-                'move_to_trash', {'path': p, 'folder': str(folder), 'step': 'dedup'},
+                'move_to_trash',
+                {'path': p, 'folder': str(folder), 'step': 'dedup',
+                 'trash_path': planned_trash},
                 priority=12, idempotency_key=f"move_to_trash:{original}"
             )
             queued.append(task_id)
@@ -5942,8 +5945,15 @@ def api_trash_restore():
     row = next((x for x in current if x['id'] == trash_id), None)
     if not row:
         return jsonify({'error': '当前照片库的回收站中没有这条记录'}), 404
+    restore_path = str(_unique_destination(Path(row['original_path'])).resolve())
     task_id, created = TASK_MANAGER.enqueue(
-        'restore_trash', {'trash_id': trash_id}, priority=8,
+        'restore_trash',
+        {'trash_id': trash_id,
+         'original_path': row['original_path'],
+         'trash_path': row['path'],
+         'source_step': row.get('source_step') or '',
+         'restore_path': restore_path},
+        priority=8,
         idempotency_key=f"restore_trash:{trash_id}"
     )
     _media_state_set(row['original_path'], row['path'], 'pending_restore',
@@ -5992,8 +6002,15 @@ def api_trash_restore_all():
     rows = _trash_rows(folder)
     task_ids = []
     for row in rows:
+        restore_path = str(_unique_destination(Path(row['original_path'])).resolve())
         task_id, _ = TASK_MANAGER.enqueue(
-            'restore_trash', {'trash_id': row['id']}, priority=15,
+            'restore_trash',
+            {'trash_id': row['id'],
+             'original_path': row['original_path'],
+             'trash_path': row['path'],
+             'source_step': row.get('source_step') or '',
+             'restore_path': restore_path},
+            priority=15,
             idempotency_key=f"restore_trash:{row['id']}"
         )
         task_ids.append(task_id)
@@ -6046,11 +6063,18 @@ def api_delete_photo():
 
     kind = 'move_to_trash' if mode == 'trash' else 'permanent_delete'
     priority = 10 if mode == 'trash' else 5
+    task_payload = {
+        'path': str(target), 'folder': str(folder), 'step': step,
+        'previous_lifecycle': previous_lifecycle,
+        'previous_group_status': previous_group_status,
+    }
+    if mode == 'trash':
+        task_payload['trash_path'] = str(
+            _trash_destination(Path(target), folder).resolve()
+        )
     task_id, created = TASK_MANAGER.enqueue(
         kind,
-        {'path': str(target), 'folder': str(folder), 'step': step,
-         'previous_lifecycle': previous_lifecycle,
-         'previous_group_status': previous_group_status},
+        task_payload,
         priority=priority,
         idempotency_key=f"{kind}:{original}",
     )
@@ -6271,9 +6295,12 @@ def api_move_blurry():
     for pp in rows:
         path = str(pp['path'])
         original = _find_original_for_path(path)
+        planned_trash = str(_trash_destination(Path(path), folder).resolve())
         _apply_media_lifecycle(original, path, 'pending_trash', 'cull')
         task_id, _ = TASK_MANAGER.enqueue(
-            'move_to_trash', {'path': path, 'folder': str(folder), 'step': 'cull'},
+            'move_to_trash',
+            {'path': path, 'folder': str(folder), 'step': 'cull',
+             'trash_path': planned_trash},
             priority=12, idempotency_key=f"move_to_trash:{original}"
         )
         task_ids.append(task_id)
