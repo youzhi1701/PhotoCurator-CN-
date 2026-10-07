@@ -257,6 +257,13 @@ def _windows_work_area():
             ]
 
         user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32.GetCursorPos.argtypes = [ctypes.POINTER(wintypes.POINT)]
+        user32.GetCursorPos.restype = wintypes.BOOL
+        user32.MonitorFromPoint.argtypes = [wintypes.POINT, wintypes.DWORD]
+        user32.MonitorFromPoint.restype = wintypes.HANDLE
+        user32.GetMonitorInfoW.argtypes = [wintypes.HANDLE, ctypes.POINTER(MONITORINFO)]
+        user32.GetMonitorInfoW.restype = wintypes.BOOL
+
         point = wintypes.POINT()
         if not user32.GetCursorPos(ctypes.byref(point)):
             return None
