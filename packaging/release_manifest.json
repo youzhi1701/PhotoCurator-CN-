@@ -1,8 +1,8 @@
 {
   "product": "PhotoCurator",
   "channel": "stable",
-  "version": "1.5.8",
-  "installer": "PhotoCurator-Setup-v1.5.8.exe",
+  "version": "1.5.9",
+  "installer": "PhotoCurator-Setup-v1.5.9.exe",
   "upgrade_mode": "in_place",
   "same_app_id": true,
   "data_root": "%LOCALAPPDATA%/PhotoCurator/data",
@@ -22,7 +22,7 @@
   "replace": [
     "app"
   ],
-  "notes": "v1.5.8 诊断稳定版：桌面运行层恢复到 v1.5.0 已验证的 pywebview 生命周期与窗口控制，不再继续试验新的宿主启动方式；新增可选诊断模式，Debug 启动时每 5 秒自动记录全部 Python 线程栈到 hang-trace.log，用于实机卡死定位。业务层保留 v1.5.x 数据源、离线图库、Dashboard/照片视图等功能。",
+  "notes": "v1.5.9 界面收口：筛选与数据、任务中心、工具箱全部统一进入左侧栏，不再使用右侧抽屉和底部悬浮大面板；照片缩略图默认提高到 240px，并扩大可调范围，优先保证照片与文字可读性。桌面运行层保持 v1.5.0 已验证稳定的生命周期不变。",
   "release_date": "2026-10-07",
   "published_version": "1.5.0",
   "published_installer": "PhotoCurator-Setup-v1.5.0.exe"
