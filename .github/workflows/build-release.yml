@@ -44,6 +44,7 @@ jobs:
           --icon packaging\PhotoCurator.ico
           --version-file packaging\version_info.txt
           --add-data "vendor;vendor"
+          --add-data "packaging\PhotoCurator.ico;packaging"
           --collect-all webview
           --collect-all rawpy
           --collect-all pillow_heif
