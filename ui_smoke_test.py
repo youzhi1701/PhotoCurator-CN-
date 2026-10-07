@@ -87,16 +87,31 @@ def main():
         start = driver.find_element(By.ID, "startBtn")
         start.click()
 
-        wait.until(lambda d: (
-            "停止" in d.find_element(By.ID, "startBtn").text
-            or d.find_element(By.ID, "progressWrap").value_of_css_property("display") != "none"
-        ))
+        # The progress panel becomes visible synchronously before the two HTTP
+        # start requests necessarily reach Flask. Prove both backend steps were
+        # actually admitted before waiting for completion; otherwise a fast CI
+        # machine can observe two idle states and report a false failure/pass.
+        started_deadline = time.time() + 12
+        while time.time() < started_deadline:
+            cull = photo_curator.state["cull"]
+            dedup = photo_curator.state["dedup"]
+            cull_seen = bool(cull.get("running") or cull.get("complete")
+                             or cull.get("src_folder") == demo_path)
+            dedup_seen = bool(dedup.get("running") or dedup.get("complete")
+                              or dedup.get("src_folder") == demo_path)
+            if cull_seen and dedup_seen:
+                break
+            time.sleep(0.05)
+        require(cull_seen, "UI 点击开始后 Cull 没有真正进入后台")
+        require(dedup_seen, "UI 点击开始后 Dedup 没有真正进入后台")
 
         deadline = time.time() + 45
         while time.time() < deadline:
             cull = photo_curator.state["cull"]
             dedup = photo_curator.state["dedup"]
-            if not cull.get("running") and not dedup.get("running"):
+            if (not cull.get("running") and not dedup.get("running")
+                    and (cull.get("complete") or "发生错误" in str(cull.get("status") or ""))
+                    and (dedup.get("complete") or "发生错误" in str(dedup.get("status") or ""))):
                 break
             time.sleep(0.1)
 
