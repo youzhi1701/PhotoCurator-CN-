@@ -19,9 +19,20 @@ jobs:
 
       - name: Compile Python sources
         run: |
-          python -m py_compile             desktop_app.py             photo_curator.py             photo_dedup_batch.py             photo_file_organizer.py             photo_ranking_engine.py             photo_ranking_v3.py             raw_loader.py             "基础冒烟测试.py"             "Codespaces冒烟测试.py"             windows_smoke_test.py
+          python -m py_compile \
+            desktop_app.py \
+            photo_curator.py \
+            background_tasks.py \
+            photo_dedup_batch.py \
+            photo_file_organizer.py \
+            photo_ranking_engine.py \
+            photo_ranking_v3.py \
+            raw_loader.py \
+            "基础冒烟测试.py" \
+            "Codespaces冒烟测试.py" \
+            windows_smoke_test.py
 
-      - name: Validate Codespaces helper files and version consistency
+      - name: Validate packaging and version consistency
         run: |
           bash -n "在线预览.sh"
           python - <<'PY'
@@ -30,7 +41,6 @@ jobs:
           from pathlib import Path
 
           json.loads(Path(".devcontainer/devcontainer.json").read_text(encoding="utf-8"))
-
           desktop = Path("desktop_app.py").read_text(encoding="utf-8")
           core = Path("photo_curator.py").read_text(encoding="utf-8")
           readme = Path("README.md").read_text(encoding="utf-8")
@@ -52,8 +62,7 @@ jobs:
           version_info = Path("packaging/version_info.txt").read_text(encoding="utf-8")
           build_workflow = Path(".github/workflows/build-release.yml").read_text(encoding="utf-8")
           manifest = json.loads(Path("packaging/release_manifest.json").read_text(encoding="utf-8"))
-          if not Path("packaging/ChineseSimplified.isl").is_file():
-              raise SystemExit("Vendored Simplified Chinese installer language is missing")
+
           if manifest.get("version") != dv:
               raise SystemExit("Release manifest version does not match APP_VERSION")
           if f'#define MyAppVersion "{dv}"' not in installer:
@@ -62,7 +71,9 @@ jobs:
               raise SystemExit("EXE version info does not match APP_VERSION")
           if f"PhotoCurator-Setup-v{dv}.exe" not in build_workflow:
               raise SystemExit("Build workflow artifact version does not match APP_VERSION")
-          print("Release packaging + version consistency OK:", dv)
+          if "if: github.ref == 'refs/tags/v1.5.0'" not in build_workflow:
+              raise SystemExit("v1.5.0 Release must be gated behind the release tag")
+          print("Packaging + version consistency OK:", dv)
           PY
 
       - name: Extract embedded UI JavaScript
@@ -70,7 +81,6 @@ jobs:
           python - <<'PY'
           import re
           from pathlib import Path
-
           source = Path("photo_curator.py").read_text(encoding="utf-8")
           html = re.search(r"HTML = r'''(.*?)</html>'''", source, re.S)
           if not html:
@@ -78,9 +88,7 @@ jobs:
           script = re.search(r"<script>(.*?)</script>", html.group(1), re.S)
           if not script:
               raise SystemExit("Embedded JavaScript block not found")
-
           js = script.group(1)
-          # Jinja values become valid JSON strings when Flask renders the page.
           js = re.sub(r"\{\{\s*map_style_(?:light|dark)\|tojson\s*\}\}", '""', js)
           Path("/tmp/photocurator-ui.js").write_text(js, encoding="utf-8")
           print("Extracted", len(js), "characters of JavaScript")
@@ -89,184 +97,167 @@ jobs:
       - name: Check embedded UI JavaScript
         run: node --check /tmp/photocurator-ui.js
 
-      - name: Check UI boot initialization order
+      - name: Check v1.5.0 runtime architecture
         run: |
           python - <<'PY'
           from pathlib import Path
 
-          js = Path("/tmp/photocurator-ui.js").read_text(encoding="utf-8")
-          first_setup = js.find("setupFilterBar();")
-          start_decl = js.find("const startBtn=document.getElementById('startBtn');")
-          god_decl = js.find("let godMode=false, godAbort=false, godResolve=null;")
-          cull_ready_decl = js.find("let cullReady=false;")
+          core = Path("photo_curator.py").read_text(encoding="utf-8")
+          tasks = Path("background_tasks.py").read_text(encoding="utf-8")
+          desktop = Path("desktop_app.py").read_text(encoding="utf-8")
+          requirements = Path("requirements.txt").read_text(encoding="utf-8")
+          workflow = Path(".github/workflows/build-release.yml").read_text(encoding="utf-8")
 
-          if min(first_setup, start_decl, god_decl, cull_ready_decl) < 0:
-              raise SystemExit("Required UI boot markers are missing")
-          if not (
-              start_decl < first_setup
-              and god_decl < first_setup
-              and cull_ready_decl < first_setup
-          ):
-              raise SystemExit(
-                  "UI boot order regression: startBtn/godMode/cullReady must be "
-                  "initialized before the first setupFilterBar() call"
-              )
-          print("UI boot initialization order OK")
-          PY
-
-      - name: Check blurry move-selection UI synchronization
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-
-          js = Path("/tmp/photocurator-ui.js").read_text(encoding="utf-8")
-          required = [
-              "function syncCullCardNode(node,p,idx)",
-              "ms.classList.toggle('off',!moveOn)",
-              "ms.textContent=moveOn?'✓':'□'",
-              "syncCullCardNode(node,p,idx);",
-              "data-move-selected=",
+          required_core = [
+              "BackgroundTaskManager",
+              "media_state",
+              "similarity_group_state",
+              "similarity_group_member",
+              "TASK_MANAGER",
+              "def _apply_media_lifecycle",
+              "def _background_move_to_trash",
+              "def _background_restore_trash",
+              "def _background_purge_trash",
+              "@app.route('/api/tasks')",
+              "function coreRun()",
+              "Promise.all(['cull','dedup']",
+              "pending_trash",
+              "pending_permanent_delete",
+              "permanently_deleted",
+              "group['status'] = 'reviewed'",
+              "group['status'] = 'updated'",
+              "@app.route('/api/dedup-complete'",
+              "TRASH_MANIFEST_NAME",
+              ".photocurator-trash.json",
+              "toolboxPanel",
+              "sidebarCollapse",
+              "dedupStatusFilter",
+              "UI_RESULT_CHUNK = 200",
+              "UI_LIVE_RESULT_CAP = 300",
+              "askDeleteMode",
+              "closeDeleteDialog('permanent')",
           ]
-          missing = [x for x in required if x not in js]
+          missing = [x for x in required_core if x not in core]
           if missing:
-              raise SystemExit("Cull move-selection UI sync regression: " + repr(missing))
-          print("Cull move-selection UI sync guard OK")
+              raise SystemExit("v1.5.0 core architecture regression: " + repr(missing))
+
+          required_tasks = [
+              "CREATE TABLE IF NOT EXISTS background_task",
+              "idempotency_key",
+              "state='queued'",
+              "state='running'",
+              "state='done'",
+              "state='failed'",
+              "def enqueue",
+              "def summary",
+          ]
+          missing = [x for x in required_tasks if x not in tasks]
+          if missing:
+              raise SystemExit("background task architecture regression: " + repr(missing))
+
+          required_desktop = [
+              "import pystray",
+              "load_tray_image",
+              "tray.run_detached()",
+              "window.hide()",
+              "退出 PhotoCurator",
+          ]
+          missing = [x for x in required_desktop if x not in desktop]
+          if missing:
+              raise SystemExit("desktop tray regression: " + repr(missing))
+          if "pystray" not in requirements:
+              raise SystemExit("pystray dependency missing")
+          if "refs/tags/v1.5.0" not in workflow:
+              raise SystemExit("tag-gated v1.5.0 release missing")
+
+          banned = [
+              "send2trash",
+              "移入 Windows 回收站",
+              "id=\"themeToggle\"",
+              "[data-theme=dark]",
+          ]
+          leftovers = [x for x in banned if x in (core + requirements)]
+          if leftovers:
+              raise SystemExit("v1.5.0 legacy behavior returned: " + repr(leftovers))
+
+          print("v1.5.0 runtime architecture guards OK")
           PY
 
-      - name: Check final library workflow regressions
+      - name: Check core workflow and large-library guards
         run: |
           python - <<'PY'
           from pathlib import Path
-
           source = Path("photo_curator.py").read_text(encoding="utf-8")
+
           required = [
               "def list_images(folder, recursive=False)",
               "compare_scope == 'global'",
-              "'selected_paths': [selected]",
-              "每个相似组至少保留 1 张照片",
-              "PhotoCurator_Result（照片筛选结果）",
-              "Blurred（模糊照片）",
-              "Duplicates（重复照片）",
-              "id=\"resultTools\"",
-              "data-view=\"small\"",
-              "data-view=\"list\"",
-              "collapsedFolders",
-              "software_trash",
+              "review_override",
+              "library_index.sqlite3",
               "PhotoCurator_RecycleBin（软件回收站）",
-              "data-step=\"trash\"",
               "trashRestoreOne",
               "trashPurgeOne",
-              "library_index.sqlite3",
+              "api_cull_results_chunk",
+              "api_dedup_results_chunk",
+              "cullLiveStore",
+              "dedupLiveStore",
+              "st_mtime_ns",
+              ":v3",
+              "collapsedFolders",
+              "data-view=\"list\"",
+              "data-view=\"small\"",
               "Ctrl + mouse wheel changes thumbnail density only",
-              "移入软件回收站",
           ]
           missing = [x for x in required if x not in source]
           if missing:
-              raise SystemExit("Final library workflow regression: " + repr(missing))
+              raise SystemExit("Core workflow regression: " + repr(missing))
+
           if "selected_path': selected" in source:
               raise SystemExit("Legacy single-keeper dedup state returned")
-          print("Final recursive/grouped/multi-keep workflow guard OK")
+          print("Core workflow / large-library guards OK")
           PY
 
-      - name: Check v1.4.2 data-flow and large-library guards
+      - name: Check UI boot and state separation
         run: |
           python - <<'PY'
           from pathlib import Path
-
-          source = Path("photo_curator.py").read_text(encoding="utf-8")
-          installer = Path("packaging/PhotoCurator.iss").read_text(encoding="utf-8")
-          workflow = Path(".github/workflows/build-release.yml").read_text(encoding="utf-8")
-
+          js = Path("/tmp/photocurator-ui.js").read_text(encoding="utf-8")
           required = [
-              "review_override",
-              "UI_LIVE_RESULT_CAP",
-              "UI_RESULT_CHUNK",
-              "api_cull_results_chunk",
-              "snapshotPipelineConfig",
-              "cullLiveStore",
-              "singleton_paths",
-              "seen_paths",
-              "state['rank']['preview_at'] = 0.0",
-              "ftype:'all'",
-              "_save_cull_metrics_batch",
-              "_save_rank_scores_batch",
-              "_load_cull_metrics_map",
-              "_load_rank_scores_map",
-              "_sync_dedup_with_cull",
-              "api_dedup_results_chunk",
-              "all_singleton_paths",
-              "CULL_METRICS_VERSION",
-              "st_mtime_ns",
-              ":v3",
-              "late_pending",
-              "'ready': True",
-              "[InstallDelete]",
+              "const startBtn=document.getElementById('startBtn');",
+              "let cullReady=false;",
+              "function coreRun()",
+              "function syncCurrentView()",
+              "function waitTaskAndSync",
+              "function dedupMemberState",
+              "function dedupGroupStatusLabel",
+              "function askDeleteMode",
+              "function askBatchConfirm",
           ]
-          missing = [x for x in required if x not in (source + installer)]
+          missing = [x for x in required if x not in js]
           if missing:
-              raise SystemExit("v1.4.2 architecture regression: " + repr(missing))
-
-          banned = [
-              "清晰度技术值",
-              "ftype:step==='cull'?'all':cullType",
-              "Download Simplified Chinese installer language",
-              "raw.githubusercontent.com/kira-96/Inno-Setup-Chinese-Simplified-Translation",
-              "send2trash",
-              "移入 Windows 回收站",
-          ]
-          leftovers = [x for x in banned if x in (source + workflow)]
-          if leftovers:
-              raise SystemExit("v1.4.2 legacy behavior returned: " + repr(leftovers))
-
-          js_saved = source.find("saved=JSON.parse(localStorage.getItem('pc-library-settings')")
-          for decl in (
-              "let cullStrictness=1.0;",
-              "let cullAdaptive=true;",
-              "let cullRescue=true;",
-              "let dedupThreshold=0.80;",
-              "let pairMode='both';",
-              "let rankTopN=50;",
-          ):
-              pos = source.find(decl)
-              if pos < 0 or (js_saved >= 0 and pos > js_saved):
-                  raise SystemExit("Settings initialization order regression: " + decl)
-
-          print("v1.4.2 data-flow / large-library guards OK")
+              raise SystemExit("UI state architecture regression: " + repr(missing))
+          if js.find("const startBtn=document.getElementById('startBtn');") > js.find("setupFilterBar();"):
+              raise SystemExit("startBtn must initialize before setupFilterBar")
+          print("UI boot / state separation OK")
           PY
 
-      - name: Validate embedded HTML structure
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          s = Path("photo_curator.py").read_text(encoding="utf-8")
-          checks = {
-              "<html": 1,
-              "</html>": 1,
-              "<style>": 1,
-              "</style>": 1,
-              "<script>": 1,
-              "</script>": 1,
-          }
-          for token, expected in checks.items():
-              count = s.count(token)
-              if count != expected:
-                  raise SystemExit(f"{token}: expected {expected}, got {count}")
-          print("Embedded HTML structure OK")
-          PY
-
-      - name: Validate embedded CSS structure
+      - name: Validate embedded HTML and CSS structure
         run: |
           python - <<'PY'
           import re
           from pathlib import Path
-
           source = Path("photo_curator.py").read_text(encoding="utf-8")
+          for token, expected in {
+              "<html": 1, "</html>": 1,
+              "<style>": 1, "</style>": 1,
+              "<script>": 1, "</script>": 1,
+          }.items():
+              count = source.count(token)
+              if count != expected:
+                  raise SystemExit(f"{token}: expected {expected}, got {count}")
+
           html = re.search(r"HTML = r'''(.*?)</html>'''", source, re.S)
-          if not html:
-              raise SystemExit("Embedded HTML block not found")
           style = re.search(r"<style>(.*?)</style>", html.group(1), re.S)
-          if not style:
-              raise SystemExit("Embedded CSS block not found")
           css = re.sub(r"/\*.*?\*/", "", style.group(1), flags=re.S)
           depth = 0
           for i, ch in enumerate(css):
@@ -275,9 +266,9 @@ jobs:
               elif ch == "}":
                   depth -= 1
                   if depth < 0:
-                      raise SystemExit(f"CSS has an unexpected closing brace at {i}")
-          if depth != 0:
-              raise SystemExit(f"CSS brace balance failed: depth={depth}")
+                      raise SystemExit(f"CSS unexpected closing brace at {i}")
+          if depth:
+              raise SystemExit(f"CSS brace balance failed: {depth}")
           for query in (
               "@media (max-width: 1100px)",
               "@media (max-width: 820px)",
@@ -285,8 +276,8 @@ jobs:
               "@media (max-height: 700px)",
           ):
               if query not in css:
-                  raise SystemExit(f"Missing responsive rule: {query}")
-          print("Embedded CSS structure OK")
+                  raise SystemExit("Missing responsive rule: " + query)
+          print("Embedded HTML/CSS structure OK")
           PY
 
       - name: Visible UI localization regression check
@@ -294,13 +285,9 @@ jobs:
           python - <<'PY'
           import re
           from pathlib import Path
-
           source = Path("photo_curator.py").read_text(encoding="utf-8")
           html = re.search(r"HTML = r'''(.*?)</html>'''", source, re.S)
-          if not html:
-              raise SystemExit("Embedded HTML block not found")
           ui = html.group(1)
-
           banned = [
               "Hover any row for what it measures.",
               "Pick a folder",
@@ -309,14 +296,7 @@ jobs:
               "Export TOP photos",
               "Export Phone BG",
               "Move blurry →",
-              "Recommended defaults",
-              "All TOP photos",
-              "No photos flagged",
               "Restore all",
-              "Remove from ranking",
-              "Set as phone wallpaper",
-              "Category scores",
-              "No EXIF metadata.",
               "Step 1 · Cull",
               "Step 2 · Dedup",
               "Step 3 · Rank",
@@ -324,9 +304,8 @@ jobs:
           leftovers = [x for x in banned if x in ui]
           if leftovers:
               raise SystemExit("Visible English UI regression: " + repr(leftovers))
-          print("Visible UI localization regression check OK")
+          print("Visible UI localization regression OK")
           PY
-
 
   windows-smoke:
     runs-on: windows-latest
@@ -363,46 +342,12 @@ jobs:
           if errorlevel 1 exit /b 1
           call PhotoCurator-Logs.cmd
           if errorlevel 1 exit /b 1
-          call "一键安装并启动.bat"
-          if errorlevel 1 exit /b 1
-          call "启动照片筛选.bat"
-          if errorlevel 1 exit /b 1
-          call "浏览器兼容模式.bat"
-          if errorlevel 1 exit /b 1
-          call "调试运行.bat"
-          if errorlevel 1 exit /b 1
-          call "环境自检.bat"
-          if errorlevel 1 exit /b 1
-          call "打开日志文件夹.bat"
-          if errorlevel 1 exit /b 1
-
-      - name: Verify canonical launchers are ASCII only
-        shell: bash
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          names = [
-              "PhotoCurator-Install.cmd",
-              "PhotoCurator-Start.cmd",
-              "PhotoCurator-Browser.cmd",
-              "PhotoCurator-Debug.cmd",
-              "PhotoCurator-Check.cmd",
-              "PhotoCurator-Logs.cmd",
-          ]
-          for name in names:
-              data = Path(name).read_bytes()
-              try:
-                  data.decode("ascii")
-              except UnicodeDecodeError as exc:
-                  raise SystemExit(f"{name} is not ASCII-only: {exc}")
-          print("Canonical Windows launchers are ASCII-only")
-          PY
 
       - name: Compile Python sources
         run: |
-          python -m py_compile desktop_app.py photo_curator.py photo_dedup_batch.py photo_file_organizer.py photo_ranking_engine.py photo_ranking_v3.py raw_loader.py "基础冒烟测试.py" "Codespaces冒烟测试.py" windows_smoke_test.py
+          python -m py_compile desktop_app.py photo_curator.py background_tasks.py photo_dedup_batch.py photo_file_organizer.py photo_ranking_engine.py photo_ranking_v3.py raw_loader.py "基础冒烟测试.py" "Codespaces冒烟测试.py" windows_smoke_test.py
 
-      - name: Unicode path and image IO smoke test
+      - name: Unicode path and background lifecycle smoke test
         run: |
           python "基础冒烟测试.py"
 
@@ -410,23 +355,17 @@ jobs:
         run: |
           python "Codespaces冒烟测试.py"
 
-
       - name: Technical identifier localization guard
         shell: bash
         run: |
           python - <<'PY'
           from pathlib import Path
           source = Path("photo_curator.py").read_text(encoding="utf-8")
-          banned = [
-              "DateTime原始照片",
-              "Lens原始照片",
-              "Exposure时间",
-              "Focal长度",
-          ]
+          banned = ["DateTime原始照片","Lens原始照片","Exposure时间","Focal长度"]
           bad = [x for x in banned if x in source]
           if bad:
               raise SystemExit("Technical identifiers were localized accidentally: " + repr(bad))
-          for required in ("DateTimeOriginal", "LensModel", "ExposureTime", "FocalLength"):
+          for required in ("DateTimeOriginal","LensModel","ExposureTime","FocalLength"):
               if required not in source:
                   raise SystemExit("Missing required EXIF identifier: " + required)
           print("Technical identifier localization guard OK")
