@@ -2711,6 +2711,28 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   .task-tip{font-size:10px;color:var(--muted);line-height:1.5;padding-top:7px}
   .task-exit{width:100%;margin-top:10px;padding:8px;border:1px solid rgba(220,38,38,.18);border-radius:9px;background:rgba(255,255,255,.5);color:#b91c1c;font-size:11px;font-weight:700;cursor:pointer}
   .task-exit:hover{background:rgba(254,226,226,.8)}
+  .sidebar-nav{display:flex;flex-direction:column;gap:5px;padding:0 0 10px;margin-bottom:10px;border-bottom:1px solid var(--border)}
+  .sidebar-nav button{display:flex;align-items:center;gap:10px;width:100%;height:40px;padding:0 11px;border:1px solid transparent;border-radius:11px;background:transparent;color:var(--text);font-weight:700;cursor:pointer;text-align:left}
+  .sidebar-nav button:hover{background:var(--panel2)}
+  .sidebar-nav .step.active{background:color-mix(in srgb,var(--accent) 11%,var(--panel));color:var(--accent);border-color:color-mix(in srgb,var(--accent) 20%,transparent)}
+  .nav-icon{width:22px;text-align:center;font-size:16px}.nav-label{white-space:nowrap}
+  .source-panel,.settings-fold,.stats-fold{border:1px solid color-mix(in srgb,var(--border) 85%,transparent);border-radius:11px;padding:8px 9px;background:rgba(255,255,255,.42)}
+  .source-panel>summary,.settings-fold>summary,.stats-fold>summary{cursor:pointer;font-size:12px;font-weight:700;color:var(--text);user-select:none}
+  .workspace-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 10px;padding:10px 13px;border:1px solid rgba(255,255,255,.78);border-radius:14px;background:rgba(255,255,255,.55);backdrop-filter:blur(18px)}
+  .workspace-heading>div{display:flex;align-items:baseline;gap:9px;min-width:0}.workspace-heading b{font-size:16px}.workspace-heading span{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .toolbox-panel{position:fixed;inset:72px 18px 18px auto;width:min(420px,calc(100vw - 36px));z-index:210;display:none;padding:15px;border-radius:20px;background:rgba(255,255,255,.83);border:1px solid rgba(255,255,255,.92);box-shadow:0 24px 70px rgba(44,62,110,.24);backdrop-filter:blur(30px) saturate(145%);overflow:auto}
+  .toolbox-panel.open{display:block}.toolbox-head{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px}.toolbox-head>div{display:flex;flex-direction:column}.toolbox-head span{font-size:11px;color:var(--muted)}.toolbox-head button{border:0;background:transparent;font-size:22px;cursor:pointer;color:var(--muted)}
+  .tool-card{display:flex;flex-direction:column;gap:3px;width:100%;padding:13px;margin:8px 0;border:1px solid var(--border);border-radius:13px;background:rgba(255,255,255,.55);color:var(--text);text-align:left;cursor:pointer}.tool-card:hover{border-color:var(--accent)}.tool-card span{font-size:11px;color:var(--muted)}
+  details.tool-card{cursor:default}.tool-card summary{display:flex;flex-direction:column;gap:3px;cursor:pointer}
+  body.sidebar-collapsed .sidebar{width:76px!important;flex-basis:76px!important;padding:10px 8px}
+  body.sidebar-collapsed .sidebar-scroll{display:none}
+  body.sidebar-collapsed .sidebar-actions>*:not(.sidebar-collapse){display:none!important}
+  body.sidebar-collapsed .sidebar-actions{border:0;padding-top:0}
+  body.sidebar-collapsed .sidebar-collapse{font-size:0;padding:9px}
+  body.sidebar-collapsed .sidebar-collapse::after{content:'⇥';font-size:18px}
+  body.sidebar-collapsed .nav-label{display:none}
+  body.sidebar-collapsed .sidebar-nav button{justify-content:center;padding:0}
+  body.sidebar-collapsed .nav-icon{width:auto}
   .top button,.top input,.top .theme,.top .window-controls{position:relative;z-index:2}
   .folder-grid .photo-card{content-visibility:auto;contain-intrinsic-size:190px 240px}
   body.processing #settingsPanel input,
@@ -3050,6 +3072,37 @@ document.getElementById('winMax').onclick=()=>nativeWindow('toggle_maximize');
 document.getElementById('winClose').onclick=()=>nativeWindow('close');
 setTimeout(()=>{if(!(window.pywebview&&window.pywebview.api))document.querySelector('.window-controls').style.display='none';},900);
 
+const WORKSPACE_COPY={
+  cull:['模糊废片','快速复核模糊与失焦照片，后台分析不会打断当前操作。'],
+  dedup:['相似照片','删除不需要的重复照片，完成的分组会保留复核记录。'],
+  trash:['回收站','最后一轮复核：恢复误删照片或执行永久删除。'],
+  rank:['照片评分 / 精选推荐','工具箱扩展功能，不参与默认照片清理流程。']
+};
+function updateWorkspaceHeading(){
+  const c=WORKSPACE_COPY[currentStep]||WORKSPACE_COPY.cull;
+  document.getElementById('workspaceTitle').textContent=c[0];
+  document.getElementById('workspaceHint').textContent=c[1];
+}
+const sidebarCollapse=document.getElementById('sidebarCollapse');
+function setSidebarCollapsed(on){
+  document.body.classList.toggle('sidebar-collapsed',!!on);
+  sidebarCollapse.textContent=on?'⇥':'⇤ 收起侧栏';
+  try{localStorage.setItem('pc-sidebar-collapsed',on?'1':'0');}catch(_){}
+}
+try{setSidebarCollapsed(localStorage.getItem('pc-sidebar-collapsed')==='1');}catch(_){}
+sidebarCollapse.onclick=()=>setSidebarCollapsed(!document.body.classList.contains('sidebar-collapsed'));
+document.getElementById('settingsQuick').onclick=()=>{
+  if(document.body.classList.contains('sidebar-collapsed'))setSidebarCollapsed(false);
+  const d=document.getElementById('settingsDetails');d.open=true;d.scrollIntoView({behavior:'smooth',block:'nearest'});
+};
+const toolboxPanel=document.getElementById('toolboxPanel');
+document.getElementById('toolboxOpen').onclick=()=>toolboxPanel.classList.add('open');
+document.getElementById('toolboxClose').onclick=()=>toolboxPanel.classList.remove('open');
+document.getElementById('openRankTool').onclick=()=>{
+  toolboxPanel.classList.remove('open');
+  activateStep('rank');
+  fetch('/api/progress/rank').then(r=>r.json()).then(d=>{renderRank(d.photos||[]);updateVisibleStepStatus('rank',d);}).catch(()=>{});
+};
 const taskCenter=document.getElementById('taskCenter');
 document.getElementById('taskToggle').onclick=()=>taskCenter.classList.toggle('open');
 document.getElementById('taskClose').onclick=()=>taskCenter.classList.remove('open');
@@ -3188,6 +3241,7 @@ function renderSettings(){
 function activateStep(step){
   currentStep=step;
   document.querySelectorAll('.step').forEach(x=>x.classList.toggle('active',x.dataset.step===step));
+  updateWorkspaceHeading();
   renderSettings();
   document.getElementById('exportBtn').style.display='none';
   document.getElementById('exportPbgBtn').style.display='none';
