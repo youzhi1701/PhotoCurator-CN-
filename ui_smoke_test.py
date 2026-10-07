@@ -3,13 +3,22 @@
 """Windows UI smoke test: real browser + real local API + real core analysis."""
 
 import os
+import sys
 import tempfile
 import threading
 import time
 from pathlib import Path
 
 # Keep smoke-test state isolated from the runner profile.
-_tmp = tempfile.TemporaryDirectory(prefix="photocurator_ui_smoke_")
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
+_tmp = tempfile.TemporaryDirectory(
+    prefix="photocurator_ui_smoke_", ignore_cleanup_errors=True
+)
 os.environ["PHOTOCURATOR_DATA_DIR"] = str(Path(_tmp.name) / "data")
 os.environ.setdefault("PHOTOCURATOR_PORT", "5014")
 
