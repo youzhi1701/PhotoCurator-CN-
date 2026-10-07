@@ -1,3 +1,16 @@
+## v1.5.4
+
+- Windows 窗口壳恢复原生系统边框，移除 frameless 自定义壳层，保留系统拖动、最大化、Snap、任务栏与 Alt+F4 行为
+- 通过 DWM 安全主题化 Windows 标题栏：蓝灰标题、深色文字、细边框与系统圆角；旧系统不支持时自动回退，不影响窗口启动
+- 桌面窗口标题统一为“PhotoCurator”，网页内部移除重复 Logo / 软件名和自绘窗口控制按钮
+- 首屏新增 /api/bootstrap，只读取 SQLite 本地索引摘要；启动阶段不再枚举硬盘、相机卡或生成测试图库
+- /api/shortcuts 改为返回设备扫描缓存，存储设备检测通过 /api/storage/refresh 在后台按需执行
+- 内置测试数据改为 /api/demo/prepare 显式准备，不再作为首屏副作用创建
+- Dashboard 与 Gallery 分离为独立容器，概览与照片网格不再共享 Grid 布局
+- 来源和当前结果面板默认折叠，最近目录 / 存储设备 / 测试数据仅在用户打开照片来源后加载
+- 新增 /api/health 与打包 EXE --ci-probe 模式；Windows Release 在 1 / 3 / 5 / 10 / 20 秒持续检查真实 EXE 响应
+- 版本统一升级为 1.5.4
+
 ## v1.4.2
 
 - 删除流程改为 PhotoCurator 自有软件回收站，不再依赖 Windows 系统回收站
