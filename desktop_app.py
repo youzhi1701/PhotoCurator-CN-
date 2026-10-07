@@ -20,7 +20,7 @@ from runtime_paths import (
 )
 
 APP_TITLE = "PhotoCurator"
-APP_VERSION = "1.5.9"
+APP_VERSION = "1.6.0"
 HOST = "127.0.0.1"
 DEFAULT_PORT = 5014
 
@@ -235,6 +235,72 @@ def load_tray_image():
     return img
 
 
+def _windows_work_area():
+    """Return the Windows work area for the monitor under the mouse cursor.
+
+    This deliberately uses only monitor geometry APIs, not a pywebview native
+    handle.  Clicking the custom maximize button therefore targets the monitor
+    the user is interacting with while keeping the taskbar visible.
+    """
+    if os.name != "nt":
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class MONITORINFO(ctypes.Structure):
+            _fields_ = [
+                ("cbSize", wintypes.DWORD),
+                ("rcMonitor", wintypes.RECT),
+                ("rcWork", wintypes.RECT),
+                ("dwFlags", wintypes.DWORD),
+            ]
+
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        point = wintypes.POINT()
+        if not user32.GetCursorPos(ctypes.byref(point)):
+            return None
+        monitor = user32.MonitorFromPoint(point, 2)  # MONITOR_DEFAULTTONEAREST
+        if not monitor:
+            return None
+        info = MONITORINFO()
+        info.cbSize = ctypes.sizeof(MONITORINFO)
+        if not user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
+            return None
+        work = info.rcWork
+        width = max(1, int(work.right - work.left))
+        height = max(1, int(work.bottom - work.top))
+        return int(work.left), int(work.top), width, height
+    except Exception:
+        return None
+
+
+def _fit_window_to_work_area(window):
+    area = _windows_work_area()
+    if not area:
+        window.maximize()
+        return True
+    left, top, width, height = area
+    window.move(left, top)
+    window.resize(width, height)
+    return True
+
+
+def _restore_window_size(window, width=1180, height=760):
+    area = _windows_work_area()
+    if not area:
+        window.restore()
+        return True
+    left, top, work_width, work_height = area
+    width = min(int(width), work_width)
+    height = min(int(height), work_height)
+    x = left + max(0, (work_width - width) // 2)
+    y = top + max(0, (work_height - height) // 2)
+    window.resize(width, height)
+    window.move(x, y)
+    return True
+
+
 class DesktopApi:
     """Small native bridge used only by the desktop WebView."""
 
@@ -276,10 +342,10 @@ class DesktopApi:
             return True
         if action == 'toggle_maximize':
             if self._maximized:
-                window.restore()
+                _restore_window_size(window)
                 self._maximized = False
             else:
-                window.maximize()
+                _fit_window_to_work_area(window)
                 self._maximized = True
             return True
         return False
@@ -340,15 +406,22 @@ def main():
         )
 
     desktop_api = DesktopApi()
+    work_area = _windows_work_area() if os.name == 'nt' else None
+    create_width = work_area[2] if work_area else 1180
+    create_height = work_area[3] if work_area else 760
+    create_x = work_area[0] if work_area else None
+    create_y = work_area[1] if work_area else None
     window = webview.create_window(
         APP_TITLE,
         URL,
         js_api=desktop_api,
-        width=1180,
-        height=760,
+        width=create_width,
+        height=create_height,
+        x=create_x,
+        y=create_y,
         min_size=(720, 520),
         resizable=True,
-        maximized=True,
+        maximized=False,
         zoomable=False,
         confirm_close=False,
         text_select=True,
@@ -361,9 +434,9 @@ def main():
         try:
             window.show()
             if desktop_api._maximized:
-                window.maximize()
+                _fit_window_to_work_area(window)
             else:
-                window.restore()
+                _restore_window_size(window)
         except Exception:
             pass
 
