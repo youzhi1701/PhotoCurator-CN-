@@ -70,13 +70,21 @@ jobs:
           for name in ("desktop_app.py", "photo_curator.py"):
               text = Path(name).read_text(encoding="utf-8")
               required = (
-                  ("照片筛选",) if name == "desktop_app.py"
-                  else ("模糊废片", "相似照片", "回收站", "开始分析")
+                  ("\u7167\u7247\u7b5b\u9009",) if name == "desktop_app.py"
+                  else (
+                      "\u6a21\u7cca\u5e9f\u7247",
+                      "\u76f8\u4f3c\u7167\u7247",
+                      "\u56de\u6536\u7ad9",
+                      "\u5f00\u59cb\u5206\u6790",
+                  )
               )
               missing = [item for item in required if item not in text]
               if missing:
                   raise SystemExit(f"UTF-8/UI text corrupted in {name}: {missing}")
-              mojibake = ("Ã", "Â", "ä¸", "æ¨", "ç‰", "å›")
+              mojibake = (
+                  "\u00c3", "\u00c2", "\u00e4\u00b8",
+                  "\u00e6\u00a8", "\u00e7\u2030", "\u00e5\u203a",
+              )
               bad = [token for token in mojibake if token in text]
               if bad:
                   raise SystemExit(f"mojibake detected in {name}: {bad}")
