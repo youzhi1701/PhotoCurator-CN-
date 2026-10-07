@@ -17,7 +17,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || github.head_ref == 'fix-v1.5.1'
     runs-on: windows-latest
     env:
-      CANDIDATE_VERSION: "1.5.3"
+      CANDIDATE_VERSION: "1.5.4"
 
     steps:
       - uses: actions/checkout@v7
@@ -153,17 +153,36 @@ jobs:
             }
 
             Add-Type -Namespace PhotoCurator -Name WindowProbe -MemberDefinition '[System.Runtime.InteropServices.DllImport("user32.dll", SetLastError=true)] public static extern System.IntPtr SendMessageTimeout(System.IntPtr hWnd, uint Msg, System.IntPtr wParam, System.IntPtr lParam, uint fuFlags, uint uTimeout, out System.IntPtr lpdwResult);'
-            $result = [IntPtr]::Zero
             $SMTO_ABORTIFHUNG = 0x0002
-            $ok = [PhotoCurator.WindowProbe]::SendMessageTimeout(
-              $p.MainWindowHandle, 0x0000, [IntPtr]::Zero, [IntPtr]::Zero,
-              $SMTO_ABORTIFHUNG, 3000, [ref]$result
-            )
-            $p.Refresh()
-            if ($ok -eq [IntPtr]::Zero -or -not $p.Responding) {
-              throw "Candidate native window message loop is not responding"
+            $lastCheckpoint = 0
+            foreach ($checkpoint in @(1, 3, 5, 10, 20)) {
+              $sleepFor = $checkpoint - $lastCheckpoint
+              if ($sleepFor -gt 0) { Start-Sleep -Seconds $sleepFor }
+              $lastCheckpoint = $checkpoint
+
+              $p.Refresh()
+              if ($p.HasExited) {
+                throw ("Candidate desktop exited during liveness window at " + $checkpoint + "s")
+              }
+              $hwnd = $p.MainWindowHandle
+              if ($hwnd -eq 0) {
+                throw ("Candidate lost its native window at " + $checkpoint + "s")
+              }
+
+              $result = [IntPtr]::Zero
+              $ok = [PhotoCurator.WindowProbe]::SendMessageTimeout(
+                $hwnd, 0x0000, [IntPtr]::Zero, [IntPtr]::Zero,
+                $SMTO_ABORTIFHUNG, 3000, [ref]$result
+              )
+              $p.Refresh()
+              if ($ok -eq [IntPtr]::Zero -or -not $p.Responding) {
+                throw ("Candidate native window became unresponsive at " + $checkpoint + "s")
+              }
+              Write-Host ("Native window responsive at " + $checkpoint + "s.")
             }
-            Write-Host "Packaged native Windows window is responsive."
+            if ($p.MainWindowTitle -notlike "PhotoCurator*") {
+              throw "Unexpected native window title: $($p.MainWindowTitle)"
+            }
           }
           finally {
             if (!$p.HasExited) {
@@ -194,10 +213,10 @@ jobs:
           $installer = "release\PhotoCurator-Setup-v$env:CANDIDATE_VERSION.exe"
           if (!(Test-Path $installer)) { throw "Candidate installer not built: $installer" }
 
-      - name: Upload v1.5.3 test installer
+      - name: Upload v1.5.4 test installer
         uses: actions/upload-artifact@v4
         with:
-          name: PhotoCurator-v1.5.3-test-installer
-          path: release/PhotoCurator-Setup-v1.5.3.exe
+          name: PhotoCurator-v1.5.4-test-installer
+          path: release/PhotoCurator-Setup-v1.5.4.exe
           if-no-files-found: error
           retention-days: 14
