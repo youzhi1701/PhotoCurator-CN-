@@ -1964,6 +1964,19 @@ TASK_MANAGER.register('restore_trash', _background_restore_trash)
 TASK_MANAGER.register('purge_trash', _background_purge_trash)
 
 
+def _remember_catalog_media_ids(rows):
+    if not rows:
+        return
+    with _MEDIA_ID_CACHE_LOCK:
+        for path, media_id in rows.items():
+            key = os.path.normcase(os.path.realpath(str(path)))
+            _MEDIA_ID_CACHE[key] = str(media_id)
+        if len(_MEDIA_ID_CACHE) > 16384:
+            trim = max(4096, len(_MEDIA_ID_CACHE) - 12288)
+            for old in list(_MEDIA_ID_CACHE)[:trim]:
+                _MEDIA_ID_CACHE.pop(old, None)
+
+
 def _catalog_media_id_cached(image_path):
     """Cache successful path -> media-id lookups; misses stay retryable.
 
@@ -2663,6 +2676,7 @@ def _shared_list_images(folder, recursive=True, max_age=2.0):
     paths = []
     scan_fingerprints = {}
     pending_catalog = []
+    pending_media_ids = {}
     try:
         scan_real = os.path.normcase(os.path.realpath(str(folder)))
         demo_real = os.path.normcase(os.path.realpath(str(DATA_ROOT / '内置测试数据')))
@@ -2696,7 +2710,10 @@ def _shared_list_images(folder, recursive=True, max_age=2.0):
                     catalog_scan_batch(
                         INDEX_DB, scan_session, pending_catalog,
                         fingerprints=scan_fingerprints,
+                        media_ids=pending_media_ids,
                     )
+                    _remember_catalog_media_ids(pending_media_ids)
+                    pending_media_ids.clear()
                     pending_catalog.clear()
             if len(paths) % 256 == 0:
                 with _SCAN_SNAPSHOT_CV:
@@ -2712,7 +2729,10 @@ def _shared_list_images(folder, recursive=True, max_age=2.0):
                 catalog_scan_batch(
                     INDEX_DB, scan_session, pending_catalog,
                     fingerprints=scan_fingerprints,
+                    media_ids=pending_media_ids,
                 )
+                _remember_catalog_media_ids(pending_media_ids)
+                pending_media_ids.clear()
                 pending_catalog.clear()
             finish_catalog_scan(
                 INDEX_DB, scan_session, full_scan=bool(recursive)
