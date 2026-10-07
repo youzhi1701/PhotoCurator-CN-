@@ -148,17 +148,50 @@ def main():
         require("发生错误" not in str(photo_curator.state["dedup"].get("status") or ""),
                 f"UI Dedup 错误：{photo_curator.state['dedup'].get('status')}")
 
-        # Navigation and secondary panels must still be clickable after analysis.
+        # Release layout contract: all auxiliary panels belong to the one left
+        # control column.  Nothing may reopen as a fixed right/bottom drawer.
         driver.find_element(By.CSS_SELECTOR, ".step[data-step='dedup']").click()
         wait.until(lambda d: "相似照片" in d.find_element(By.ID, "workspaceTitle").text)
 
-        driver.find_element(By.ID, "toolboxOpen").click()
-        wait.until(lambda d: "open" in d.find_element(By.ID, "toolboxPanel").get_attribute("class"))
+        panels = driver.execute_script("""
+          const host=document.getElementById('sidebarUtilityHost');
+          const ids=['inspector','taskCenter','activityPanel','toolboxPanel'];
+          const result={};
+          for(const id of ids){
+            const el=document.getElementById(id);
+            const cs=getComputedStyle(el);
+            result[id]={
+              parent:el.parentElement&&el.parentElement.id,
+              position:cs.position,
+              display:cs.display,
+              width:el.getBoundingClientRect().width
+            };
+          }
+          return result;
+        """)
+        for panel_id, info in panels.items():
+            require(info["parent"] == "sidebarUtilityHost",
+                    f"{panel_id} 没有归入左侧控制栏：{info}")
+            require(info["position"] != "fixed",
+                    f"{panel_id} 仍然是浮动窗口：{info}")
+            require(info["display"] != "none",
+                    f"{panel_id} 在左侧控制栏中不可见：{info}")
 
-        driver.find_element(By.ID, "taskToggle").click()
-        wait.until(lambda d: "open" in d.find_element(By.ID, "taskCenter").get_attribute("class"))
+        # One global thumbnail size must materially change duplicate-card width.
+        cards = driver.find_elements(By.CSS_SELECTOR, "#gallery .dedup-choice")
+        if cards:
+            before = driver.execute_script(
+                "return document.querySelector('#gallery .dedup-choice').getBoundingClientRect().width"
+            )
+            driver.execute_script("applyThumbSize(360)")
+            time.sleep(0.15)
+            after = driver.execute_script(
+                "return document.querySelector('#gallery .dedup-choice').getBoundingClientRect().width"
+            )
+            require(after > before + 40,
+                    f"相似照片缩放没有改变真实卡片宽度：before={before}, after={after}")
 
-        print("UI 冒烟测试通过：启动 / 选择测试数据 / 开始分析 / 导航 / 工具箱 / 任务中心均可交互")
+        print("UI 冒烟测试通过：启动 / 分析 / 左侧控制栏 / 相似照片真实缩放均符合 v1.7.0 契约")
     finally:
         try:
             if driver is not None:
