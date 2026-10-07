@@ -3452,7 +3452,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   .status-toggle{position:absolute;bottom:34px;right:6px;z-index:6;border:none;border-radius:5px;padding:4px 8px;font-size:10px;font-weight:700;cursor:pointer;background:rgba(0,0,0,.62);color:#fff}
   .status-toggle:hover{background:rgba(0,0,0,.85)}
   .photo-card.pbg{border-color:#e8632a!important;box-shadow:0 0 0 2px #e8632a}
-  .pbg-toggle{position:absolute;top:6px;right:6px;z-index:7;border:none;border-radius:50%;width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-size:14px;cursor:pointer;background:rgba(0,0,0,.55);color:#fff;backdrop-filter:blur(2px);transition:background .15s,transform .15s}
+  .pbg-toggle{position:absolute;top:6px;right:6px;z-index:7;border:none;border-radius:50%;width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-size:14px;cursor:pointer;background:rgba(0,0,0,.68);color:#fff;transition:background .15s,transform .15s
   .pbg-toggle:hover{background:rgba(0,0,0,.8);transform:scale(1.08)}
   .pbg-toggle.on{background:#e8632a;box-shadow:0 1px 5px rgba(232,99,42,.6)}
   .lb-btn.pbg{background:rgba(232,99,42,.85)} .lb-btn.pbg:hover{background:#e8632a} .lb-btn.pbg.on{background:#e8632a}
@@ -5857,7 +5857,7 @@ function renderDedupGroups(groups){
   const g=document.getElementById('gallery');
   document.getElementById('sShowing').textContent=reviewGroups.length;
   const dedupSig=reviewGroups.map(group=>String(group.group_id)+':'+String(group.status||'pending')+':'
-    +(group.members||[]).filter(visibleInReview).map(p=>p.path+':'+(p.selected?1:0)+':'+(p.lifecycle||'normal')).join(',')).join('|');
+    +(group.members||[]).filter(visibleInReview).map(p=>p.path+':'+(p.selected?1:0)+':'+(p.lifecycle||'normal')+':'+String(p.score??'')+':'+String(p.name||'')).join(',')).join('|');
   if(dedupSig===lastDedupSig&&lastStep===currentStep){updateResultTools();return;}
   lastDedupSig=dedupSig;lastStep=currentStep;
   if(!reviewGroups.length){
