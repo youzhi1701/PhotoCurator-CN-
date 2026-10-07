@@ -16,11 +16,11 @@ VSVersionInfo(
         [
           StringStruct('CompanyName', 'PhotoCurator-CN'),
           StringStruct('FileDescription', 'PhotoCurator 中文版'),
-          StringStruct('FileVersion', '1.6.0'),
+          StringStruct('FileVersion', '1.7.0'),
           StringStruct('InternalName', 'PhotoCurator'),
           StringStruct('OriginalFilename', 'PhotoCurator.exe'),
           StringStruct('ProductName', 'PhotoCurator'),
-          StringStruct('ProductVersion', '1.6.0')
+          StringStruct('ProductVersion', '1.7.0')
         ]
       )
     ]),
