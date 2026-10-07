@@ -142,7 +142,7 @@ jobs:
           missing_release = [x for x in release_required if x not in build_workflow]
           if missing_release:
               raise SystemExit("Manifest-driven release workflow regression: " + repr(missing_release))
-          if "refs/tags/v1.5.0" in build_workflow:
+          if "refs/tags/v1.5.4" in build_workflow:
               raise SystemExit("Release workflow must not hardcode a single version tag")
 
           # Frozen layout contract:
@@ -208,7 +208,7 @@ jobs:
       - name: Check embedded UI JavaScript
         run: node --check /tmp/photocurator-ui.js
 
-      - name: Check v1.5.0 runtime architecture
+      - name: Check v1.5.4 runtime architecture
         run: |
           python - <<'PY'
           from pathlib import Path
@@ -260,10 +260,17 @@ jobs:
               "UI_LIVE_RESULT_CAP = 300",
               "askDeleteMode",
               "closeDeleteDialog('permanent')",
+              "@app.route('/api/bootstrap')",
+              "@app.route('/api/health')",
+              "@app.route('/api/storage/refresh'",
+              "@app.route('/api/demo/prepare'",
+              'id="dashboardView"',
+              'id="galleryView"',
+              "function setSurface(name)",
           ]
           missing = [x for x in required_core if x not in core]
           if missing:
-              raise SystemExit("v1.5.0 core architecture regression: " + repr(missing))
+              raise SystemExit("v1.5.4 core architecture regression: " + repr(missing))
 
           required_tasks = [
               "CREATE TABLE IF NOT EXISTS background_task",
@@ -289,6 +296,10 @@ jobs:
               "stop_analysis_and_wait()",
               "migrate_legacy_config(legacy_root, DATA_ROOT)",
               'os.environ["PHOTOCURATOR_DATA_DIR"] = str(DATA_ROOT)',
+              'APP_TITLE = "PhotoCurator"',
+              'frameless=False',
+              'def apply_windows_titlebar_theme',
+              'def ci_probe',
           ]
           missing = [x for x in required_desktop if x not in desktop]
           if missing:
@@ -305,7 +316,7 @@ jobs:
           missing_runtime_paths = [x for x in required_runtime_paths if x not in runtime_paths]
           if missing_runtime_paths:
               raise SystemExit("runtime path policy regression: " + repr(missing_runtime_paths))
-          if "id: release_meta" not in workflow or "refs/tags/v1.5.0" in workflow:
+          if "id: release_meta" not in workflow or "refs/tags/v1.5.4" in workflow:
               raise SystemExit("Manifest-driven tag release workflow missing or hardcoded")
 
           banned = [
@@ -313,12 +324,26 @@ jobs:
               "移入 Windows 回收站",
               "id=\"themeToggle\"",
               "[data-theme=dark]",
+              "frameless=True",
+              "pywebview-drag-region",
+              'id="winMin"',
+              'id="winMax"',
+              'id="winClose"',
           ]
           leftovers = [x for x in banned if x in (core + requirements)]
           if leftovers:
-              raise SystemExit("v1.5.0 legacy behavior returned: " + repr(leftovers))
+              raise SystemExit("v1.5.4 legacy behavior returned: " + repr(leftovers))
 
-          print("v1.5.0 runtime architecture guards OK")
+          shortcut_block = core.split("@app.route('/api/shortcuts')", 1)[1].split(
+              "@app.route('/api/storage/refresh'", 1
+          )[0]
+          for heavy in ("detect_sd_cards()", "ensure_builtin_demo()"):
+              if heavy in shortcut_block:
+                  raise SystemExit("First-screen shortcuts endpoint became blocking again: " + heavy)
+          if "\nloadShortcuts();\n" in core:
+              raise SystemExit("Photo source probing must stay lazy and must not run on first paint")
+
+          print("v1.5.4 runtime architecture guards OK")
           PY
 
       - name: Check core workflow and large-library guards
@@ -429,6 +454,14 @@ jobs:
               raise SystemExit("UI state architecture regression: " + repr(missing))
           if js.find("const startBtn=document.getElementById('startBtn');") > js.find("setupFilterBar();"):
               raise SystemExit("startBtn must initialize before setupFilterBar")
+          for marker in (
+              "currentSurface='dashboard'",
+              "function refreshDashboard()",
+              "document.getElementById('homeNav').onclick",
+              "sourceDetails.addEventListener('toggle'",
+          ):
+              if marker not in js:
+                  raise SystemExit("v1.5.4 dashboard/lazy-boot marker missing: " + marker)
           print("UI boot / state separation OK")
           PY
 
