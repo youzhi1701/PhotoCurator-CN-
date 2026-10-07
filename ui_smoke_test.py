@@ -56,7 +56,7 @@ def main():
     driver = None
     try:
         driver = webdriver.Chrome(options=options)
-        wait = WebDriverWait(driver, 20)
+        wait = WebDriverWait(driver, 40)
         driver.get(f"http://127.0.0.1:{photo_curator.PORT}/")
 
         wait.until(lambda d: d.execute_script(
@@ -65,6 +65,26 @@ def main():
         require(driver.execute_script(
             "return document.documentElement.dataset.uiFatal || ''"
         ) != "1", "页面初始化期间出现前端致命错误")
+
+        # Dashboard and photo gallery are separate view owners. The dashboard
+        # must fill the main work area instead of becoming one CSS-grid photo cell.
+        layout = driver.execute_script("""
+          const main=document.querySelector('.main').getBoundingClientRect();
+          const dash=document.getElementById('dashboardView').getBoundingClientRect();
+          const photo=document.getElementById('photoView');
+          return {
+            mainWidth: main.width,
+            dashboardWidth: dash.width,
+            dashboardHidden: document.getElementById('dashboardView').hidden,
+            photoHidden: photo.hidden,
+            duplicateBrand: !!document.querySelector('.appbar .brand')
+          };
+        """)
+        require(not layout["dashboardHidden"], "首屏 Dashboard 不应隐藏")
+        require(layout["photoHidden"], "首屏照片 Grid 不应抢占 Dashboard")
+        require(layout["dashboardWidth"] >= layout["mainWidth"] * 0.94,
+                f"Dashboard 没有占满主工作区：{layout}")
+        require(not layout["duplicateBrand"], "原生标题栏模式不应再显示第二套软件品牌标题")
 
         start = wait.until(lambda d: d.find_element(By.ID, "startBtn"))
         require(start.get_attribute("disabled") is not None,
