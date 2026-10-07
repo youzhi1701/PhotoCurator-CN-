@@ -3817,7 +3817,7 @@ document.addEventListener('keydown',e=>{
 });
 let folder=null, photos=[], lbList=[], lbIndex=0, currentStep='cull', folderStatus={};
 let sourceCatalog=[], selectedSource=null, catalogRootView=null;
-let latestStorageSummary=null, demoShortcutPath='', demoShortcutCount=0;
+let latestStorageSummary=null, demoShortcutPath='', demoShortcutCount=0, demoShortcutReady=false;
 const cullLiveStore=new Map();
 const dedupLiveStore=new Map();
 let isRunning=false, runningStep=null, codespacesMode=false;
@@ -4490,7 +4490,8 @@ function overviewSourceRows(){
 function workspaceOverviewHTML(){
   const t=sourceTotals();
   const rows=overviewSourceRows();
-  const storage=latestStorageSummary||{};
+  const storage=latestStorageSummary;
+  const storageText=key=>storage?formatBytes(storage[key]||0):'按需查看';
   const recent=rows.length?rows.map(({source,root})=>{
     const current=root.current_root||root.original_root||'';
     const canOpen=!!source.connected;
@@ -4509,21 +4510,21 @@ function workspaceOverviewHTML(){
       +'<p>连接硬盘、U盘或照片文件夹后，PhotoCurator 会保留来源、扫描结果和人工复核记录。设备断开后，历史图库仍然可查。</p>'
       +'</div><div class="overview-primary-actions">'
       +'<button class="primary" data-overview-action="add">＋ 添加数据源</button>'
-      +(demoShortcutPath?'<button data-overview-action="demo">打开演示图库</button>':'')
+      +(demoShortcutPath?'<button data-overview-action="demo">'+(demoShortcutReady?'打开演示图库':'准备演示图库')+'</button>':'')
       +'</div></section>'
       +'<section class="overview-card overview-metrics">'
       +'<div class="metric"><span>数据源</span><b>'+t.total+'</b><small>'+t.online+' 已连接 · '+t.offline+' 未连接</small></div>'
       +'<div class="metric"><span>已索引照片</span><b>'+t.indexed.toLocaleString('zh-CN')+'</b><small>'+t.roots+' 个图库根目录</small></div>'
-      +'<div class="metric"><span>图库数据库</span><b>'+formatBytes(storage.database_bytes||0)+'</b><small>分析与人工复核记录</small></div>'
-      +'<div class="metric"><span>离线预览</span><b>'+formatBytes(storage.persistent_preview_bytes||0)+'</b><small>拔盘后仍可浏览</small></div>'
+      +'<div class="metric"><span>图库数据库</span><b>'+storageText('database_bytes')+'</b><small>分析与人工复核记录</small></div>'
+      +'<div class="metric"><span>离线预览</span><b>'+storageText('persistent_preview_bytes')+'</b><small>拔盘后仍可浏览</small></div>'
       +'</section></div>'
     +'<div class="overview-grid">'
       +'<section class="overview-card overview-section sources"><h3>最近图库</h3><p>在线数据源优先，离线数据源仍保留历史。</p><div class="overview-list">'+recent+'</div></section>'
       +'<section class="overview-card overview-section storage"><h3>软件占用</h3><p>持久数据与可清理缓存分开显示。</p><div class="overview-storage-list">'
-      +'<div class="overview-storage-row"><span>数据库</span><b>'+formatBytes(storage.database_bytes||0)+'</b></div>'
-      +'<div class="overview-storage-row"><span>离线预览</span><b>'+formatBytes(storage.persistent_preview_bytes||0)+'</b></div>'
-      +'<div class="overview-storage-row"><span>临时缓存</span><b>'+formatBytes(storage.preview_cache_bytes||0)+'</b></div>'
-      +'<div class="overview-storage-row"><span>相似特征</span><b>'+formatBytes(storage.dedup_feature_bytes||0)+'</b></div>'
+      +'<div class="overview-storage-row"><span>数据库</span><b>'+storageText('database_bytes')+'</b></div>'
+      +'<div class="overview-storage-row"><span>离线预览</span><b>'+storageText('persistent_preview_bytes')+'</b></div>'
+      +'<div class="overview-storage-row"><span>临时缓存</span><b>'+storageText('preview_cache_bytes')+'</b></div>'
+      +'<div class="overview-storage-row"><span>相似特征</span><b>'+storageText('dedup_feature_bytes')+'</b></div>'
       +'</div></section>'
       +'<section class="overview-card overview-section guide"><h3>整理流程</h3><p>常用流程一直可见，高级参数只在“筛选”抽屉里出现。</p>'
       +'<div class="workflow-guide">'
@@ -4532,7 +4533,7 @@ function workspaceOverviewHTML(){
       +'<div class="guide-step"><b>3 · 人工复核</b><small>先筛选、再处理；删除默认进入软件回收站。</small></div>'
       +'</div></section>'
       +'<section class="overview-card overview-section demo"><h3>演示图库</h3><p>用于测试子目录、模糊识别和近似连拍。</p>'
-      +'<div class="overview-storage-list"><div class="overview-storage-row"><span>测试照片</span><b>'+Number(demoShortcutCount||36)+' 张</b></div>'
+      +'<div class="overview-storage-list"><div class="overview-storage-row"><span>测试照片</span><b>'+(demoShortcutReady?(Number(demoShortcutCount||36)+' 张'):'首次点击生成')+'</b></div>'
       +'<div class="overview-storage-row"><span>子文件夹</span><b>6 个</b></div>'
       +'<div class="overview-storage-row"><span>内容</span><b>清晰 / 模糊 / 连拍</b></div></div></section>'
       +'</div></div>';
@@ -4562,14 +4563,37 @@ function sourceReadyHTML(){
     +'<div class="source-ready-check"><span class="dot"></span><div><b>增量复用</b><small>已经扫描且没有变化的文件优先复用历史数据。</small></div></div>'
     +'</aside></div>';
 }
+async function openDemoLibrary(button=null){
+  if(!demoShortcutPath)return;
+  if(demoShortcutReady){
+    selectFolderValue(demoShortcutPath);
+    document.getElementById('folderInput').value=demoShortcutPath;
+    return;
+  }
+  const old=button?button.innerHTML:'';
+  if(button){
+    button.disabled=true;
+    button.textContent='正在准备演示图库…';
+  }
+  try{
+    const r=await fetch('/api/demo-prepare?wait=1',{method:'POST'});
+    const d=await r.json();
+    if(!r.ok||!d.ready)throw new Error(d.error||'演示图库准备失败');
+    demoShortcutPath=d.folder||demoShortcutPath;
+    demoShortcutCount=Number(d.count||36);
+    demoShortcutReady=true;
+    selectFolderValue(demoShortcutPath);
+    document.getElementById('folderInput').value=demoShortcutPath;
+    loadShortcuts();
+  }catch(err){
+    if(button){button.innerHTML=old;button.disabled=false;}
+    toast('演示图库准备失败：'+(err.message||'未知错误'),'bad');
+  }
+}
 function bindWorkspaceLanding(){
   const g=document.getElementById('dashboardView');
   g.querySelectorAll('[data-overview-action="add"]').forEach(b=>b.onclick=()=>document.getElementById('browseBtn').click());
-  g.querySelectorAll('[data-overview-action="demo"]').forEach(b=>b.onclick=()=>{
-    if(!demoShortcutPath)return;
-    selectFolderValue(demoShortcutPath);
-    document.getElementById('folderInput').value=demoShortcutPath;
-  });
+  g.querySelectorAll('[data-overview-action="demo"]').forEach(b=>b.onclick=()=>openDemoLibrary(b));
   g.querySelectorAll('[data-overview-root]').forEach(b=>b.onclick=()=>{
     if(b.dataset.overviewConnected==='1'){
       selectFolderValue(b.dataset.overviewPath);
@@ -4751,6 +4775,7 @@ function loadShortcuts(){
 
     demoShortcutPath=d.demo_folder||'';
     demoShortcutCount=Number(d.demo_count||0);
+    demoShortcutReady=!!d.demo_ready;
     if(d.demo_folder){
       const p=d.demo_folder;
       const ready=!!d.demo_ready;
@@ -4778,21 +4803,7 @@ function loadShortcuts(){
       b.onclick=async()=>{
         if(isRunning||coreRunning)return;
         if(b.dataset.demo==='1'&&b.dataset.ready!=='1'){
-          const before=b.innerHTML;
-          b.disabled=true;
-          b.innerHTML='<span class="tag recent">示例</span><span><b>正在准备演示图库…</b><small>后台生成真实多目录测试照片</small></span>';
-          try{
-            const r=await fetch('/api/demo-prepare?wait=1',{method:'POST'});
-            const d=await r.json();
-            if(!r.ok||!d.ready)throw new Error(d.error||'演示图库准备失败');
-            demoShortcutPath=d.folder||b.dataset.p;
-            demoShortcutCount=Number(d.count||36);
-            selectFolderValue(demoShortcutPath);fi.value=folder||'';
-            loadShortcuts();
-          }catch(err){
-            b.innerHTML=before;b.disabled=false;
-            toast('演示图库准备失败：'+(err.message||'未知错误'),'bad');
-          }
+          await openDemoLibrary(b);
           return;
         }
         selectFolderValue(b.dataset.p);fi.value=folder||'';
