@@ -87,6 +87,7 @@ app = Flask(__name__)
 INDEX_DB = DATA_ROOT / 'config' / 'library_index.sqlite3'
 _DB_LOCK = threading.Lock()
 _STATE_LOCK = threading.RLock()
+_RUN_GATE_LOCK = threading.Lock()
 _GEOCODE_LOCK = threading.Lock()
 _GEOCODE_LAST_AT = 0.0
 CULL_METRICS_VERSION = 1
@@ -5575,21 +5576,6 @@ def api_run(step):
     if not Path(folder).is_dir():
         return jsonify({'error': '照片文件夹不存在或无法访问'}), 400
 
-    active = [k for k in ('cull', 'dedup', 'rank') if state[k].get('running')]
-    # v1.5 core engines are intentionally independent: cull and dedup may run
-    # together against the same library. Ranking remains a toolbox task and is
-    # kept exclusive because it is CPU-heavy and not part of the cleanup path.
-    if state[step].get('running'):
-        return jsonify({'error': '该分析任务已经在运行', 'active': step}), 409
-    if (step == 'rank' and active) or (step in ('cull', 'dedup') and state['rank'].get('running')):
-        return jsonify({
-            'error': '精选评分正在运行，请先等待或停止评分任务',
-            'active': 'rank'
-        }), 409
-
-    state['folder'] = folder
-    save_recent(folder)
-    _activity('启动分析', folder, step)
     recursive = bool(data.get('recursive', True))
     compare_scope = str(data.get('compare_scope') or 'folder')
     if compare_scope not in ('folder', 'global'):
@@ -5598,9 +5584,10 @@ def api_run(step):
     if output_mode not in ('source', 'root', 'custom'):
         output_mode = 'source'
     custom_output = str(data.get('custom_output') or '').strip()
-    state['scan'].update({'recursive': recursive, 'compare_scope': compare_scope,
-                          'output_mode': output_mode, 'custom_output': custom_output})
 
+    # Parse and validate all request-specific parameters before reserving the
+    # run slot. A malformed request must never leave a false running flag.
+    rank_config = None
     try:
         if step == 'cull':
             strictness = min(1.6, max(0.6, float(data.get('opt') or 1.0)))
@@ -5614,7 +5601,7 @@ def api_run(step):
                 recursive, compare_scope
             )
         else:
-            state['topn'] = min(500, max(1, int(data.get('topn', 50))))
+            topn = min(500, max(1, int(data.get('topn', 50))))
             raw_weights = data.get('weights') or state['weights']
             clean_weights = {}
             for k in CATEGORIES:
@@ -5622,20 +5609,50 @@ def api_run(step):
                 if not np.isfinite(v):
                     v = DEFAULT_WEIGHTS[k]
                 clean_weights[k] = min(100.0, max(0.0, v))
-            state['weights'] = clean_weights
+            rank_config = (topn, clean_weights)
             target, args = run_rank, (
                 folder, data.get('ftype', 'all'), data.get('pair', 'both'), recursive
             )
     except (TypeError, ValueError):
         return jsonify({'error': '处理参数无效，请恢复默认设置后重试'}), 400
 
-    state[step]['running'] = True
-    try:
-        threading.Thread(target=target, args=args, daemon=True,
-                         name=f'photocurator-{step}').start()
-    except Exception:
-        state[step]['running'] = False
-        raise
+    # Flask serves API requests concurrently. Admission + reservation must be
+    # one atomic section, otherwise simultaneous requests can both observe an
+    # idle step and start duplicate workers or bypass the Rank/core exclusion.
+    with _RUN_GATE_LOCK:
+        active = [k for k in ('cull', 'dedup', 'rank') if state[k].get('running')]
+        if state[step].get('running'):
+            return jsonify({'error': '该分析任务已经在运行', 'active': step}), 409
+        if ((step == 'rank' and active)
+                or (step in ('cull', 'dedup') and state['rank'].get('running'))):
+            return jsonify({
+                'error': '精选评分正在运行，请先等待或停止评分任务',
+                'active': 'rank'
+            }), 409
+
+        state['folder'] = folder
+        state['scan'].update({
+            'recursive': recursive,
+            'compare_scope': compare_scope,
+            'output_mode': output_mode,
+            'custom_output': custom_output,
+        })
+        if rank_config is not None:
+            state['topn'], state['weights'] = rank_config
+
+        state[step]['running'] = True
+        state[step]['cancel'] = False
+        try:
+            threading.Thread(
+                target=target, args=args, daemon=True,
+                name=f'photocurator-{step}'
+            ).start()
+        except Exception:
+            state[step]['running'] = False
+            raise
+
+    save_recent(folder)
+    _activity('启动分析', folder, step)
     return jsonify({'ok': True})
 
 @app.route('/api/stop/<step>', methods=['POST'])
