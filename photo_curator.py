@@ -2638,14 +2638,20 @@ def _shared_list_images(folder, recursive=True, max_age=2.0):
     )
     now = time.time()
     with _SCAN_SNAPSHOT_CV:
+        # This cache only exists to let concurrently-started Cull/Dedup share one
+        # walk. Large path/fingerprint snapshots must not accumulate for the
+        # lifetime of the application.
+        for old_key, old in list(_SCAN_SNAPSHOTS.items()):
+            if old.get('state') != 'scanning' and now - float(old.get('at', 0) or 0) > 15.0:
+                _SCAN_SNAPSHOTS.pop(old_key, None)
         entry = _SCAN_SNAPSHOTS.get(key)
         if entry and entry.get('state') == 'ready' and now - entry.get('at', 0) <= max_age:
-            return entry.get('paths') or ()
+            return (entry.get('paths') or (), entry.get('fingerprints') or {})
         while entry and entry.get('state') == 'scanning':
             _SCAN_SNAPSHOT_CV.wait(timeout=0.25)
             entry = _SCAN_SNAPSHOTS.get(key)
             if entry and entry.get('state') == 'ready':
-                return entry.get('paths') or ()
+                return (entry.get('paths') or (), entry.get('fingerprints') or {})
             if not entry or entry.get('state') == 'failed':
                 break
         _SCAN_SNAPSHOTS[key] = {
@@ -2655,6 +2661,7 @@ def _shared_list_images(folder, recursive=True, max_age=2.0):
 
     scan_session = None
     paths = []
+    scan_fingerprints = {}
     pending_catalog = []
     try:
         scan_real = os.path.normcase(os.path.realpath(str(folder)))
@@ -2686,7 +2693,10 @@ def _shared_list_images(folder, recursive=True, max_age=2.0):
             if scan_session is not None:
                 pending_catalog.append(p)
                 if len(pending_catalog) >= 512:
-                    catalog_scan_batch(INDEX_DB, scan_session, pending_catalog)
+                    catalog_scan_batch(
+                        INDEX_DB, scan_session, pending_catalog,
+                        fingerprints=scan_fingerprints,
+                    )
                     pending_catalog.clear()
             if len(paths) % 256 == 0:
                 with _SCAN_SNAPSHOT_CV:
@@ -2699,7 +2709,10 @@ def _shared_list_images(folder, recursive=True, max_age=2.0):
 
         if scan_session is not None:
             if pending_catalog:
-                catalog_scan_batch(INDEX_DB, scan_session, pending_catalog)
+                catalog_scan_batch(
+                    INDEX_DB, scan_session, pending_catalog,
+                    fingerprints=scan_fingerprints,
+                )
                 pending_catalog.clear()
             finish_catalog_scan(
                 INDEX_DB, scan_session, full_scan=bool(recursive)
@@ -2729,17 +2742,18 @@ def _shared_list_images(folder, recursive=True, max_age=2.0):
     with _SCAN_SNAPSHOT_CV:
         _SCAN_SNAPSHOTS[key] = {
             'state': 'ready', 'at': time.time(), 'paths': ready_paths,
+            'fingerprints': scan_fingerprints,
             'discovered': len(ready_paths),
         }
-        if len(_SCAN_SNAPSHOTS) > 8:
+        if len(_SCAN_SNAPSHOTS) > 3:
             stale = sorted(
                 ((k, v.get('at', 0)) for k, v in _SCAN_SNAPSHOTS.items() if k != key),
                 key=lambda kv: kv[1],
             )
-            for old_key, _ in stale[:max(0, len(_SCAN_SNAPSHOTS) - 8)]:
+            for old_key, _ in stale[:max(0, len(_SCAN_SNAPSHOTS) - 3)]:
                 _SCAN_SNAPSHOTS.pop(old_key, None)
         _SCAN_SNAPSHOT_CV.notify_all()
-    return ready_paths
+    return ready_paths, scan_fingerprints
 
 
 def current_scan_snapshot(folder=None):
@@ -2789,9 +2803,15 @@ def run_cull(folder, strictness, adaptive, rescue_on, recursive=True):
               # not feed its partial survivor list into Dedup/Rank.
               'complete': False, 'src_folder': str(folder), 'recursive': bool(recursive)})
     try:
-        images = _shared_list_images(folder, recursive=recursive)
-        current_paths = {str(p) for p in images}
-        fingerprints = _fingerprints(images)
+        images, scan_fingerprints = _shared_list_images(folder, recursive=recursive)
+        fingerprints = scan_fingerprints
+        if len(fingerprints) < len(images):
+            # Demo/non-catalog sources may not have scan metadata; fill only the
+            # missing subset instead of re-statting the whole library.
+            missing = [p for p in images if str(p) not in fingerprints]
+            if missing:
+                fingerprints = dict(fingerprints)
+                fingerprints.update(_fingerprints(missing))
         cull_cache = _load_cull_metrics_map(images, fingerprints=fingerprints)
         s['overrides'] = _load_review_overrides(images, fingerprints=fingerprints)
         total = len(images) or 1
@@ -3085,7 +3105,7 @@ def run_dedup(folder, threshold, ftype='all', pair='both',
         # the eligibility gate for what the user can keep/process. This lets a
         # photo manually rescued from Blurry later enter an already-built
         # duplicate group without forcing a complete re-scan.
-        paths = _shared_list_images(folder, recursive=recursive)
+        paths, scan_fingerprints = _shared_list_images(folder, recursive=recursive)
         if chain_ok:
             logger.info(f"Dedup: indexing {len(paths)} source photos; "
                         f"{len(cull.get('sharp_paths') or [])} currently eligible after Cull")
@@ -3128,7 +3148,15 @@ def run_dedup(folder, threshold, ftype='all', pair='both',
                        for _, ps in sorted(by_parent.items(), key=lambda kv: kv[0])]
 
         total = len(paths)
-        cull_metric_cache = _load_cull_metrics_map(paths)
+        dedup_fingerprints = scan_fingerprints
+        if len(dedup_fingerprints) < len(paths):
+            missing = [p for p in paths if str(p) not in dedup_fingerprints]
+            if missing:
+                dedup_fingerprints = dict(dedup_fingerprints)
+                dedup_fingerprints.update(_fingerprints(missing))
+        cull_metric_cache = _load_cull_metrics_map(
+            paths, fingerprints=dedup_fingerprints
+        )
         processed = 0
         all_groups = []
         singleton_paths = []
