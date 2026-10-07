@@ -1,8 +1,8 @@
 {
   "product": "PhotoCurator",
   "channel": "candidate",
-  "version": "1.7.0",
-  "installer": "PhotoCurator-Setup-v1.7.0.exe",
+  "version": "1.7.1",
+  "installer": "PhotoCurator-Setup-v1.7.1.exe",
   "upgrade_mode": "in_place",
   "same_app_id": true,
   "data_root": "%LOCALAPPDATA%/PhotoCurator/data",
@@ -24,8 +24,8 @@
   "replace": [
     "app"
   ],
-  "notes": "v1.7.0 发布级稳定化：建立统一 SQLite WAL/busy-timeout 策略与 catalog schema 版本；扫描改为持久 session/generation，只有完整成功扫描才能标记 missing；文件生命周期同步 Media Catalog；离线预览与临时缓存物理分离并后台分批生成；新增新存储设备轻量发现、离线图库分页、大格式 Pillow 解码回退、RAW sidecar 安全移动、跨盘 copy/verify/commit；Windows 最大化遵守工作区并恢复真实窗口尺寸；CI/Release 增加数据完整性门禁、UI 新架构测试、依赖审计、SHA256 和发布后资产验证。",
-  "release_date": "2026-10-07",
+  "notes": "v1.7.1 性能架构升级：在 v1.7.0 发布级数据与文件安全底座上，统一任务中心轻量心跳并按忙闲自适应轮询；Rank 预览只在输入变化时重算；Cull/Dedup 共用不可变扫描快照并移除扫描过程的大列表重复复制；递归 Cull 与相似组增加无变化渲染短路；缩略图缩放合并到浏览器动画帧并延迟偏好写入；移除照片卡片级高频毛玻璃合成；新增性能架构回归门禁，并接入源码、Windows Candidate 与正式 Release 验证。",
+  "release_date": "2026-10-08",
   "published_version": "1.5.0",
   "published_installer": "PhotoCurator-Setup-v1.5.0.exe"
 }
