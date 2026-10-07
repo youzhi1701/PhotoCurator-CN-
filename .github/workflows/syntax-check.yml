@@ -72,7 +72,7 @@ jobs:
           if dv != cv:
               raise SystemExit(f"Version mismatch: desktop={dv}, core={cv}")
           if f"v{dv}" not in readme:
-              raise SystemExit(f"README missing current build v{dv}")
+              raise SystemExit(f"README missing current development build v{dv}")
 
           installer = Path("packaging/PhotoCurator.iss").read_text(encoding="utf-8")
           version_info = Path("packaging/version_info.txt").read_text(encoding="utf-8")
@@ -81,15 +81,20 @@ jobs:
 
           if not re.fullmatch(r"\d+\.\d+\.\d+", dv):
               raise SystemExit(f"APP_VERSION must be numeric semver x.y.z: {dv}")
-          if manifest.get("version") != dv:
-              raise SystemExit("Release manifest version does not match APP_VERSION")
-          expected_installer = f"PhotoCurator-Setup-v{dv}.exe"
+
+          # Development/candidate version is allowed to be ahead of the latest
+          # stable release. Stable release metadata remains authoritative for
+          # README direct-download links until the candidate is formally released.
+          rv = str(manifest.get("version") or "")
+          if not re.fullmatch(r"\d+\.\d+\.\d+", rv):
+              raise SystemExit(f"Release manifest version must be semver: {rv!r}")
+          expected_installer = f"PhotoCurator-Setup-v{rv}.exe"
           if manifest.get("installer") != expected_installer:
-              raise SystemExit("Release manifest installer name does not match version")
+              raise SystemExit("Release manifest installer name does not match stable release version")
           latest_marker = "<!-- LATEST_RELEASE_START -->"
           expected_download = (
               f"https://github.com/youzhi1701/PhotoCurator-CN-/releases/download/"
-              f"v{dv}/{expected_installer}"
+              f"v{rv}/{expected_installer}"
           )
           marker_pos = readme.find(latest_marker)
           if marker_pos < 0 or marker_pos > 1200:
@@ -469,10 +474,14 @@ jobs:
           ui = Path("photo_curator.py").read_text(encoding="utf-8")
 
           required = (
+              'APP_TITLE = "PhotoCurator"',
               "frameless=False",
               "maximized=True",
               "resizable=True",
               "min_size=(860, 600)",
+              "apply_native_titlebar_theme",
+              "DWMWA_CAPTION_COLOR",
+              "webview.start(after_webview_start",
           )
           missing = [item for item in required if item not in desktop]
           if missing:
@@ -505,13 +514,37 @@ jobs:
               'class="workspace-tabs"',
               'class="library-sidebar"',
               'class="inspector-drawer"',
+              'id="dashboardView"',
+              'id="photoView"',
+              "function showDashboard(",
+              "function showPhotoView(",
               "setInspectorOpen(false)",
           )
           missing_ui = [item for item in required_ui if item not in ui]
           if missing_ui:
               raise SystemExit("v1.5.3 workspace contract missing: " + repr(missing_ui))
 
-          print("Native Windows shell + single-rail workspace contract OK")
+          shortcuts = core.split("@app.route('/api/shortcuts')", 1)[1].split(
+              "@app.route('/api/sources')", 1
+          )[0]
+          forbidden_first_paint = (
+              "ensure_builtin_demo()",
+              "detect_sd_cards()",
+              "catalog_storage_summary(",
+              "catalog_list_sources(INDEX_DB)",
+          )
+          bad_startup = [x for x in forbidden_first_paint if x in shortcuts]
+          if bad_startup:
+              raise SystemExit(
+                  "First-paint shortcuts route performs blocking work: "
+                  + repr(bad_startup)
+              )
+          if "catalog_list_sources(INDEX_DB, refresh=False)" not in shortcuts:
+              raise SystemExit("First-paint source list must not probe physical drives")
+          if "setTimeout(refreshEnvironment,5000)" not in core:
+              raise SystemExit("Physical-drive refresh must be deferred after first paint")
+
+          print("Native Windows shell + dashboard/photo split + first-paint contract OK")
           PY
 
       - name: Check UI boot and state separation
