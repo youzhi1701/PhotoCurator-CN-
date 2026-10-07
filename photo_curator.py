@@ -3388,7 +3388,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   #shortcuts{display:flex;flex-direction:column}.shortcut{margin-top:5px;background:rgba(255,255,255,.52)}
   .sidebar-bottom{display:grid;grid-template-columns:1fr auto;gap:7px;border-top:1px solid rgba(124,139,192,.16);padding-top:9px}.sidebar-bottom .toolbox-open,.sidebar-bottom .sidebar-collapse{height:36px;border:1px solid rgba(124,139,192,.18);border-radius:10px;background:rgba(255,255,255,.55);color:var(--text);cursor:pointer;font-weight:700}.sidebar-bottom .toolbox-open{display:flex;align-items:center;justify-content:center;gap:7px}.sidebar-bottom .sidebar-collapse{padding:0 10px}
   .main{flex:1;min-width:0;padding:14px 16px 10px;overflow-y:auto;background:transparent}
-  .workspace-heading{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:10px}.workspace-heading>div:first-child{min-width:0}.workspace-heading b{font-size:18px}.workspace-heading span{display:block;color:var(--muted);font-size:11px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.workspace-actions{display:flex;align-items:center;gap:6px;flex:0 0 auto}.workspace-action{height:34px;padding:0 11px;border:1px solid rgba(124,139,192,.22);border-radius:10px;background:rgba(255,255,255,.66);color:var(--text);font-size:11px;font-weight:800;cursor:pointer}.workspace-action:hover{border-color:var(--accent)}.workspace-action.danger-soft{color:#b91c1c;background:rgba(254,226,226,.62)}
+  .workspace-heading{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:10px}.workspace-heading>div:first-child{min-width:0}.workspace-heading b{font-size:18px}.workspace-heading span{display:block;color:var(--muted);font-size:11px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.workspace-actions{display:flex;align-items:center;gap:6px;flex:0 0 auto}.workspace-action{height:34px;padding:0 11px;border:1px solid rgba(124,139,192,.22);border-radius:10px;background:rgba(255,255,255,.66);color:var(--text);font-size:11px;font-weight:800;cursor:pointer}.workspace-action:hover{border-color:var(--accent)}.workspace-action.danger-soft{color:#b91c1c;background:rgba(254,226,226,.62)}.workspace-action.cta{color:#fff;background:#d94a62;border-color:#d94a62;box-shadow:0 6px 16px rgba(185,28,28,.16)}.workspace-action:disabled{opacity:.45;cursor:not-allowed}
   .content-toolbar{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}.content-toolbar .filter-bar{flex:1;min-width:0;margin-bottom:10px}.content-toolbar .result-tools{margin:0 0 10px;flex:0 0 auto}.filter-bar{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none}.filter-bar::-webkit-scrollbar{display:none}.chip{white-space:nowrap}
   .inspector{width:300px;flex:0 0 300px;min-width:0;background:rgba(255,255,255,.64);backdrop-filter:blur(24px) saturate(145%);border-left:1px solid rgba(140,157,208,.18);display:flex;flex-direction:column;transition:width .18s,flex-basis .18s,opacity .18s}.inspector-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 12px 10px;border-bottom:1px solid rgba(124,139,192,.14)}.inspector-head>div{display:flex;flex-direction:column}.inspector-head b{font-size:13px}.inspector-head span{font-size:10px;color:var(--muted);margin-top:1px}.inspector-head button{width:30px;height:30px;border:0;border-radius:9px;background:rgba(90,105,180,.08);cursor:pointer;color:var(--muted)}.inspector-scroll{flex:1;min-height:0;overflow-y:auto;padding:10px}.inspector details{border:1px solid rgba(124,139,192,.16);border-radius:12px;background:rgba(255,255,255,.44);padding:9px 10px;margin-bottom:8px}.inspector summary{font-size:12px;font-weight:800;cursor:pointer}.data-summary{display:grid;gap:6px;margin-top:9px}.data-summary>div{display:flex;align-items:center;justify-content:space-between;font-size:11px}.data-summary span{color:var(--muted)}.data-summary small{display:block;margin-top:4px;color:var(--muted);font-size:9px;word-break:break-all}
   body.inspector-collapsed .inspector{width:0;flex-basis:0;opacity:0;border:0;overflow:hidden}body.inspector-collapsed #settingsQuick{background:rgba(91,111,218,.12);color:#4357ba}
@@ -4117,7 +4117,7 @@ function activateStep(step){
   renderSettings();
   document.getElementById('exportBtn').style.display='none';
   document.getElementById('exportPbgBtn').style.display='none';
-  {const mb=document.getElementById('moveBlurryBtn');mb.style.display='none';mb.classList.add('btn-ghost');mb.classList.remove('btn','cta');startBtn.classList.remove('secondary');}
+  {const mb=document.getElementById('moveBlurryBtn');mb.style.display='none';mb.classList.remove('cta');}
   document.getElementById('dedupApplyBtn').style.display='none';
   document.getElementById('progressWrap').style.display='none';  // clear stale summary
   document.getElementById('resultTools').style.display='none';
@@ -4479,7 +4479,7 @@ async function startStep(step,config=null){
     gPage=0;lastGallerySig='';document.getElementById('pager').style.display='none';
     document.getElementById('exportBtn').style.display='none';
     document.getElementById('exportPbgBtn').style.display='none';
-    {const mb=document.getElementById('moveBlurryBtn');mb.style.display='none';mb.classList.add('btn-ghost');mb.classList.remove('btn','cta');startBtn.classList.remove('secondary');}
+    {const mb=document.getElementById('moveBlurryBtn');mb.style.display='none';mb.classList.remove('cta');}
   }
   setRemoved(0);
   setStartBtn(true);
@@ -4875,15 +4875,17 @@ function renderDedupGroups(groups){
       const kept=members.filter(p=>p.selected&&!['pending_trash','pending_permanent_delete','trashed','permanently_deleted'].includes(p.lifecycle)).length;
       const [statusText,statusClass]=dedupGroupStatusLabel(group.status||'pending');
       html+='<div class="dedup-group" data-group="'+group.group_id+'">';
-      html+='<div class="dedup-group-head"><div><b>相似组 '+seq+' · '+members.length+' 张</b> <span class="group-status '+statusClass+'">'+statusText+'</span></div>'
-        +'<span>保留 '+kept+' · 删除 '+deleted+' · 待处理 '+Math.max(0,active-kept)+'</span></div>';
-      html+='<div class="dedup-group-actions" style="display:flex;align-items:center;gap:8px;margin-bottom:8px">'
+      html+='<div class="dedup-group-head">'
+        +'<div class="dedup-group-title"><b>相似组 '+seq+' · '+members.length+' 张</b>'
+        +'<span class="group-status '+statusClass+'">'+statusText+'</span>'
+        +'<span class="dedup-group-meta">保留 '+kept+' · 删除 '+deleted+' · 待处理 '+Math.max(0,active-kept)+'</span></div>'
+        +'<div class="dedup-group-actions">'
         +'<button class="chip group-complete" data-group="'+group.group_id+'">完成本组</button>'
-        +'<details class="dedup-more"><summary>更多操作</summary><div class="dedup-quick">'
+        +'<details class="dedup-more"><summary title="更多操作">更多操作</summary><div class="dedup-quick">'
         +'<button data-dmode="best1" data-group="'+group.group_id+'">保留最佳 1 张</button>'
         +'<button data-dmode="best2" data-group="'+group.group_id+'">保留最佳 2 张</button>'
         +'<button data-dmode="all" data-group="'+group.group_id+'">全部保留</button>'
-        +'</div></details></div>';
+        +'</div></details></div></div>';
       html+='<div class="dedup-choices">';
       members.forEach(p=>{
         const [label,badgeClass,cardState]=dedupMemberState(group,p);
@@ -5332,20 +5334,17 @@ function updateCullMoveButton(){
   const n=cullMoveCounts();
   const count=document.getElementById('cullMoveCount');if(count)count.textContent=n.selected+'/'+n.total;
   if(currentStep!=='cull'||!cullReady||!n.total){
-    mb.style.display='none';mb.disabled=false;mb.classList.remove('cta','btn');mb.classList.add('btn-ghost');
-    startBtn.classList.remove('secondary');return;
+    mb.style.display='none';mb.disabled=false;mb.classList.remove('cta');return;
   }
-  mb.style.display='block';
+  mb.style.display='inline-flex';
   if(n.selected>0){
     mb.disabled=false;
-    mb.textContent='🗑 '+n.selected+' 张移入软件回收站';
-    mb.classList.remove('btn-ghost');mb.classList.add('btn','cta');
-    startBtn.classList.add('secondary');
+    mb.textContent='🗑 '+n.selected+' 张移入回收站';
+    mb.classList.add('cta');
   }else{
     mb.disabled=true;
-    mb.textContent='未选择需要删除的模糊照片';
-    mb.classList.remove('btn','cta');mb.classList.add('btn-ghost');
-    startBtn.classList.remove('secondary');
+    mb.textContent='未选择模糊照片';
+    mb.classList.remove('cta');
   }
 }
 function applyMoveSelectionResponse(path,d){
