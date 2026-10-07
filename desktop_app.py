@@ -378,25 +378,17 @@ def main():
             tray = None
             _write_early_error_log()
 
-    def after_webview_start():
-        # pywebview runs the start callback on its own worker thread. Keep it
-        # deliberately boring: tray startup only, with zero WinForms Handle or
-        # DWM interaction.
-        start_tray_after_ui()
-
-    # Native Windows title bar owns close/maximize/restore. There are no
-    # pywebview lifecycle event handlers and no direct Handle/DWM calls. This
-    # keeps the WinForms/WebView2 GUI message pump single-owner and avoids the
-    # startup deadlock that produced a rendered first frame followed by
-    # "PhotoCurator (未响应)" on Windows.
+    # Match the last known-good v1.5.0 lifecycle: create the tray before
+    # entering pywebview's GUI loop and do not inject a startup callback.
+    start_tray_after_ui()
 
     try:
         # On Windows force Edge WebView2. Falling back to IE/MSHTML would open
         # a window but break the modern UI, which is worse than a clear error.
         if os.name == 'nt':
-            webview.start(after_webview_start, gui='edgechromium', debug=False)
+            webview.start(gui='edgechromium', debug=False)
         else:
-            webview.start(after_webview_start, debug=False)
+            webview.start(debug=False)
     except Exception as exc:
         # Formal installer builds do not expose maintenance BAT/CMD files.
         # If WebView2 itself is unavailable, keep the already-running local
