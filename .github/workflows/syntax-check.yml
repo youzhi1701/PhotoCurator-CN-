@@ -454,7 +454,7 @@ jobs:
               "note_catalog_scan_error(",
               "on_error=_scan_walk_error",
               "begin_catalog_scan(INDEX_DB, folder)",
-              "catalog_scan_batch(INDEX_DB, scan_session, pending_catalog)",
+              "fingerprints=scan_fingerprints",
               "finish_catalog_scan(",
               "abort_catalog_scan(INDEX_DB, scan_session, str(exc))",
               "while entry and entry.get('state') == 'scanning':",
