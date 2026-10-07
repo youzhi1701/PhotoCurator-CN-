@@ -594,8 +594,8 @@ jobs:
               )
           if "catalog_list_sources(INDEX_DB, refresh=False)" not in shortcuts:
               raise SystemExit("First-paint source list must not probe physical drives")
-          if "setTimeout(refreshEnvironment,5000)" not in core:
-              raise SystemExit("Physical-drive refresh must be deferred after first paint")
+          if "setTimeout(()=>{if(!document.hidden)refreshEnvironment();},5000)" not in core:
+              raise SystemExit("Physical-drive refresh must be deferred after first paint and skipped while hidden")
 
           if "PILLOW_IMG_EXTS" not in core or "Image.registered_extensions()" not in core:
               raise SystemExit("Image discovery must follow installed decoder capability")
