@@ -557,9 +557,14 @@ def discover_mounted_devices(db_path):
     mounted = _mounted_volume_map()
     unique = {}
     for key, info in mounted.items():
-        if not key.startswith("win-guid:"):
+        mount = str(info.get("mount_path") or "")
+        if not mount:
             continue
-        unique[str(info.get("mount_path") or key)] = dict(info)
+        existing = unique.get(mount)
+        candidate = dict(info)
+        # Prefer the stable GUID record when both GUID and mount aliases exist.
+        if existing is None or str(candidate.get("identity_key") or "").startswith("win-guid:"):
+            unique[mount] = candidate
     with _connect(db_path) as db:
         rows = db.execute(
             """SELECT source_id,identity_key,display_name,kind,last_mount,volume_guid
@@ -569,7 +574,7 @@ def discover_mounted_devices(db_path):
     out = []
     for info in unique.values():
         identity = str(info.get("identity_key") or "")
-        known = by_identity.get(identity)
+        known = by_identity.get(identity) if identity.startswith("win-guid:") else None
         out.append({
             "identity_key": identity,
             "mount_path": str(info.get("mount_path") or ""),
