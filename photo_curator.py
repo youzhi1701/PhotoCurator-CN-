@@ -678,7 +678,7 @@ def _prune_index_db():
 threading.Thread(target=_prune_index_db, daemon=True,
                  name='photocurator-index-prune').start()
 
-APP_VERSION = "1.5.8"
+APP_VERSION = "1.5.9"
 IS_CODESPACES = os.environ.get('CODESPACES', '').strip().lower() == 'true'
 CODESPACE_NAME = os.environ.get('CODESPACE_NAME', '').strip()
 _CODESPACES_DOMAIN_RAW = os.environ.get(
@@ -3517,6 +3517,30 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   body.sidebar-collapsed .library-sidebar{width:58px!important;flex-basis:58px!important;padding-left:7px!important;padding-right:7px!important}body.sidebar-collapsed .library-head>div,body.sidebar-collapsed .library-head .source-add,body.sidebar-collapsed .source-path-input,body.sidebar-collapsed .source-browser{display:none!important}body.sidebar-collapsed .library-head{height:28px;margin:0}body.sidebar-collapsed .library-footer{margin-top:auto}body.sidebar-collapsed .sidebar-collapse{font-size:0}body.sidebar-collapsed .sidebar-collapse::after{content:'⇥';font-size:16px}
   @media(max-width:1050px){.source-pill{max-width:220px;min-width:150px}.workspace-tabs .step{padding:0 9px}.library-sidebar{width:205px;flex-basis:205px}}
   @media(max-width:900px){.source-pill{display:none}.content-title span{display:none}.library-sidebar{width:190px;flex-basis:190px}}
+  /* v1.5.9: all auxiliary panels live inside the left sidebar. */
+  :root{--thumb-size:240px}
+  .library-sidebar{width:282px!important;flex-basis:282px!important;padding:10px 10px 8px!important}
+  .source-browser{flex:1 1 auto!important;min-height:120px!important;padding-bottom:6px!important}
+  .sidebar-utility-tabs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px;padding:8px 0 7px;border-top:1px solid rgba(124,139,192,.14)}
+  .sidebar-utility-tabs button{height:31px;border:1px solid rgba(124,139,192,.15);border-radius:9px;background:rgba(255,255,255,.48);color:#64748b;font-size:10px;font-weight:800;cursor:pointer}
+  .sidebar-utility-tabs button:hover,.sidebar-utility-tabs button.active{background:#fff;color:#4f63c9;border-color:rgba(91,111,218,.34);box-shadow:0 3px 10px rgba(76,91,180,.07)}
+  .sidebar-utility-host{flex:0 1 auto;max-height:52%;min-height:0;overflow:auto;padding:0 1px}
+  .sidebar-utility-host .inspector-drawer,.sidebar-utility-host .toolbox-panel,.sidebar-utility-host .task-center{position:static!important;inset:auto!important;left:auto!important;right:auto!important;top:auto!important;bottom:auto!important;width:100%!important;max-width:none!important;height:auto!important;max-height:none!important;transform:none!important;opacity:1!important;pointer-events:auto!important;display:none!important;margin:0!important;padding:9px!important;border:1px solid rgba(124,139,192,.15)!important;border-radius:12px!important;background:rgba(255,255,255,.58)!important;box-shadow:none!important;backdrop-filter:none!important;overflow:visible!important}
+  .sidebar-utility-host .sidebar-utility-active{display:block!important}
+  .sidebar-utility-host .inspector-head,.sidebar-utility-host .toolbox-head,.sidebar-utility-host .task-center-head{padding:0 0 8px!important;margin:0 0 7px!important;border-bottom:1px solid rgba(124,139,192,.11)!important}
+  .sidebar-utility-host .inspector-scroll{padding:0!important;overflow:visible!important}
+  .sidebar-utility-host .task-center.open{display:grid!important;grid-template-columns:1fr!important;gap:6px!important}
+  .sidebar-utility-host .task-row{font-size:10px;padding:7px 8px}
+  .sidebar-utility-host .task-tip{grid-column:auto!important;font-size:9px;padding:2px 2px 0}
+  .sidebar-utility-host .task-exit{width:100%;margin-top:2px}
+  .sidebar-utility-host .tool-card{padding:10px;margin:6px 0;font-size:10px}
+  .drawer-scrim{display:none!important}
+  body.inspector-open .inspector-drawer{transform:none!important}
+  body.sidebar-collapsed .sidebar-utility-tabs,body.sidebar-collapsed .sidebar-utility-host{display:none!important}
+  .photo-name{font-size:12px!important;font-weight:750}.photo-info{min-height:56px!important}
+  .gallery,.folder-grid{gap:12px!important}
+  @media(max-width:1050px){.library-sidebar{width:252px!important;flex-basis:252px!important}}
+  @media(max-width:900px){.library-sidebar{width:238px!important;flex-basis:238px!important}}
 </style></head><body>
 <header class="appbar pywebview-drag-region">
   <div class="app-brand" aria-label="PhotoCurator">
@@ -3563,6 +3587,13 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
       <div class="section-subhead">示例与最近</div>
       <div id="shortcuts"></div>
     </div>
+
+    <div class="sidebar-utility-tabs" id="sidebarUtilityTabs">
+      <button data-utility="inspector">筛选</button>
+      <button data-utility="taskCenter">任务</button>
+      <button data-utility="toolboxPanel">工具</button>
+    </div>
+    <div class="sidebar-utility-host" id="sidebarUtilityHost"></div>
 
     <div class="library-footer">
       <button class="sidebar-collapse" id="sidebarCollapse" title="收起/展开数据源栏">⇤ 收起数据源</button>
@@ -3669,9 +3700,9 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   <div class="thumb-zoom" title="Ctrl + 鼠标滚轮也可以调整缩略图大小">
     <span>缩略图</span>
     <button id="thumbSmaller" aria-label="缩小缩略图">−</button>
-    <input id="thumbSizeRange" type="range" min="110" max="320" step="10" value="180">
+    <input id="thumbSizeRange" type="range" min="160" max="420" step="10" value="240">
     <button id="thumbLarger" aria-label="放大缩略图">＋</button>
-    <b id="thumbSizeValue">180</b>
+    <b id="thumbSizeValue">240</b>
   </div>
 </footer>
 
@@ -3979,19 +4010,19 @@ function loadActivity(){
 document.getElementById('toolLog').addEventListener('toggle',e=>{if(e.currentTarget.open)loadActivity();});
 
 /* Gallery thumbnail zoom: Ctrl + wheel changes photo-card size, never page zoom. */
-let thumbSize=180;
+let thumbSize=240;
 try{
-  const saved=parseInt(localStorage.getItem('pc-thumb-size')||'180',10);
-  if(Number.isFinite(saved))thumbSize=Math.min(320,Math.max(110,saved));
+  const saved=parseInt(localStorage.getItem('pc-thumb-size-v159')||'240',10);
+  if(Number.isFinite(saved))thumbSize=Math.min(420,Math.max(160,saved));
 }catch(_){}
 function applyThumbSize(v){
-  thumbSize=Math.min(320,Math.max(110,Math.round(v/10)*10));
+  thumbSize=Math.min(420,Math.max(160,Math.round(v/10)*10));
   document.documentElement.style.setProperty('--thumb-size',thumbSize+'px');
   const range=document.getElementById('thumbSizeRange');
   const label=document.getElementById('thumbSizeValue');
   if(range)range.value=String(thumbSize);
   if(label)label.textContent=String(thumbSize);
-  try{localStorage.setItem('pc-thumb-size',String(thumbSize));}catch(_){}
+  try{localStorage.setItem('pc-thumb-size-v159',String(thumbSize));}catch(_){}
 }
 applyThumbSize(thumbSize);
 document.getElementById('thumbSizeRange').oninput=e=>applyThumbSize(Number(e.target.value));
@@ -4037,35 +4068,63 @@ setTimeout(()=>{
   }
 },1200);
 
+const sidebarUtilityHost=document.getElementById('sidebarUtilityHost');
+const sidebarUtilityTabs=document.getElementById('sidebarUtilityTabs');
+const inspectorPanel=document.getElementById('inspector');
+const toolboxPanel=document.getElementById('toolboxPanel');
+const taskCenter=document.getElementById('taskCenter');
+[inspectorPanel,taskCenter,toolboxPanel].forEach(panel=>{
+  if(panel)sidebarUtilityHost.appendChild(panel);
+});
+const sidebarUtilityPanels={inspector:inspectorPanel,taskCenter,toolboxPanel};
+let activeSidebarUtility=null;
+function setSidebarUtility(name,on=true){
+  if(on&&document.body.classList.contains('sidebar-collapsed'))setSidebarCollapsed(false);
+  Object.entries(sidebarUtilityPanels).forEach(([key,panel])=>{
+    const active=!!on&&key===name;
+    if(panel){
+      panel.classList.toggle('sidebar-utility-active',active);
+      panel.classList.toggle('open',active);
+      if(key==='inspector')panel.setAttribute('aria-hidden',active?'false':'true');
+    }
+  });
+  sidebarUtilityTabs.querySelectorAll('[data-utility]').forEach(btn=>
+    btn.classList.toggle('active',!!on&&btn.dataset.utility===name)
+  );
+  activeSidebarUtility=on?name:null;
+}
+function toggleSidebarUtility(name){
+  setSidebarUtility(name,activeSidebarUtility!==name);
+}
+sidebarUtilityTabs.querySelectorAll('[data-utility]').forEach(btn=>{
+  btn.onclick=()=>toggleSidebarUtility(btn.dataset.utility);
+});
 function setInspectorOpen(on){
-  document.body.classList.toggle('inspector-open',!!on);
-  document.getElementById('inspector').setAttribute('aria-hidden',on?'false':'true');
+  setSidebarUtility('inspector',!!on);
 }
 setInspectorOpen(false);
 document.getElementById('settingsQuick').onclick=()=>{
-  const next=!document.body.classList.contains('inspector-open');
-  setInspectorOpen(next);
-  if(next){
+  const opening=activeSidebarUtility!=='inspector';
+  setInspectorOpen(opening);
+  if(opening){
     const d=document.getElementById('settingsDetails');d.open=true;
     loadStorageSummary(true);
   }
 };
 document.getElementById('inspectorClose').onclick=()=>setInspectorOpen(false);
-document.getElementById('drawerScrim').onclick=()=>setInspectorOpen(false);
+document.getElementById('drawerScrim').onclick=()=>{};
 document.addEventListener('keydown',e=>{
-  if(e.key==='Escape'&&document.body.classList.contains('inspector-open'))setInspectorOpen(false);
+  if(e.key==='Escape'&&activeSidebarUtility)setSidebarUtility(activeSidebarUtility,false);
 });
-const toolboxPanel=document.getElementById('toolboxPanel');
-document.getElementById('toolboxOpen').onclick=()=>toolboxPanel.classList.add('open');
-document.getElementById('toolboxClose').onclick=()=>toolboxPanel.classList.remove('open');
+document.getElementById('toolboxOpen').onclick=()=>toggleSidebarUtility('toolboxPanel');
+document.getElementById('toolboxClose').onclick=()=>setSidebarUtility('toolboxPanel',false);
 document.getElementById('openRankTool').onclick=()=>{
-  toolboxPanel.classList.remove('open');
+  setSidebarUtility('toolboxPanel',false);
   activateStep('rank');
   fetch('/api/progress/rank').then(r=>r.json()).then(d=>{renderRank(d.photos||[]);updateVisibleStepStatus('rank',d);}).catch(()=>{});
 };
-const taskCenter=document.getElementById('taskCenter');
-document.getElementById('taskToggle').onclick=()=>taskCenter.classList.toggle('open');
-document.getElementById('taskClose').onclick=()=>taskCenter.classList.remove('open');
+document.getElementById('taskToggle').onclick=()=>toggleSidebarUtility('taskCenter');
+document.getElementById('taskClose').onclick=()=>setSidebarUtility('taskCenter',false);
 document.getElementById('appExit').onclick=async()=>{
   let activeSteps=[],fileTasks=0;
   try{
