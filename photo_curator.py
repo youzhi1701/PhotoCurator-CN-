@@ -41,22 +41,22 @@ from raw_loader import (RAW_EXTS, HAS_RAWPY, is_raw,
 from photo_ranking_v3 import AdvancedPhotoAnalyzer, PhotoScoreV3
 from photo_dedup_batch import FastBatchDeduplicator
 from background_tasks import BackgroundTaskManager
+from runtime_paths import resolve_data_root
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Installed builds keep all PhotoCurator-owned writable data on the same drive
-# as the chosen installation directory. Development/source runs keep the older
-# per-user fallback so existing contributors are not forced to write into Git.
+# Writable state is independent from replaceable program files. The desktop
+# launcher resolves/migrates the installed data directory first and passes the
+# exact root through PHOTOCURATOR_DATA_DIR; direct source runs keep ~/.photo_curator.
 IS_FROZEN = bool(getattr(sys, 'frozen', False))
 if IS_FROZEN:
     INSTALL_ROOT = Path(sys.executable).resolve().parent.parent
-    DATA_ROOT = INSTALL_ROOT / 'data'
     RESOURCE_ROOT = Path(getattr(sys, '_MEIPASS', Path(sys.executable).resolve().parent))
 else:
     INSTALL_ROOT = Path(__file__).resolve().parent
-    DATA_ROOT = Path(os.environ.get('PHOTOCURATOR_DATA_DIR', '')).expanduser() if os.environ.get('PHOTOCURATOR_DATA_DIR') else (Path.home() / '.photo_curator')
     RESOURCE_ROOT = Path(__file__).resolve().parent
+DATA_ROOT = resolve_data_root(frozen=IS_FROZEN)
 
 for _dir in (DATA_ROOT, DATA_ROOT / 'logs', DATA_ROOT / 'cache', DATA_ROOT / 'config'):
     try:
