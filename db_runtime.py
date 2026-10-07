@@ -10,6 +10,7 @@ locking/foreign-key policy than the others.
 from __future__ import annotations
 
 import sqlite3
+import time
 from pathlib import Path
 
 
@@ -44,3 +45,54 @@ def quick_check(db_path):
     with connect_db(db_path, timeout=30.0) as db:
         rows = db.execute("PRAGMA quick_check").fetchall()
     return [str(row[0]) for row in rows]
+
+
+def read_schema_version(db_path, key):
+    """Read a schema version marker without creating one."""
+    path = Path(db_path)
+    if not path.is_file():
+        return 0
+    try:
+        with sqlite3.connect(str(path), timeout=5) as db:
+            exists = db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_meta'"
+            ).fetchone()
+            if not exists:
+                return 0
+            row = db.execute(
+                "SELECT value FROM schema_meta WHERE key=?", (str(key),)
+            ).fetchone()
+            return int(row[0]) if row else 0
+    except Exception:
+        return 0
+
+
+def backup_database(db_path, backup_dir, label, *, keep=5):
+    """Create a consistent SQLite backup and retain only the newest copies."""
+    src_path = Path(db_path)
+    if not src_path.is_file() or src_path.stat().st_size <= 0:
+        return None
+    backup_dir = Path(backup_dir)
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    target = backup_dir / f"{src_path.stem}-before-{label}-{stamp}.sqlite3"
+    source = sqlite3.connect(str(src_path), timeout=30)
+    dest = sqlite3.connect(str(target), timeout=30)
+    try:
+        source.backup(dest)
+        dest.commit()
+    finally:
+        dest.close()
+        source.close()
+
+    candidates = sorted(
+        backup_dir.glob(f"{src_path.stem}-before-*.sqlite3"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    for old in candidates[max(1, int(keep)):]:
+        try:
+            old.unlink()
+        except OSError:
+            pass
+    return target
