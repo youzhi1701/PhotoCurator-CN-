@@ -17,7 +17,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || github.head_ref == 'fix-v1.5.1'
     runs-on: windows-latest
     env:
-      CANDIDATE_VERSION: "1.5.2"
+      CANDIDATE_VERSION: "1.5.3"
 
     steps:
       - uses: actions/checkout@v7
@@ -133,6 +133,54 @@ jobs:
             throw "Candidate packaged self-test failed: $($p.ExitCode)"
           }
 
+      - name: Verify packaged desktop window remains responsive
+        shell: powershell
+        run: |
+          $exe = Resolve-Path "dist\PhotoCurator\PhotoCurator.exe"
+          $p = Start-Process -FilePath $exe -PassThru
+          try {
+            $deadline = (Get-Date).AddSeconds(20)
+            do {
+              Start-Sleep -Milliseconds 400
+              $p.Refresh()
+              if ($p.HasExited) {
+                throw "Candidate desktop exited before opening a usable window. ExitCode=$($p.ExitCode)"
+              }
+            } while ($p.MainWindowHandle -eq 0 -and (Get-Date) -lt $deadline)
+
+            if ($p.MainWindowHandle -eq 0) {
+              throw "Candidate desktop did not create a native Windows window within 20 seconds"
+            }
+
+            Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public static class PhotoCuratorWindowProbe {
+    [DllImport("user32.dll", SetLastError=true)]
+    public static extern IntPtr SendMessageTimeout(
+        IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam,
+        uint fuFlags, uint uTimeout, out IntPtr lpdwResult);
+}
+"@
+            $result = [IntPtr]::Zero
+            $SMTO_ABORTIFHUNG = 0x0002
+            $ok = [PhotoCuratorWindowProbe]::SendMessageTimeout(
+              $p.MainWindowHandle, 0x0000, [IntPtr]::Zero, [IntPtr]::Zero,
+              $SMTO_ABORTIFHUNG, 3000, [ref]$result
+            )
+            $p.Refresh()
+            if ($ok -eq [IntPtr]::Zero -or -not $p.Responding) {
+              throw "Candidate native window message loop is not responding"
+            }
+            Write-Host "Packaged native Windows window is responsive."
+          }
+          finally {
+            if (!$p.HasExited) {
+              Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+              $p.WaitForExit(5000) | Out-Null
+            }
+          }
+
       - name: Download WebView2 bootstrapper
         shell: powershell
         run: |
@@ -155,10 +203,10 @@ jobs:
           $installer = "release\PhotoCurator-Setup-v$env:CANDIDATE_VERSION.exe"
           if (!(Test-Path $installer)) { throw "Candidate installer not built: $installer" }
 
-      - name: Upload v1.5.2 test installer
+      - name: Upload v1.5.3 test installer
         uses: actions/upload-artifact@v4
         with:
-          name: PhotoCurator-v1.5.2-test-installer
-          path: release/PhotoCurator-Setup-v1.5.2.exe
+          name: PhotoCurator-v1.5.3-test-installer
+          path: release/PhotoCurator-Setup-v1.5.3.exe
           if-no-files-found: error
           retention-days: 14
