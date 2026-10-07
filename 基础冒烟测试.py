@@ -282,8 +282,11 @@ def main():
         assert_true(keep_a.exists() and keep_b.exists() and not drop_c.exists(),
                     "相似照片后台处理错误移动了保留项，或未处理待删除项")
         trash_rows = photo_curator._trash_rows(root)
-        assert_true(any(Path(x["original_path"]) == drop_c for x in trash_rows),
-                    f"待删除相似照片没有进入软件回收站：{trash_rows}")
+        drop_c_norm = os.path.normcase(os.path.realpath(str(drop_c)))
+        assert_true(any(
+            os.path.normcase(os.path.realpath(str(x["original_path"]))) == drop_c_norm
+            for x in trash_rows
+        ), f"待删除相似照片没有进入软件回收站：{trash_rows}")
 
         # Custom output is an explicit user-selected root and must remain
         # accessible to thumbnails / previews after a reviewed file is moved.
