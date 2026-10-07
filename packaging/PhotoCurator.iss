@@ -39,7 +39,8 @@ RestartApplications=no
 Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "快捷方式"; Flags: unchecked
 
 [InstallDelete]
-; 覆盖升级前清理旧程序文件，避免 PyInstaller 旧模块残留；data 目录不受影响。
+; 覆盖升级只清理可替换程序文件。用户运行数据位于 {localappdata}\PhotoCurator\data，
+; 旧版 {app}\data 也不会在覆盖阶段删除，以便应用首次启动完成安全迁移。
 Type: filesandordirs; Name: "{app}\app"
 
 [Files]
@@ -47,10 +48,10 @@ Source: "..\dist\PhotoCurator\*"; DestDir: "{app}\app"; Flags: ignoreversion rec
 Source: "MicrosoftEdgeWebview2Setup.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall
 
 [Dirs]
-Name: "{app}\data"
-Name: "{app}\data\config"
-Name: "{app}\data\cache"
-Name: "{app}\data\logs"
+Name: "{localappdata}\PhotoCurator\data"
+Name: "{localappdata}\PhotoCurator\data\config"
+Name: "{localappdata}\PhotoCurator\data\cache"
+Name: "{localappdata}\PhotoCurator\data\logs"
 
 [Icons]
 Name: "{autoprograms}\PhotoCurator"; Filename: "{app}\app\{#MyAppExeName}"; WorkingDir: "{app}\app"
@@ -61,6 +62,11 @@ Filename: "{tmp}\MicrosoftEdgeWebview2Setup.exe"; Parameters: "/silent /install"
 Filename: "{app}\app\{#MyAppExeName}"; Description: "打开 PhotoCurator"; Flags: nowait postinstall skipifsilent
 
 [UninstallDelete]
+; 可重建数据始终清理；用户决策与索引配置仅在卸载确认后删除。
+Type: filesandordirs; Name: "{localappdata}\PhotoCurator\data\cache"
+Type: filesandordirs; Name: "{localappdata}\PhotoCurator\data\logs"
+Type: filesandordirs; Name: "{localappdata}\PhotoCurator\data\内置测试数据"
+; 清理旧版安装目录中遗留的可重建数据，但保留 legacy config 作为安全回退。
 Type: filesandordirs; Name: "{app}\data\cache"
 Type: filesandordirs; Name: "{app}\data\logs"
 Type: filesandordirs; Name: "{app}\data\内置测试数据"
@@ -78,5 +84,8 @@ begin
       mbConfirmation, MB_YESNO) = IDYES;
 
   if (CurUninstallStep = usPostUninstall) and DeleteSettings then
+  begin
+    DelTree(ExpandConstant('{localappdata}\PhotoCurator\data\config'), True, True, True);
     DelTree(ExpandConstant('{app}\data\config'), True, True, True);
+  end;
 end;
