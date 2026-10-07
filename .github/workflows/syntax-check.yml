@@ -224,6 +224,18 @@ jobs:
               raise SystemExit("Shared enumeration helper must call list_images exactly once")
           if "paths = _shared_list_images(folder, recursive=recursive)" in helper:
               raise SystemExit("Shared enumeration helper recursively calls itself")
+          if "while entry and entry.get('state') == 'scanning':" not in helper:
+              raise SystemExit("Shared enumeration must wait for one scan producer")
+          if "deadline = now + 60.0" in helper:
+              raise SystemExit("Large libraries must not start a second scan after a fixed timeout")
+          for required_key_part in (
+              "output_mode = str(scan_cfg.get('output_mode') or 'source')",
+              "custom_output = ''",
+              "output_mode,",
+              "custom_output,",
+          ):
+              if required_key_part not in helper:
+                  raise SystemExit("Shared scan key is missing configuration identity: " + required_key_part)
 
           dedup_block = source.split("def run_dedup(", 1)[1].split(
               "# --------------------------------------------------------------------------- #\n#  RANK", 1
