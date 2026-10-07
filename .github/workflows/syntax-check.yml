@@ -229,6 +229,8 @@ jobs:
               "tray.run_detached()",
               "window.hide()",
               "退出 PhotoCurator",
+              "def stop_analysis_and_wait",
+              "stop_analysis_and_wait()",
           ]
           missing = [x for x in required_desktop if x not in desktop]
           if missing:
@@ -347,6 +349,8 @@ jobs:
               "function askDeleteMode",
               "function askBatchConfirm",
               "document.getElementById('appExit').onclick=async()=>",
+              "fetch('/api/tasks')",
+              "未完成的文件任务已持久化，将在下次启动后自动继续",
               "Promise.allSettled(activeSteps.map(step=>fetch('/api/stop/'+step",
           ]
           missing = [x for x in required if x not in js]
