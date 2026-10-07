@@ -1,8 +1,8 @@
 {
   "product": "PhotoCurator",
   "channel": "stable",
-  "version": "1.5.7",
-  "installer": "PhotoCurator-Setup-v1.5.7.exe",
+  "version": "1.5.8",
+  "installer": "PhotoCurator-Setup-v1.5.8.exe",
   "upgrade_mode": "in_place",
   "same_app_id": true,
   "data_root": "%LOCALAPPDATA%/PhotoCurator/data",
@@ -22,7 +22,7 @@
   "replace": [
     "app"
   ],
-  "notes": "v1.5.7 Windows 启动未响应根因修复：自动环境刷新不再扫描所有磁盘的 DCIM、容量、卷信息或目录；周期任务只用轻量 Windows 卷存在性 API 更新已登记数据源的在线/离线状态，避免慢速/休眠/异常 USB 硬盘让 Python/pywebview 宿主失去响应。保留 v1.5.6 稳定 frameless 壳与全部数据源/离线图库功能。",
+  "notes": "v1.5.8 诊断稳定版：桌面运行层恢复到 v1.5.0 已验证的 pywebview 生命周期与窗口控制，不再继续试验新的宿主启动方式；新增可选诊断模式，Debug 启动时每 5 秒自动记录全部 Python 线程栈到 hang-trace.log，用于实机卡死定位。业务层保留 v1.5.x 数据源、离线图库、Dashboard/照片视图等功能。",
   "release_date": "2026-10-07",
   "published_version": "1.5.0",
   "published_installer": "PhotoCurator-Setup-v1.5.0.exe"
