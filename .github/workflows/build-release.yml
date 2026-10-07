@@ -10,8 +10,8 @@ permissions:
   contents: write
 
 concurrency:
-  group: photocurator-windows-release
-  cancel-in-progress: true
+  group: photocurator-windows-release-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 jobs:
   build-windows-installer:
