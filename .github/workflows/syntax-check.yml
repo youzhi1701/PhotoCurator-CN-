@@ -28,6 +28,7 @@ jobs:
       - name: Compile Python sources
         run: |
           python -m py_compile \
+            db_runtime.py \
             desktop_app.py \
             runtime_paths.py \
             catalog.py \
@@ -157,8 +158,11 @@ jobs:
               'git push origin "refs/tags/$tag"',
               "startsWith(github.ref, 'refs/tags/v') || (github.ref == 'refs/heads/main'",
               "format('v{0}', steps.release_meta.outputs.version)",
-              'files: release/' + gh_expr + ' steps.release_meta.outputs.installer }}',
+              'release/' + gh_expr + ' steps.release_meta.outputs.installer }}.sha256',
               'generate_release_notes: true',
+              "Generate installer SHA256",
+              "Verify published release asset",
+              "Mark release metadata as published",
           ]
           missing_release = [x for x in release_required if x not in build_workflow]
           if missing_release:
@@ -334,6 +338,10 @@ jobs:
               "UI_LIVE_RESULT_CAP = 300",
               "askDeleteMode",
               "closeDeleteDialog('permanent')",
+              "def _safe_move_file",
+              "def _move_photo_bundle",
+              "def _photo_sidecars",
+              "catalog_update_media_lifecycle",
           ]
           missing = [x for x in required_core if x not in core]
           if missing:
@@ -434,12 +442,19 @@ jobs:
           helper = source.split("def _shared_list_images", 1)[1].split(
               "# --------------------------------------------------------------------------- #\n#  CULL", 1
           )[0]
-          if "paths = list_images(folder, recursive=recursive)" not in helper:
-              raise SystemExit("Shared enumeration helper must call list_images exactly once")
+          required_scan = [
+              "for p in iter_images(folder, recursive=recursive):",
+              "begin_catalog_scan(INDEX_DB, folder)",
+              "catalog_scan_batch(INDEX_DB, scan_session, pending_catalog)",
+              "finish_catalog_scan(",
+              "abort_catalog_scan(INDEX_DB, scan_session, str(exc))",
+              "while entry and entry.get('state') == 'scanning':",
+          ]
+          missing_scan = [x for x in required_scan if x not in helper]
+          if missing_scan:
+              raise SystemExit("Crash-safe shared scan contract missing: " + repr(missing_scan))
           if "paths = _shared_list_images(folder, recursive=recursive)" in helper:
               raise SystemExit("Shared enumeration helper recursively calls itself")
-          if "while entry and entry.get('state') == 'scanning':" not in helper:
-              raise SystemExit("Shared enumeration must wait for one scan producer")
           if "deadline = now + 60.0" in helper:
               raise SystemExit("Large libraries must not start a second scan after a fixed timeout")
           for required_key_part in (
@@ -498,7 +513,7 @@ jobs:
               "tray.run_detached()",
               "def window_action(self, action)",
               "window.events.closing += on_closing",
-              "def _windows_work_area()",
+              "def _windows_work_area(point=None)",
               "def _fit_window_to_work_area(window)",
           )
           missing = [item for item in required if item not in desktop]
@@ -546,11 +561,11 @@ jobs:
               "function showPhotoView(",
               "function visibleInReview(",
               "repeat(auto-fill,var(--thumb-size))",
-              "pc-thumb-size-v160",
+              "pc-thumb-size-v170",
           )
           missing_ui = [item for item in required_ui if item not in ui]
           if missing_ui:
-              raise SystemExit("v1.6.0 workspace contract missing: " + repr(missing_ui))
+              raise SystemExit("v1.7.0 workspace contract missing: " + repr(missing_ui))
 
           shortcuts = core.split("@app.route('/api/shortcuts')", 1)[1].split(
               "@app.route('/api/sources')", 1
@@ -600,6 +615,35 @@ jobs:
                       "Periodic mounted-volume probe performs blocking filesystem work: "
                       + banned_probe
                   )
+
+          db_runtime = Path("db_runtime.py").read_text(encoding="utf-8")
+          for required_db in (
+              "PRAGMA busy_timeout=",
+              "PRAGMA foreign_keys=ON",
+              "PRAGMA synchronous=NORMAL",
+              "PRAGMA journal_mode=WAL",
+          ):
+              if required_db not in db_runtime:
+                  raise SystemExit("Shared SQLite release policy missing: " + required_db)
+
+          for required_catalog in (
+              "CATALOG_SCHEMA_VERSION",
+              "CREATE TABLE IF NOT EXISTS scan_session",
+              "scan_generation",
+              "def begin_catalog_scan",
+              "def catalog_scan_batch",
+              "def finish_catalog_scan",
+              "def abort_catalog_scan",
+              "def update_media_lifecycle",
+              "def discover_mounted_devices",
+          ):
+              if required_catalog not in catalog:
+                  raise SystemExit("Catalog release contract missing: " + required_catalog)
+
+          if "OFFLINE_PREVIEW_DIR = DATA_ROOT / 'offline_previews'" not in core:
+              raise SystemExit("Offline previews must live outside temporary cache")
+          if "TASK_MANAGER.register('build_offline_previews'" not in core:
+              raise SystemExit("Durable offline previews must be generated in background batches")
 
           print("Deadlock-safe shell + nonblocking device presence + first-paint contract OK")
           PY
@@ -744,7 +788,7 @@ jobs:
 
       - name: Compile Python sources
         run: |
-          python -m py_compile desktop_app.py runtime_paths.py catalog.py photo_curator.py background_tasks.py photo_dedup_batch.py photo_file_organizer.py photo_ranking_engine.py photo_ranking_v3.py raw_loader.py "基础冒烟测试.py" "Codespaces冒烟测试.py" windows_smoke_test.py ui_smoke_test.py
+          python -m py_compile db_runtime.py desktop_app.py runtime_paths.py catalog.py photo_curator.py background_tasks.py photo_dedup_batch.py photo_file_organizer.py photo_ranking_engine.py photo_ranking_v3.py raw_loader.py "基础冒烟测试.py" "Codespaces冒烟测试.py" windows_smoke_test.py ui_smoke_test.py
 
       - name: Runtime data path and migration smoke test
         shell: powershell
