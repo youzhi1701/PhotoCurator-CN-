@@ -3536,30 +3536,84 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   body.sidebar-collapsed .library-sidebar{width:58px!important;flex-basis:58px!important;padding-left:7px!important;padding-right:7px!important}body.sidebar-collapsed .library-head>div,body.sidebar-collapsed .library-head .source-add,body.sidebar-collapsed .source-path-input,body.sidebar-collapsed .source-browser{display:none!important}body.sidebar-collapsed .library-head{height:28px;margin:0}body.sidebar-collapsed .library-footer{margin-top:auto}body.sidebar-collapsed .sidebar-collapse{font-size:0}body.sidebar-collapsed .sidebar-collapse::after{content:'⇥';font-size:16px}
   @media(max-width:1050px){.source-pill{max-width:220px;min-width:150px}.workspace-tabs .step{padding:0 9px}.library-sidebar{width:205px;flex-basis:205px}}
   @media(max-width:900px){.source-pill{display:none}.content-title span{display:none}.library-sidebar{width:190px;flex-basis:190px}}
-  /* v1.5.9: all auxiliary panels live inside the left sidebar. */
-  :root{--thumb-size:240px}
-  .library-sidebar{width:282px!important;flex-basis:282px!important;padding:10px 10px 8px!important}
-  .source-browser{flex:1 1 auto!important;min-height:120px!important;padding-bottom:6px!important}
-  .sidebar-utility-tabs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px;padding:8px 0 7px;border-top:1px solid rgba(124,139,192,.14)}
-  .sidebar-utility-tabs button{height:31px;border:1px solid rgba(124,139,192,.15);border-radius:9px;background:rgba(255,255,255,.48);color:#64748b;font-size:10px;font-weight:800;cursor:pointer}
-  .sidebar-utility-tabs button:hover,.sidebar-utility-tabs button.active{background:#fff;color:#4f63c9;border-color:rgba(91,111,218,.34);box-shadow:0 3px 10px rgba(76,91,180,.07)}
-  .sidebar-utility-host{flex:0 1 auto;max-height:52%;min-height:0;overflow:auto;padding:0 1px}
-  .sidebar-utility-host .inspector-drawer,.sidebar-utility-host .toolbox-panel,.sidebar-utility-host .task-center{position:static!important;inset:auto!important;left:auto!important;right:auto!important;top:auto!important;bottom:auto!important;width:100%!important;max-width:none!important;height:auto!important;max-height:none!important;transform:none!important;opacity:1!important;pointer-events:auto!important;display:none!important;margin:0!important;padding:9px!important;border:1px solid rgba(124,139,192,.15)!important;border-radius:12px!important;background:rgba(255,255,255,.58)!important;box-shadow:none!important;backdrop-filter:none!important;overflow:visible!important}
-  .sidebar-utility-host .sidebar-utility-active{display:block!important}
-  .sidebar-utility-host .inspector-head,.sidebar-utility-host .toolbox-head,.sidebar-utility-host .task-center-head{padding:0 0 8px!important;margin:0 0 7px!important;border-bottom:1px solid rgba(124,139,192,.11)!important}
+  /* v1.6.0: one left control column + one photo workspace.
+     Auxiliary UI never occupies the right or bottom of the gallery. */
+  :root{--thumb-size:260px}
+  .library-sidebar{
+    width:304px!important;flex:0 0 304px!important;padding:10px!important;
+    overflow-y:auto!important;overflow-x:hidden!important;gap:0!important
+  }
+  .source-browser{
+    flex:0 0 auto!important;min-height:90px!important;max-height:230px!important;
+    overflow-y:auto!important;padding:0 1px 8px!important
+  }
+  .sidebar-utility-tabs{display:none!important}
+  .sidebar-utility-host{
+    display:grid!important;grid-template-columns:1fr;gap:9px;
+    flex:0 0 auto!important;max-height:none!important;overflow:visible!important;
+    padding:9px 0 4px;border-top:1px solid rgba(124,139,192,.14)
+  }
+  .sidebar-utility-host .inspector-drawer,
+  .sidebar-utility-host .toolbox-panel,
+  .sidebar-utility-host .task-center,
+  .sidebar-utility-host .activity-panel-sidebar{
+    position:static!important;inset:auto!important;width:100%!important;height:auto!important;
+    max-width:none!important;max-height:none!important;transform:none!important;opacity:1!important;
+    pointer-events:auto!important;display:block!important;margin:0!important;padding:10px!important;
+    border:1px solid rgba(124,139,192,.15)!important;border-radius:13px!important;
+    background:rgba(255,255,255,.58)!important;box-shadow:none!important;
+    backdrop-filter:none!important;overflow:visible!important
+  }
+  .sidebar-utility-host .inspector-head,
+  .sidebar-utility-host .toolbox-head,
+  .sidebar-utility-host .task-center-head,
+  .activity-panel-head{
+    display:flex!important;align-items:center!important;justify-content:space-between!important;
+    gap:8px;padding:0 0 8px!important;margin:0 0 8px!important;
+    border-bottom:1px solid rgba(124,139,192,.11)!important
+  }
+  .sidebar-utility-host .inspector-head button,
+  .sidebar-utility-host .toolbox-head button,
+  .sidebar-utility-host .task-center-head button{display:none!important}
   .sidebar-utility-host .inspector-scroll{padding:0!important;overflow:visible!important}
-  .sidebar-utility-host .task-center.open{display:grid!important;grid-template-columns:1fr!important;gap:6px!important}
-  .sidebar-utility-host .task-row{font-size:10px;padding:7px 8px}
-  .sidebar-utility-host .task-tip{grid-column:auto!important;font-size:9px;padding:2px 2px 0}
+  .sidebar-utility-host .task-center{display:grid!important;grid-template-columns:1fr!important;gap:6px!important}
+  .sidebar-utility-host .task-row{font-size:11px;padding:8px 9px}
+  .sidebar-utility-host .task-tip{grid-column:auto!important;font-size:9px;padding:2px 2px 0;line-height:1.5}
   .sidebar-utility-host .task-exit{width:100%;margin-top:2px}
-  .sidebar-utility-host .tool-card{padding:10px;margin:6px 0;font-size:10px}
+  .sidebar-utility-host .tool-card{padding:10px;margin:6px 0;font-size:11px}
+  .activity-panel-head b{font-size:12px}.activity-panel-head button{
+    border:0;background:transparent;color:var(--accent);font-size:10px;font-weight:800;cursor:pointer
+  }
+  .activity-log{max-height:300px!important;overflow:auto!important;padding:0!important;font-size:11px!important;gap:7px!important}
+  .activity-item{padding:8px 9px!important;border:1px solid rgba(124,139,192,.10);line-height:1.45;background:rgba(248,250,255,.72)!important}
   .drawer-scrim{display:none!important}
-  body.inspector-open .inspector-drawer{transform:none!important}
-  body.sidebar-collapsed .sidebar-utility-tabs,body.sidebar-collapsed .sidebar-utility-host{display:none!important}
-  .photo-name{font-size:12px!important;font-weight:750}.photo-info{min-height:56px!important}
-  .gallery,.folder-grid{gap:12px!important}
-  @media(max-width:1050px){.library-sidebar{width:252px!important;flex-basis:252px!important}}
-  @media(max-width:900px){.library-sidebar{width:238px!important;flex-basis:238px!important}}
+  #settingsQuick,#taskToggle,#toolboxOpen{display:none!important}
+  body.sidebar-collapsed .sidebar-utility-host{display:none!important}
+  body.sidebar-collapsed .library-sidebar{width:58px!important;flex-basis:58px!important;padding-left:7px!important;padding-right:7px!important}
+  body.sidebar-collapsed .library-head>div,
+  body.sidebar-collapsed .library-head .source-add,
+  body.sidebar-collapsed .source-path-input,
+  body.sidebar-collapsed .source-browser{display:none!important}
+  body.sidebar-collapsed .library-head{height:28px;margin:0}
+  body.sidebar-collapsed .library-footer{margin-top:auto}
+  body.sidebar-collapsed .sidebar-collapse{font-size:0}
+  body.sidebar-collapsed .sidebar-collapse::after{content:'⇥';font-size:16px}
+
+  /* One thumbnail size means one real card width in every photo result view. */
+  .gallery,.folder-grid,.dedup-choices{
+    grid-template-columns:repeat(auto-fill,var(--thumb-size))!important;
+    justify-content:start!important;align-items:start!important;gap:12px!important
+  }
+  .photo-card,.dedup-choice{width:var(--thumb-size);max-width:100%}
+  .photo-name{font-size:12px!important;font-weight:750}.photo-info{min-height:54px!important}
+  #gallery.view-list .folder-grid,#gallery.view-list .dedup-choices{grid-template-columns:1fr!important}
+  #gallery.view-list .photo-card,#gallery.view-list .dedup-choice{width:100%!important;max-width:none!important}
+  #gallery.view-large .folder-grid,#gallery.view-large .dedup-choices{
+    grid-template-columns:repeat(auto-fill,var(--thumb-size))!important
+  }
+
+  @media(max-width:1050px){.library-sidebar{width:270px!important;flex-basis:270px!important}}
+  @media(max-width:900px){.library-sidebar{width:250px!important;flex-basis:250px!important}.source-pill{display:none}}
 </style></head><body>
 <header class="appbar pywebview-drag-region">
   <div class="app-brand" aria-label="PhotoCurator">
@@ -3607,11 +3661,6 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
       <div id="shortcuts"></div>
     </div>
 
-    <div class="sidebar-utility-tabs" id="sidebarUtilityTabs">
-      <button data-utility="inspector">筛选</button>
-      <button data-utility="taskCenter">任务</button>
-      <button data-utility="toolboxPanel">工具</button>
-    </div>
     <div class="sidebar-utility-host" id="sidebarUtilityHost"></div>
 
     <div class="library-footer">
@@ -3719,9 +3768,9 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   <div class="thumb-zoom" title="Ctrl + 鼠标滚轮也可以调整缩略图大小">
     <span>缩略图</span>
     <button id="thumbSmaller" aria-label="缩小缩略图">−</button>
-    <input id="thumbSizeRange" type="range" min="160" max="420" step="10" value="240">
+    <input id="thumbSizeRange" type="range" min="160" max="420" step="10" value="260">
     <button id="thumbLarger" aria-label="放大缩略图">＋</button>
-    <b id="thumbSizeValue">240</b>
+    <b id="thumbSizeValue">260</b>
   </div>
 </footer>
 
@@ -3775,10 +3824,11 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
 <aside class="toolbox-panel" id="toolboxPanel">
   <div class="toolbox-head"><div><b>工具箱</b><span>低频辅助与扩展功能</span></div><button id="toolboxClose">×</button></div>
   <button class="tool-card" id="openRankTool"><b>✦ 照片评分 / 精选推荐</b><span>独立扩展工具，不参与默认清理主流程。</span></button>
-  <details class="tool-card log-tool" id="toolLog">
-    <summary><b>☷ 系统运行日志</b><span>查看扫描、后台任务和操作记录。</span></summary>
-    <div id="activityLog" class="activity-log">暂无记录</div>
-  </details>
+</aside>
+
+<aside class="activity-panel-sidebar" id="activityPanel">
+  <div class="activity-panel-head"><b>☷ 系统运行日志</b><button id="activityRefresh">刷新</button></div>
+  <div id="activityLog" class="activity-log">暂无记录</div>
 </aside>
 
 <aside class="task-center" id="taskCenter">
@@ -4014,24 +4064,28 @@ document.getElementById('gallery').addEventListener('click',e=>{
 });
 
 function loadActivity(){
-  fetch('/api/activity?limit=60').then(r=>r.json()).then(d=>{
+  fetch('/api/activity?limit=120').then(r=>r.json()).then(d=>{
     const box=document.getElementById('activityLog'),items=d.items||[];
     if(!items.length){box.textContent='暂无记录';return;}
+    const actionName={cull:'清晰度分析',dedup:'相似分析',rank:'精选评分'};
     box.innerHTML=items.map(x=>{
       const dt=new Date((x.ts||0)*1000);
       const t=dt.toLocaleString('zh-CN',{hour12:false});
       const name=(x.path||'').split(/[\\/]/).pop();
-      return '<div class="activity-item"><b>'+escHtml(x.action||'记录')+'</b> · '+escHtml(t)
-        +(name?'<br>'+escHtml(name):'')+(x.detail?'<br>'+escHtml(x.detail):'')+'</div>';
+      const action=actionName[x.action]||x.action||'系统记录';
+      return '<div class="activity-item"><b>'+escHtml(action)+'</b><span style="float:right;color:var(--muted)">'+escHtml(t)+'</span>'
+        +(name?'<br><span>'+escHtml(name)+'</span>':'')
+        +(x.detail?'<br><span>'+escHtml(x.detail)+'</span>':'')+'</div>';
     }).join('');
   }).catch(()=>{});
 }
-document.getElementById('toolLog').addEventListener('toggle',e=>{if(e.currentTarget.open)loadActivity();});
+document.getElementById('activityRefresh').onclick=loadActivity;
+loadActivity();
 
 /* Gallery thumbnail zoom: Ctrl + wheel changes photo-card size, never page zoom. */
-let thumbSize=240;
+let thumbSize=260;
 try{
-  const saved=parseInt(localStorage.getItem('pc-thumb-size-v159')||'240',10);
+  const saved=parseInt(localStorage.getItem('pc-thumb-size-v160')||'260',10);
   if(Number.isFinite(saved))thumbSize=Math.min(420,Math.max(160,saved));
 }catch(_){}
 function applyThumbSize(v){
@@ -4041,7 +4095,7 @@ function applyThumbSize(v){
   const label=document.getElementById('thumbSizeValue');
   if(range)range.value=String(thumbSize);
   if(label)label.textContent=String(thumbSize);
-  try{localStorage.setItem('pc-thumb-size-v159',String(thumbSize));}catch(_){}
+  try{localStorage.setItem('pc-thumb-size-v160',String(thumbSize));}catch(_){}
 }
 applyThumbSize(thumbSize);
 document.getElementById('thumbSizeRange').oninput=e=>applyThumbSize(Number(e.target.value));
@@ -4088,62 +4142,36 @@ setTimeout(()=>{
 },1200);
 
 const sidebarUtilityHost=document.getElementById('sidebarUtilityHost');
-const sidebarUtilityTabs=document.getElementById('sidebarUtilityTabs');
 const inspectorPanel=document.getElementById('inspector');
 const toolboxPanel=document.getElementById('toolboxPanel');
+const activityPanel=document.getElementById('activityPanel');
 const taskCenter=document.getElementById('taskCenter');
-[inspectorPanel,taskCenter,toolboxPanel].forEach(panel=>{
+[inspectorPanel,taskCenter,activityPanel,toolboxPanel].forEach(panel=>{
   if(panel)sidebarUtilityHost.appendChild(panel);
 });
-const sidebarUtilityPanels={inspector:inspectorPanel,taskCenter,toolboxPanel};
-let activeSidebarUtility=null;
-function setSidebarUtility(name,on=true){
-  if(on&&document.body.classList.contains('sidebar-collapsed'))setSidebarCollapsed(false);
-  Object.entries(sidebarUtilityPanels).forEach(([key,panel])=>{
-    const active=!!on&&key===name;
-    if(panel){
-      panel.classList.toggle('sidebar-utility-active',active);
-      panel.classList.toggle('open',active);
-      if(key==='inspector')panel.setAttribute('aria-hidden',active?'false':'true');
-    }
-  });
-  sidebarUtilityTabs.querySelectorAll('[data-utility]').forEach(btn=>
-    btn.classList.toggle('active',!!on&&btn.dataset.utility===name)
-  );
-  activeSidebarUtility=on?name:null;
+if(inspectorPanel)inspectorPanel.setAttribute('aria-hidden','false');
+function focusSidebarPanel(panel){
+  if(document.body.classList.contains('sidebar-collapsed'))setSidebarCollapsed(false);
+  if(panel)panel.scrollIntoView({behavior:'smooth',block:'nearest'});
 }
-function toggleSidebarUtility(name){
-  setSidebarUtility(name,activeSidebarUtility!==name);
-}
-sidebarUtilityTabs.querySelectorAll('[data-utility]').forEach(btn=>{
-  btn.onclick=()=>toggleSidebarUtility(btn.dataset.utility);
-});
 function setInspectorOpen(on){
-  setSidebarUtility('inspector',!!on);
-}
-setInspectorOpen(false);
-document.getElementById('settingsQuick').onclick=()=>{
-  const opening=activeSidebarUtility!=='inspector';
-  setInspectorOpen(opening);
-  if(opening){
-    const d=document.getElementById('settingsDetails');d.open=true;
+  if(on){
+    const d=document.getElementById('settingsDetails');if(d)d.open=true;
     loadStorageSummary(true);
+    focusSidebarPanel(inspectorPanel);
   }
-};
-document.getElementById('inspectorClose').onclick=()=>setInspectorOpen(false);
+}
+document.getElementById('settingsQuick').onclick=()=>setInspectorOpen(true);
+document.getElementById('inspectorClose').onclick=()=>{};
 document.getElementById('drawerScrim').onclick=()=>{};
-document.addEventListener('keydown',e=>{
-  if(e.key==='Escape'&&activeSidebarUtility)setSidebarUtility(activeSidebarUtility,false);
-});
-document.getElementById('toolboxOpen').onclick=()=>toggleSidebarUtility('toolboxPanel');
-document.getElementById('toolboxClose').onclick=()=>setSidebarUtility('toolboxPanel',false);
+document.getElementById('toolboxOpen').onclick=()=>focusSidebarPanel(toolboxPanel);
+document.getElementById('toolboxClose').onclick=()=>{};
+document.getElementById('taskToggle').onclick=()=>focusSidebarPanel(taskCenter);
+document.getElementById('taskClose').onclick=()=>{};
 document.getElementById('openRankTool').onclick=()=>{
-  setSidebarUtility('toolboxPanel',false);
   activateStep('rank');
   fetch('/api/progress/rank').then(r=>r.json()).then(d=>{renderRank(d.photos||[]);updateVisibleStepStatus('rank',d);}).catch(()=>{});
 };
-document.getElementById('taskToggle').onclick=()=>toggleSidebarUtility('taskCenter');
-document.getElementById('taskClose').onclick=()=>setSidebarUtility('taskCenter',false);
 document.getElementById('appExit').onclick=async()=>{
   let activeSteps=[],fileTasks=0;
   try{
@@ -5385,15 +5413,18 @@ function dedupMemberState(group,p){
 function renderDedupGroups(groups){
   showPhotoView();
   photos=groups||[];
+  const reviewGroups=(groups||[]).filter(group=>
+    (group.members||[]).filter(visibleInReview).length>1
+  );
   const g=document.getElementById('gallery');
-  document.getElementById('sShowing').textContent=groups.length;
-  if(!groups.length){
+  document.getElementById('sShowing').textContent=reviewGroups.length;
+  if(!reviewGroups.length){
     g.innerHTML='<div class="empty"><div class="icon">✓</div><div class="title">没有需要人工处理的相似组</div></div>';
     document.getElementById('resultTools').style.display='none';
     return;
   }
   const buckets={};
-  groups.forEach(group=>{
+  reviewGroups.forEach(group=>{
     const key=group.folder_rel||'当前文件夹';
     (buckets[key]||(buckets[key]=[])).push(group);
   });
@@ -5406,10 +5437,11 @@ function renderDedupGroups(groups){
     html+='<div class="folder-body" style="padding:10px;display:flex;flex-direction:column;gap:10px">';
     if(!folded)rows.forEach(group=>{
       seq++;
-      const members=group.members||[];
-      const deleted=members.filter(p=>['pending_trash','pending_permanent_delete','trashed','permanently_deleted'].includes(p.lifecycle)).length;
-      const active=members.length-deleted;
-      const kept=members.filter(p=>p.selected&&!['pending_trash','pending_permanent_delete','trashed','permanently_deleted'].includes(p.lifecycle)).length;
+      const allMembers=group.members||[];
+      const members=allMembers.filter(visibleInReview);
+      const deleted=allMembers.length-members.length;
+      const active=members.length;
+      const kept=members.filter(p=>p.selected).length;
       const [statusText,statusClass]=dedupGroupStatusLabel(group.status||'pending');
       html+='<div class="dedup-group" data-group="'+group.group_id+'">';
       html+='<div class="dedup-group-head">'
@@ -5556,7 +5588,8 @@ function renderRank(items){
   if(!items.length){fbar.style.display='none';}
   else if(fbar.style.display==='none'||!fbar.querySelector('.chip')){setupFilterBar();}
 
-  rankView=(rankFilter==='pbg')?items.filter(p=>p.phonebg):items;
+  const activeRankItems=items.filter(visibleInReview);
+  rankView=(rankFilter==='pbg')?activeRankItems.filter(p=>p.phonebg):activeRankItems;
   gItems=rankView;
   const pbgN=items.filter(p=>p.phonebg).length;
   const pbgChip=document.getElementById('pbgChipCount');if(pbgChip)pbgChip.textContent=pbgN;
@@ -5748,6 +5781,12 @@ async function syncCurrentView(){
 let cullView=[], rankView=[], lastCullSig='', lastCullMoveSig='';
 const TIER_NAME={sharp:'清晰',soft:'轻微软',blurry:'模糊'};
 const NEXT_TIER={sharp:'soft',soft:'blurry',blurry:'sharp'};
+const REVIEW_HIDDEN_LIFECYCLES=new Set([
+  'pending_trash','pending_permanent_delete','trashed','permanently_deleted','pending_restore'
+]);
+function visibleInReview(p){
+  return !!p&&!REVIEW_HIDDEN_LIFECYCLES.has(p.lifecycle||'normal');
+}
 function cullLifecycleInfo(p){
   const life=p.lifecycle||'normal';
   if(life==='pending_trash')return ['待移入回收站','pending-delete',''];
@@ -5807,7 +5846,8 @@ function renderCullStep(items){
   const fSig=[...new Set(items.filter(p=>p.raw).map(p=>p.fmt||'RAW'))].sort().join(',');
   if(fSig!==lastFmtSig){lastFmtSig=fSig;setupFilterBar();}
 
-  const filtered=items.filter(p=>(cullFilter==='all'||p.tier===cullFilter)
+  const filtered=items.filter(p=>visibleInReview(p)
+    &&(cullFilter==='all'||p.tier===cullFilter)
     &&(cullType==='all'||(cullType==='raw'?!!p.raw
       :cullType==='heic'?!!p.heic
       :cullType==='jpg'?(!p.raw&&!p.heic)
@@ -5968,7 +6008,11 @@ async function deletePhoto(step,path,fromLightbox=false){
       :'已提交后台：彻底删除 · '+name,
       mode==='trash'?'good':'info');
     refreshTaskCenter();
-    if(fromLightbox)showLb();
+    if(fromLightbox){
+      lbList=(lbList||[]).filter(x=>x.path!==path);
+      if(lbIndex>=lbList.length)lbIndex=Math.max(0,lbList.length-1);
+      if(lbList.length)showLb();else closeLb();
+    }
   }catch(err){
     toast((mode==='trash'?'移入软件回收站':'彻底删除')+'失败：'+(err.message||'未知错误'),'bad');
   }
@@ -6262,6 +6306,12 @@ document.getElementById('moveBlurryBtn').onclick=async function(){
     const r=await fetch('/api/move-blurry',{method:'POST'});
     const d=await r.json();
     if(!r.ok||d.error)throw new Error(d.error||('HTTP '+r.status));
+    (photos||[]).forEach(p=>{
+      if(p&&p.tier==='blurry'&&p.move_selected!==false&&visibleInReview(p)){
+        p.lifecycle='pending_trash';
+        p.move_selected=false;
+      }
+    });
     toast('已提交后台处理 '+(d.queued||0)+' 张模糊照片','good');
     lastCullSig='';lastCullMoveSig='';renderCullStep(photos);refreshTaskCenter();
   }catch(err){
