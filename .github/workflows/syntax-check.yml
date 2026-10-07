@@ -544,7 +544,7 @@ jobs:
           )
           missing_ui = [item for item in required_ui if item not in ui]
           if missing_ui:
-              raise SystemExit("v1.5.6 workspace contract missing: " + repr(missing_ui))
+              raise SystemExit("v1.5.7 workspace contract missing: " + repr(missing_ui))
 
           shortcuts = core.split("@app.route('/api/shortcuts')", 1)[1].split(
               "@app.route('/api/sources')", 1
@@ -566,7 +566,30 @@ jobs:
           if "setTimeout(refreshEnvironment,5000)" not in core:
               raise SystemExit("Physical-drive refresh must be deferred after first paint")
 
-          print("Deadlock-safe Windows shell + dashboard/photo split + first-paint contract OK")
+          env_refresh = core.split("@app.route('/api/environment-refresh')", 1)[1].split(
+              "@app.route('/api/demo-status')", 1
+          )[0]
+          if "detect_sd_cards()" in env_refresh:
+              raise SystemExit("Periodic environment refresh must not scan camera-card filesystems")
+
+          catalog = Path("catalog.py").read_text(encoding="utf-8")
+          mount_probe = catalog.split("def _mounted_volume_map()", 1)[1].split(
+              "def refresh_connections", 1
+          )[0]
+          for banned_probe in (
+              "volume_info_for_path(",
+              "Path.resolve(",
+              "shutil.disk_usage(",
+              "os.stat(",
+              "os.scandir(",
+          ):
+              if banned_probe in mount_probe:
+                  raise SystemExit(
+                      "Periodic mounted-volume probe performs blocking filesystem work: "
+                      + banned_probe
+                  )
+
+          print("Deadlock-safe shell + nonblocking device presence + first-paint contract OK")
           PY
 
       - name: Check UI boot and state separation
