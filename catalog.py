@@ -652,14 +652,20 @@ def finish_catalog_scan(db_path, session, *, full_scan=True):
                WHERE root_id=? AND state='present'""",
             (session["root_id"],),
         ).fetchone()[0])
-        analyzed = int(db.execute(
-            """SELECT COUNT(*) FROM media_catalog m
-               WHERE m.root_id=? AND EXISTS(
-                 SELECT 1 FROM cull_cache c
-                 WHERE c.path=m.current_path AND c.size=m.size AND c.mtime_ns=m.mtime_ns
-               )""",
-            (session["root_id"],),
-        ).fetchone()[0])
+        has_cull_cache = db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='cull_cache'"
+        ).fetchone()
+        if has_cull_cache:
+            analyzed = int(db.execute(
+                """SELECT COUNT(*) FROM media_catalog m
+                   WHERE m.root_id=? AND EXISTS(
+                     SELECT 1 FROM cull_cache c
+                     WHERE c.path=m.current_path AND c.size=m.size AND c.mtime_ns=m.mtime_ns
+                   )""",
+                (session["root_id"],),
+            ).fetchone()[0])
+        else:
+            analyzed = 0
         db.execute(
             """UPDATE library_root
                SET photo_count=?,analyzed_count=?,last_scan_at=?,last_seen_at=?
