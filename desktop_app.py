@@ -213,6 +213,7 @@ class DesktopApi:
     def __init__(self):
         self.tray = None
         self.window = None
+        self._maximized = True
 
     def attach_tray(self, tray):
         self.tray = tray
@@ -228,11 +229,41 @@ class DesktopApi:
         except Exception:
             return None
 
-    # Stability rule: never reach through pywebview into the WinForms/Win32
-    # object from Python worker threads. Cross-thread native-object access can
-    # marshal back into the WinForms UI thread and deadlock EdgeChromium's
-    # message loop. The frame is left entirely under pywebview / Windows
-    # control; title-bar styling must not use DWM or Handle hooks here.
+    def window_action(self, action):
+        window = self._window()
+        if window is None:
+            return False
+        if action == 'minimize':
+            window.minimize()
+            return True
+        if action == 'toggle_maximize':
+            if self._maximized:
+                window.restore()
+                self._maximized = False
+            else:
+                window.maximize()
+                self._maximized = True
+            return True
+        if action == 'close':
+            try:
+                window.hide()
+            except Exception:
+                window.minimize()
+            return True
+        if action == 'exit':
+            stop_analysis_and_wait()
+            try:
+                TASK_MANAGER.shutdown()
+            except Exception:
+                pass
+            try:
+                if self.tray is not None:
+                    self.tray.stop()
+            except Exception:
+                pass
+            window.destroy()
+            return True
+        return False
 
     def pick_folder(self):
         window = self._window()
