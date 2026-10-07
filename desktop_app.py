@@ -54,6 +54,8 @@ def _write_early_error_log():
 try:
     from werkzeug.serving import make_server
     import webview
+    import pystray
+    from PIL import Image
 except Exception:
     _write_early_error_log()
     raise
@@ -120,12 +122,37 @@ os.environ["PHOTOCURATOR_PORT"] = str(PORT)
 # Import only after PHOTOCURATOR_PORT is set; photo_curator builds its local
 # security allow-list from this value at import time.
 try:
-    from photo_curator import app, state
+    from photo_curator import app, state, TASK_MANAGER
 except Exception:
     _write_early_error_log()
     raise
 
 URL = f"http://{HOST}:{PORT}"
+
+
+def resource_path(*parts):
+    base = Path(getattr(sys, "_MEIPASS", INSTALL_ROOT))
+    return base.joinpath(*parts)
+
+
+def load_tray_image():
+    """Use the approved multi-size C icon for the Windows notification area."""
+    candidates = [
+        resource_path("packaging", "PhotoCurator.ico"),
+        INSTALL_ROOT / "packaging" / "PhotoCurator.ico",
+    ]
+    for path in candidates:
+        try:
+            if Path(path).is_file():
+                return Image.open(str(path)).convert("RGBA")
+        except Exception:
+            pass
+    # Last-resort clean C glyph so the tray is never invisible.
+    from PIL import ImageDraw
+    img = Image.new("RGBA", (64, 64), (37, 99, 235, 255))
+    d = ImageDraw.Draw(img)
+    d.arc((12, 10, 52, 54), 55, 305, fill=(255, 255, 255, 255), width=10)
+    return img
 
 
 class DesktopApi:
@@ -134,18 +161,36 @@ class DesktopApi:
     def __init__(self):
         self._maximized = True
         self.allow_exit = False
+        self.tray = None
+
+    def attach_tray(self, tray):
+        self.tray = tray
 
     def window_action(self, action):
         window = webview.active_window()
         if window is None:
             return False
-        if action == 'minimize' or action == 'close':
-            # The custom close button is intentionally safe: it minimizes
-            # instead of destroying the running analysis session.
+        if action == 'minimize':
             window.minimize()
+            return True
+        if action == 'close':
+            # Close-to-tray keeps background analysis and queued file work alive.
+            try:
+                window.hide()
+            except Exception:
+                window.minimize()
             return True
         if action == 'exit':
             self.allow_exit = True
+            try:
+                TASK_MANAGER.shutdown()
+            except Exception:
+                pass
+            try:
+                if self.tray is not None:
+                    self.tray.stop()
+            except Exception:
+                pass
             window.destroy()
             return True
         if action == 'toggle_maximize':
@@ -231,16 +276,56 @@ def main():
         easy_drag=False,
     )
 
+    def show_window(icon=None, item=None):
+        try:
+            window.show()
+            window.restore()
+        except Exception:
+            pass
+
+    def exit_from_tray(icon=None, item=None):
+        desktop_api.allow_exit = True
+        try:
+            TASK_MANAGER.shutdown()
+        except Exception:
+            pass
+        try:
+            if icon is not None:
+                icon.stop()
+        except Exception:
+            pass
+        try:
+            window.destroy()
+        except Exception:
+            pass
+
+    tray = None
+    if os.name == 'nt':
+        try:
+            tray = pystray.Icon(
+                "PhotoCurator",
+                load_tray_image(),
+                "PhotoCurator · 照片整理工作区",
+                menu=pystray.Menu(
+                    pystray.MenuItem("打开 PhotoCurator", show_window, default=True),
+                    pystray.Menu.SEPARATOR,
+                    pystray.MenuItem("退出 PhotoCurator", exit_from_tray),
+                ),
+            )
+            desktop_api.attach_tray(tray)
+            tray.run_detached()
+        except Exception:
+            tray = None
+            _write_early_error_log()
+
     def on_closing():
         if desktop_api.allow_exit:
             return True
-        active = [k for k in ('cull', 'dedup', 'rank')
-                  if state.get(k, {}).get('running')]
-        if active:
+        # Native close / Alt+F4 follows the same close-to-tray rule as the
+        # custom title-bar button. Background tasks are never stopped here.
+        if tray is not None:
             try:
-                window.evaluate_js(
-                    "toast('当前照片处理任务仍在运行，请先点击“停止”后再关闭窗口。','bad')"
-                )
+                window.hide()
             except Exception:
                 pass
             return False
@@ -283,6 +368,15 @@ def main():
             "请安装或修复 Microsoft Edge WebView2 Runtime。"
         ) from exc
     finally:
+        try:
+            if tray is not None:
+                tray.stop()
+        except Exception:
+            pass
+        try:
+            TASK_MANAGER.shutdown()
+        except Exception:
+            pass
         server.stop()
 
 
