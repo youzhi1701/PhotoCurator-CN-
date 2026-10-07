@@ -206,12 +206,24 @@ class DesktopApi:
         self._maximized = True
         self.allow_exit = False
         self.tray = None
+        self.window = None
 
     def attach_tray(self, tray):
         self.tray = tray
 
+    def attach_window(self, window):
+        self.window = window
+
+    def _window(self):
+        if self.window is not None:
+            return self.window
+        try:
+            return webview.active_window()
+        except Exception:
+            return None
+
     def window_action(self, action):
-        window = webview.active_window()
+        window = self._window()
         if window is None:
             return False
         if action == 'minimize':
@@ -249,9 +261,9 @@ class DesktopApi:
         return False
 
     def pick_folder(self):
-        window = webview.active_window()
+        window = self._window()
         if window is None:
-            return None
+            raise RuntimeError("桌面主窗口尚未就绪")
         enum = getattr(webview, 'FileDialog', None)
         dialog_type = getattr(enum, 'FOLDER', None) if enum else None
         if dialog_type is None:
@@ -320,6 +332,7 @@ def main():
         frameless=True,
         easy_drag=False,
     )
+    desktop_api.attach_window(window)
 
     def show_window(icon=None, item=None):
         try:
