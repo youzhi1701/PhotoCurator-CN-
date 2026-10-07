@@ -89,8 +89,11 @@ def main():
         row = next(item for item in snap["items"] if item["name"] == "A.jpg")
         require(row["lifecycle"] == "pending_trash",
                 "catalog lifecycle did not follow accepted file operation")
-        require(os.path.normcase(row["current_path"]) == os.path.normcase(str(moved)),
-                "catalog current_path did not follow accepted file operation")
+        require(
+            os.path.normcase(os.path.realpath(row["current_path"]))
+            == os.path.normcase(os.path.realpath(str(moved))),
+            "catalog current_path did not follow accepted file operation",
+        )
 
         # Durable offline previews are outside rebuildable thumbnail cache.
         offline = data / "offline_previews"
