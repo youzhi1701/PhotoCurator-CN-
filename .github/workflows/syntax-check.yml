@@ -460,6 +460,45 @@ jobs:
           print("Core workflow / large-library guards OK")
           PY
 
+      - name: Check desktop shell blocking-event safety
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          source = Path("desktop_app.py").read_text(encoding="utf-8")
+          if "def hide_to_tray_async(" not in source:
+              raise SystemExit("Desktop close-to-tray must be dispatched asynchronously")
+          if "def native_close_decision(" not in source:
+              raise SystemExit("Desktop native close decision helper is missing")
+
+          closing = source.split("    def on_closing():", 1)[1].split(
+              "    window.events.closing += on_closing", 1
+          )[0]
+          forbidden = (
+              "window.hide(",
+              "window.destroy(",
+              "window.minimize(",
+              "window.maximize(",
+              "window.restore(",
+              "stop_analysis_and_wait(",
+              "TASK_MANAGER.shutdown(",
+          )
+          bad = [token for token in forbidden if token in closing]
+          if bad:
+              raise SystemExit(
+                  "Blocking pywebview closing handler performs GUI/blocking work: "
+                  + repr(bad)
+              )
+          if "native_close_decision" not in closing:
+              raise SystemExit("Native closing handler must delegate a non-blocking decision")
+          if "window.events.shown += on_shown" in source:
+              raise SystemExit("Initial native resize must not run from the early shown event")
+          if "window.events.loaded += on_loaded" not in source:
+              raise SystemExit("Initial window layout must wait for WebView2 loaded event")
+
+          print("Desktop shell blocking-event safety OK")
+          PY
+
       - name: Check UI boot and state separation
         run: |
           python - <<'PY'
