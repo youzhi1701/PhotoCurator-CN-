@@ -20,7 +20,7 @@ from runtime_paths import (
 )
 
 APP_TITLE = "PhotoCurator"
-APP_VERSION = "1.5.4"
+APP_VERSION = "1.5.5"
 HOST = "127.0.0.1"
 DEFAULT_PORT = 5014
 
@@ -228,81 +228,11 @@ class DesktopApi:
         except Exception:
             return None
 
-    def _native_hwnd(self):
-        if os.name != 'nt':
-            return None
-        window = self._window()
-        if window is None:
-            return None
-        try:
-            native = window.native
-            handle = native.Handle
-            try:
-                return int(handle.ToInt64())
-            except Exception:
-                return int(handle)
-        except Exception:
-            return None
-
-    def apply_native_titlebar_theme(self):
-        """Theme native chrome without taking over Windows hit-testing."""
-        if os.name != 'nt':
-            return False
-        hwnd = self._native_hwnd()
-        if not hwnd:
-            return False
-        try:
-            import ctypes
-
-            def colorref(hex_color):
-                value = str(hex_color).lstrip('#')
-                r = int(value[0:2], 16)
-                g = int(value[2:4], 16)
-                b = int(value[4:6], 16)
-                return ctypes.c_uint32(r | (g << 8) | (b << 16))
-
-            dwm = ctypes.windll.dwmapi
-            attrs = (
-                (34, colorref('#2A3D68')),  # DWMWA_BORDER_COLOR
-                (35, colorref('#18243C')),  # DWMWA_CAPTION_COLOR
-                (36, colorref('#F8FAFF')),  # DWMWA_TEXT_COLOR
-            )
-            for attr, value in attrs:
-                try:
-                    dwm.DwmSetWindowAttribute(
-                        hwnd, attr, ctypes.byref(value), ctypes.sizeof(value)
-                    )
-                except Exception:
-                    pass
-
-            try:
-                corner = ctypes.c_int(2)  # DWMWCP_ROUND
-                dwm.DwmSetWindowAttribute(
-                    hwnd, 33, ctypes.byref(corner), ctypes.sizeof(corner)
-                )
-            except Exception:
-                pass
-
-            # Windows 10 does not honor the newer per-window caption-color
-            # attributes consistently, but it does support immersive dark
-            # captions on current builds. This is the compatibility fallback.
-            try:
-                dark = ctypes.c_int(1)
-                for dark_attr in (20, 19):
-                    try:
-                        if dwm.DwmSetWindowAttribute(
-                            hwnd, dark_attr, ctypes.byref(dark), ctypes.sizeof(dark)
-                        ) == 0:
-                            break
-                    except Exception:
-                        continue
-            except Exception:
-                pass
-
-            ctypes.windll.user32.SetWindowTextW(hwnd, APP_TITLE)
-            return True
-        except Exception:
-            return False
+    # Stability rule: never reach through pywebview into the WinForms/Win32
+    # object from Python worker threads. Cross-thread native-object access can
+    # marshal back into the WinForms UI thread and deadlock EdgeChromium's
+    # message loop. The frame is left entirely under pywebview / Windows
+    # control; title-bar styling must not use DWM or Handle hooks here.
 
     def pick_folder(self):
         window = self._window()
@@ -449,28 +379,16 @@ def main():
             _write_early_error_log()
 
     def after_webview_start():
-        # Never wait, probe handles or initialize tray objects on a callback
-        # that could share the native GUI thread. Dispatch all post-start work.
-        def post_start_worker():
-            if os.name == 'nt':
-                deadline = time.monotonic() + 5.0
-                while time.monotonic() < deadline:
-                    if desktop_api.apply_native_titlebar_theme():
-                        break
-                    time.sleep(0.10)
-            start_tray_after_ui()
+        # pywebview runs the start callback on its own worker thread. Keep it
+        # deliberately boring: tray startup only, with zero WinForms Handle or
+        # DWM interaction.
+        start_tray_after_ui()
 
-        threading.Thread(
-            target=post_start_worker,
-            daemon=True,
-            name="photocurator-post-start",
-        ).start()
-
-    # Native Windows title bar owns close/maximize/restore.  In particular,
-    # there is intentionally NO pywebview closing/shown/loaded callback here:
-    # those callbacks previously re-entered native window APIs and could lock
-    # WebView2's GUI message loop.  Closing the native window now exits the
-    # desktop shell normally; unfinished file tasks are persisted.
+    # Native Windows title bar owns close/maximize/restore. There are no
+    # pywebview lifecycle event handlers and no direct Handle/DWM calls. This
+    # keeps the WinForms/WebView2 GUI message pump single-owner and avoids the
+    # startup deadlock that produced a rendered first frame followed by
+    # "PhotoCurator (未响应)" on Windows.
 
     try:
         # On Windows force Edge WebView2. Falling back to IE/MSHTML would open
