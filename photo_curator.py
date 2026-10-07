@@ -3547,6 +3547,8 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
     flex:0 0 auto!important;min-height:90px!important;max-height:230px!important;
     overflow-y:auto!important;padding:0 1px 8px!important
   }
+  .sidebar-primary-action{padding:8px 0 9px;border-top:1px solid rgba(124,139,192,.14)}
+  .sidebar-primary-action .sidebar-start{width:100%!important;height:38px!important;font-size:11px!important}
   .sidebar-utility-tabs{display:none!important}
   .sidebar-utility-host{
     display:grid!important;grid-template-columns:1fr;gap:9px;
@@ -3588,6 +3590,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   .activity-item{padding:8px 9px!important;border:1px solid rgba(124,139,192,.10);line-height:1.45;background:rgba(248,250,255,.72)!important}
   .drawer-scrim{display:none!important}
   #settingsQuick,#taskToggle,#toolboxOpen{display:none!important}
+  body.sidebar-collapsed .sidebar-primary-action,
   body.sidebar-collapsed .sidebar-utility-host{display:none!important}
   body.sidebar-collapsed .library-sidebar{width:58px!important;flex-basis:58px!important;padding-left:7px!important;padding-right:7px!important}
   body.sidebar-collapsed .library-head>div,
@@ -3634,7 +3637,6 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   </div>
 
   <div class="appbar-actions">
-    <button class="appbar-btn primary" id="startBtn">▶ 开始分析</button>
     <button class="appbar-btn" id="settingsQuick">筛选</button>
     <button class="appbar-btn" id="taskToggle">任务</button>
     <button class="appbar-btn icon-btn" id="toolboxOpen" title="工具箱">⌘</button>
@@ -3661,6 +3663,9 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
       <div id="shortcuts"></div>
     </div>
 
+    <div class="sidebar-primary-action">
+      <button class="appbar-btn primary sidebar-start" id="startBtn">▶ 开始分析</button>
+    </div>
     <div class="sidebar-utility-host" id="sidebarUtilityHost"></div>
 
     <div class="library-footer">
