@@ -1827,14 +1827,16 @@ def ensure_builtin_demo():
 
         def gradient(size, top, bottom):
             w, h = size
-            img = Image.new('RGB', size)
-            px = img.load()
+            rows = []
             for y in range(h):
                 t = y / max(1, h - 1)
-                row = tuple(int(top[c] * (1 - t) + bottom[c] * t) for c in range(3))
-                for x in range(w):
-                    px[x, y] = row
-            return img
+                rows.append(tuple(
+                    int(top[c] * (1 - t) + bottom[c] * t)
+                    for c in range(3)
+                ))
+            strip = Image.new('RGB', (1, h))
+            strip.putdata(rows)
+            return strip.resize((w, h), Image.Resampling.BILINEAR)
 
         def draw_scene(scene, seed, variant):
             rng = random.Random(seed)
@@ -2256,12 +2258,15 @@ def _shared_list_images(folder, recursive=True, max_age=2.0):
         paths = list_images(folder, recursive=recursive)
         if producer:
             try:
-                catalog_media_scan(
-                    INDEX_DB,
-                    folder,
-                    paths,
-                    full_scan=bool(recursive),
-                )
+                scan_real = os.path.normcase(os.path.realpath(str(folder)))
+                demo_real = os.path.normcase(os.path.realpath(str(DATA_ROOT / '内置测试数据')))
+                if scan_real != demo_real:
+                    catalog_media_scan(
+                        INDEX_DB,
+                        folder,
+                        paths,
+                        full_scan=bool(recursive),
+                    )
             except Exception:
                 logger.warning("catalog source/media snapshot update failed", exc_info=True)
     except Exception as exc:
@@ -3386,7 +3391,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
 
   /* v1.5.1 workspace IA: global / source / content / inspector / status */
   body{height:100vh;height:100dvh;display:grid;grid-template-rows:54px minmax(0,1fr) 36px;overflow:hidden}
-  .top{height:54px;min-height:54px;padding:7px 10px 7px 14px}
+  .top{height:54px;min-height:54px;padding:7px 10px 7px 14px;flex-wrap:nowrap!important}
   .top-source{min-width:0;max-width:min(44vw,520px);display:flex;align-items:center;gap:8px;padding:5px 10px;border:1px solid rgba(255,255,255,.2);border-radius:12px;background:rgba(255,255,255,.11);backdrop-filter:blur(18px)}
   .top-source-copy{display:flex;flex-direction:column;min-width:0;line-height:1.15}.top-source-copy b,.top-source-copy small{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.top-source-copy b{font-size:12px}.top-source-copy small{font-size:10px;opacity:.72;margin-top:2px}
   .source-dot{width:8px;height:8px;border-radius:50%;display:inline-block;flex:0 0 auto;background:#94a3b8;box-shadow:0 0 0 3px rgba(148,163,184,.13)}.source-dot.online{background:#22c55e;box-shadow:0 0 0 3px rgba(34,197,94,.16)}.source-dot.offline{background:#94a3b8}
@@ -3908,6 +3913,7 @@ document.getElementById('settingsQuick').onclick=()=>{
   setInspectorCollapsed(next);
   if(!next){
     const d=document.getElementById('settingsDetails');d.open=true;
+    loadStorageSummary(true);
   }
 };
 document.getElementById('inspectorClose').onclick=()=>setInspectorCollapsed(true);
@@ -4410,7 +4416,11 @@ async function loadCatalogRoot(rootId){
     toast('读取离线图库失败：'+(err.message||'未知错误'),'bad');
   }
 }
-function loadStorageSummary(){
+let lastStorageSummaryAt=0;
+function loadStorageSummary(force=false){
+  const now=Date.now();
+  if(!force && lastStorageSummaryAt && now-lastStorageSummaryAt<300000)return;
+  lastStorageSummaryAt=now;
   fetch('/api/storage-summary').then(r=>r.json()).then(d=>{
     if(d.error)return;
     document.getElementById('dbUsage').textContent=formatBytes(d.database_bytes);
@@ -4418,7 +4428,7 @@ function loadStorageSummary(){
     document.getElementById('featureUsage').textContent=formatBytes(d.dedup_feature_bytes);
     document.getElementById('logUsage').textContent=formatBytes(d.log_bytes);
     document.getElementById('dataRootText').textContent='数据目录：'+(d.data_root||'—');
-  }).catch(()=>{});
+  }).catch(()=>{lastStorageSummaryAt=0;});
 }
 
 async function clearStorageCategory(category){
@@ -4440,7 +4450,7 @@ async function clearStorageCategory(category){
     const d=await r.json();
     if(!r.ok||d.error)throw new Error(d.error||('HTTP '+r.status));
     toast('已清理 '+labels[category]+' · 释放 '+formatBytes(d.freed_bytes),'good');
-    loadStorageSummary();
+    loadStorageSummary(true);
   }catch(err){
     toast('清理失败：'+(err.message||'未知错误'),'bad');
   }
@@ -5908,6 +5918,16 @@ def api_storage_clear():
     category = str(body.get('category') or '').strip().lower()
     if category not in {'previews', 'features', 'logs'}:
         return jsonify({'error': '不支持的清理类型'}), 400
+    if category in {'previews', 'features'}:
+        active = [
+            key for key in ('cull', 'dedup', 'rank')
+            if state.get(key, {}).get('running')
+        ]
+        if active:
+            return jsonify({
+                'error': '分析任务运行中，请等待分析结束后再清理可重建缓存',
+                'active': active,
+            }), 409
     try:
         result = clear_rebuildable_storage(DATA_ROOT, category)
         _activity('清理软件数据', '', f"{category} · {result.get('freed_bytes', 0)} bytes")
