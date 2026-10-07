@@ -474,6 +474,9 @@ jobs:
           closing = source.split("    def on_closing():", 1)[1].split(
               "    window.events.closing += on_closing", 1
           )[0]
+          closing_code = "\n".join(
+              line.split("#", 1)[0] for line in closing.splitlines()
+          )
           forbidden = (
               "window.hide(",
               "window.destroy(",
@@ -483,7 +486,7 @@ jobs:
               "stop_analysis_and_wait(",
               "TASK_MANAGER.shutdown(",
           )
-          bad = [token for token in forbidden if token in closing]
+          bad = [token for token in forbidden if token in closing_code]
           if bad:
               raise SystemExit(
                   "Blocking pywebview closing handler performs GUI/blocking work: "
