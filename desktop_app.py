@@ -19,8 +19,8 @@ from runtime_paths import (
     resolve_data_root,
 )
 
-APP_TITLE = "照片筛选 · PhotoCurator 中文版"
-APP_VERSION = "1.5.0"
+APP_TITLE = "PhotoCurator"
+APP_VERSION = "1.5.4"
 HOST = "127.0.0.1"
 DEFAULT_PORT = 5014
 
@@ -248,6 +248,63 @@ class DesktopApi:
                 return int(handle)
         except Exception:
             return None
+
+    def apply_native_titlebar_theme(self):
+        """Keep native Windows chrome but visually integrate it with the app.
+
+        This intentionally uses DWM attributes only: Windows remains the owner
+        of hit testing, resize, Snap, maximize/restore and taskbar behavior.
+        """
+        if os.name != 'nt':
+            return False
+        hwnd = self._native_hwnd()
+        if not hwnd:
+            return False
+        try:
+            import ctypes
+
+            def colorref(hex_color):
+                value = str(hex_color).lstrip('#')
+                r = int(value[0:2], 16)
+                g = int(value[2:4], 16)
+                b = int(value[4:6], 16)
+                return ctypes.c_uint32(r | (g << 8) | (b << 16))
+
+            dwm = ctypes.windll.dwmapi
+            # Windows 11+: border / caption / text colors and rounded corners.
+            attrs = (
+                (34, colorref('#D8E3F7')),  # DWMWA_BORDER_COLOR
+                (35, colorref('#EEF4FF')),  # DWMWA_CAPTION_COLOR
+                (36, colorref('#334155')),  # DWMWA_TEXT_COLOR
+            )
+            for attr, value in attrs:
+                try:
+                    dwm.DwmSetWindowAttribute(
+                        hwnd, attr, ctypes.byref(value), ctypes.sizeof(value)
+                    )
+                except Exception:
+                    pass
+
+            try:
+                corner = ctypes.c_int(2)  # DWMWCP_ROUND
+                dwm.DwmSetWindowAttribute(
+                    hwnd, 33, ctypes.byref(corner), ctypes.sizeof(corner)
+                )
+            except Exception:
+                pass
+
+            try:
+                dark = ctypes.c_int(0)
+                dwm.DwmSetWindowAttribute(
+                    hwnd, 20, ctypes.byref(dark), ctypes.sizeof(dark)
+                )
+            except Exception:
+                pass
+
+            ctypes.windll.user32.SetWindowTextW(hwnd, APP_TITLE)
+            return True
+        except Exception:
+            return False
 
     def _set_windows_rect(self, rect):
         if os.name != 'nt' or not rect:
@@ -500,10 +557,6 @@ def main():
     def show_window(icon=None, item=None):
         try:
             window.show()
-            if desktop_api._maximized:
-                desktop_api.maximize_to_work_area()
-            else:
-                window.restore()
         except Exception:
             pass
 
@@ -547,7 +600,11 @@ def main():
             pass
 
     tray = None
-    if os.name == 'nt':
+
+    def start_tray_after_ui():
+        nonlocal tray
+        if os.name != 'nt' or tray is not None:
+            return
         try:
             tray = pystray.Icon(
                 "PhotoCurator",
@@ -567,6 +624,17 @@ def main():
             tray = None
             _write_early_error_log()
 
+    def after_webview_start():
+        # webview.start callbacks run after the GUI loop is live.  Only DWM
+        # attributes are touched here; no pywebview lifecycle re-entry.
+        if os.name == 'nt':
+            deadline = time.monotonic() + 5.0
+            while time.monotonic() < deadline:
+                if desktop_api.apply_native_titlebar_theme():
+                    break
+                time.sleep(0.10)
+        start_tray_after_ui()
+
     # Native Windows title bar owns close/maximize/restore.  In particular,
     # there is intentionally NO pywebview closing/shown/loaded callback here:
     # those callbacks previously re-entered native window APIs and could lock
@@ -577,9 +645,9 @@ def main():
         # On Windows force Edge WebView2. Falling back to IE/MSHTML would open
         # a window but break the modern UI, which is worse than a clear error.
         if os.name == 'nt':
-            webview.start(gui='edgechromium', debug=False)
+            webview.start(after_webview_start, gui='edgechromium', debug=False)
         else:
-            webview.start(debug=False)
+            webview.start(after_webview_start, debug=False)
     except Exception as exc:
         # Formal installer builds do not expose maintenance BAT/CMD files.
         # If WebView2 itself is unavailable, keep the already-running local
