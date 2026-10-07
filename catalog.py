@@ -456,6 +456,103 @@ def catalog_media_scan(db_path, folder, paths, *, full_scan=True):
     return info
 
 
+def root_snapshot(db_path, root_id, limit=2000, offset=0):
+    """Return persisted media metadata for connected or offline library roots."""
+    init_catalog_schema(db_path)
+    limit = max(1, min(5000, int(limit or 2000)))
+    offset = max(0, int(offset or 0))
+    with _connect(db_path) as db:
+        root = db.execute(
+            """SELECT r.*,s.display_name AS source_name,s.kind,s.connected,
+                      s.last_mount,s.capacity_bytes,s.last_seen_at AS source_last_seen
+               FROM library_root r
+               JOIN data_source s ON s.source_id=r.source_id
+               WHERE r.root_id=?""",
+            (str(root_id),),
+        ).fetchone()
+        if not root:
+            return None
+
+        counts = {
+            str(row["state"]): int(row["n"])
+            for row in db.execute(
+                """SELECT state,COUNT(*) AS n FROM media_catalog
+                   WHERE root_id=? GROUP BY state""",
+                (str(root_id),),
+            ).fetchall()
+        }
+        total = sum(counts.values())
+        rows = db.execute(
+            """SELECT m.media_id,m.relative_path,m.original_path,m.current_path,
+                      m.size,m.mtime_ns,m.state,m.first_seen_at,m.last_seen_at,
+                      m.missing_since,
+                      r.tier AS review_tier,
+                      CASE WHEN c.path IS NULL THEN 0 ELSE 1 END AS has_cull_cache
+               FROM media_catalog m
+               LEFT JOIN review_override r ON r.path=m.current_path
+               LEFT JOIN cull_cache c ON c.path=m.current_path
+               WHERE m.root_id=?
+               ORDER BY m.relative_path COLLATE NOCASE
+               LIMIT ? OFFSET ?""",
+            (str(root_id), limit, offset),
+        ).fetchall()
+
+    return {
+        "source": {
+            "source_id": str(root["source_id"]),
+            "display_name": str(root["source_name"]),
+            "kind": str(root["kind"]),
+            "connected": bool(root["connected"]),
+            "last_mount": str(root["last_mount"] or ""),
+            "capacity_bytes": int(root["capacity_bytes"] or 0),
+            "last_seen_at": float(root["source_last_seen"] or 0),
+        },
+        "root": {
+            "root_id": str(root["root_id"]),
+            "display_name": str(root["display_name"]),
+            "relative_root": str(root["relative_root"] or ""),
+            "original_root": str(root["original_root"] or ""),
+            "current_root": str(root["current_root"] or ""),
+            "last_scan_at": float(root["last_scan_at"] or 0),
+            "photo_count": int(root["photo_count"] or 0),
+        },
+        "counts": counts,
+        "total": total,
+        "offset": offset,
+        "items": [
+            {
+                "media_id": str(row["media_id"]),
+                "relative_path": str(row["relative_path"]),
+                "name": Path(str(row["relative_path"])).name,
+                "original_path": str(row["original_path"]),
+                "current_path": str(row["current_path"]),
+                "size": int(row["size"] or 0),
+                "mtime_ns": int(row["mtime_ns"] or 0),
+                "state": str(row["state"]),
+                "review_tier": str(row["review_tier"] or ""),
+                "has_cull_cache": bool(row["has_cull_cache"]),
+                "missing_since": (
+                    float(row["missing_since"]) if row["missing_since"] is not None else None
+                ),
+            }
+            for row in rows
+        ],
+    }
+
+
+def media_record(db_path, media_id):
+    init_catalog_schema(db_path)
+    with _connect(db_path) as db:
+        row = db.execute(
+            """SELECT m.*,r.current_root,r.original_root
+               FROM media_catalog m
+               JOIN library_root r ON r.root_id=m.root_id
+               WHERE m.media_id=?""",
+            (str(media_id),),
+        ).fetchone()
+    return dict(row) if row else None
+
+
 def storage_summary(data_root, db_path):
     data_root = Path(data_root)
 
