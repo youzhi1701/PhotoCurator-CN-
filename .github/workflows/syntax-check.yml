@@ -287,7 +287,7 @@ jobs:
           print("UI bootstrap order + critical interaction bindings OK")
           PY
 
-      - name: Check v1.5.0 runtime architecture
+      - name: Check stable runtime architecture
         run: |
           python - <<'PY'
           from pathlib import Path
@@ -319,7 +319,9 @@ jobs:
               "'trash_path': planned_trash",
               "'restore_path': restore_path",
               "'recovered': True",
+              "@app.route('/api/status')",
               "@app.route('/api/tasks')",
+              "fetchRuntimeStatus",
               "function coreRun()",
               "const coreSteps=['cull','dedup'];",
               "Promise.allSettled",
@@ -346,7 +348,7 @@ jobs:
           ]
           missing = [x for x in required_core if x not in core]
           if missing:
-              raise SystemExit("v1.5.0 core architecture regression: " + repr(missing))
+              raise SystemExit("core architecture regression: " + repr(missing))
 
           required_tasks = [
               "CREATE TABLE IF NOT EXISTS background_task",
@@ -356,6 +358,7 @@ jobs:
               "state='done'",
               "state='failed'",
               "def enqueue",
+              "def status_snapshot",
               "def summary",
           ]
           missing = [x for x in required_tasks if x not in tasks]
@@ -399,9 +402,9 @@ jobs:
           ]
           leftovers = [x for x in banned if x in (core + requirements)]
           if leftovers:
-              raise SystemExit("v1.5.0 legacy behavior returned: " + repr(leftovers))
+              raise SystemExit("legacy behavior returned: " + repr(leftovers))
 
-          print("v1.5.0 runtime architecture guards OK")
+          print("Stable runtime architecture guards OK")
           PY
 
       - name: Check core workflow and large-library guards
@@ -429,7 +432,7 @@ jobs:
               "data-view=\"small\"",
               "Gallery thumbnail zoom: Ctrl + wheel changes photo-card size, never page zoom.",
               "begin_catalog_scan(INDEX_DB, folder)",
-              "catalog_scan_batch(INDEX_DB, scan_session, pending_catalog)",
+              "fingerprints=scan_fingerprints",
               "finish_catalog_scan(",
               "note_catalog_scan_error(",
               "@app.route('/api/sources')",
@@ -482,7 +485,7 @@ jobs:
           dedup_block = source.split("def run_dedup(", 1)[1].split(
               "# --------------------------------------------------------------------------- #\n#  RANK", 1
           )[0]
-          if "paths = _shared_list_images(folder, recursive=recursive)" not in dedup_block:
+          if "paths, scan_fingerprints = _shared_list_images(folder, recursive=recursive)" not in dedup_block:
               raise SystemExit("Dedup must reuse the shared source enumeration snapshot")
 
           run_api = source.split("@app.route('/api/run/<step>'", 1)[1].split(
