@@ -14,6 +14,8 @@
     "%LOCALAPPDATA%/PhotoCurator/data/config/recents.json",
     "%LOCALAPPDATA%/PhotoCurator/data/cache",
     "%LOCALAPPDATA%/PhotoCurator/data/logs",
+    "%LOCALAPPDATA%/PhotoCurator/data/backups",
+    "%LOCALAPPDATA%/PhotoCurator/data/offline_previews",
     "user_photo_folders",
     "PhotoCurator_Result（照片筛选结果）",
     "custom_output_directories",
