@@ -6220,7 +6220,7 @@ async function syncCurrentView(){
 }
 
 /* ---- cull (3-tier, reconciling, filterable) ---- */
-let cullView=[], rankView=[], lastCullSig='', lastCullMoveSig='';
+let cullView=[], rankView=[], lastCullMoveSig='';
 const TIER_NAME={sharp:'清晰',soft:'轻微软',blurry:'模糊'};
 const NEXT_TIER={sharp:'soft',soft:'blurry',blurry:'sharp'};
 const REVIEW_HIDDEN_LIFECYCLES=new Set([
