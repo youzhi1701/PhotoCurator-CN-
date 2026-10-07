@@ -146,6 +146,9 @@ def main():
             "compact runtime status endpoint missing")
     require("def status_snapshot(self):" in tasks_src,
             "compact task status snapshot missing")
+    require("FOREGROUND_PRIORITY_MAX = 50" in tasks_src
+            and "AND priority<=?" in tasks_src,
+            "maintenance tasks can incorrectly throttle foreground analysis")
     require("setInterval(refreshTaskCenter" not in core,
             "task center regressed to unconditional fixed polling")
     require("fetchRuntimeStatus" in core and "runtimeStatusCache" in core,
