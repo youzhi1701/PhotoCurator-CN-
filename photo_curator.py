@@ -1895,6 +1895,59 @@ class _LiteScore:
     focus: float
 
 
+
+# --------------------------------------------------------------------------- #
+#  Shared source enumeration
+#  Cull and Dedup start together in v1.5.0. Directory enumeration is shared
+#  so a large library tree is walked once instead of once per analysis engine.
+# --------------------------------------------------------------------------- #
+_SCAN_SNAPSHOT_CV = threading.Condition()
+_SCAN_SNAPSHOTS = {}
+
+
+def _shared_list_images(folder, recursive=True, max_age=15.0):
+    key = (os.path.normcase(os.path.realpath(str(folder))), bool(recursive))
+    now = time.time()
+    producer = False
+    with _SCAN_SNAPSHOT_CV:
+        entry = _SCAN_SNAPSHOTS.get(key)
+        if entry and entry.get('state') == 'ready' and now - entry.get('at', 0) <= max_age:
+            return list(entry.get('paths') or [])
+        if entry and entry.get('state') == 'scanning':
+            deadline = now + 60.0
+            while time.time() < deadline:
+                _SCAN_SNAPSHOT_CV.wait(timeout=0.25)
+                entry = _SCAN_SNAPSHOTS.get(key)
+                if entry and entry.get('state') == 'ready':
+                    return list(entry.get('paths') or [])
+                if not entry or entry.get('state') == 'failed':
+                    break
+        _SCAN_SNAPSHOTS[key] = {'state': 'scanning', 'at': time.time(), 'paths': []}
+        producer = True
+
+    try:
+        paths = _shared_list_images(folder, recursive=recursive)
+    except Exception as exc:
+        with _SCAN_SNAPSHOT_CV:
+            _SCAN_SNAPSHOTS[key] = {'state': 'failed', 'at': time.time(), 'error': str(exc)}
+            _SCAN_SNAPSHOT_CV.notify_all()
+        raise
+
+    if producer:
+        with _SCAN_SNAPSHOT_CV:
+            _SCAN_SNAPSHOTS[key] = {'state': 'ready', 'at': time.time(), 'paths': list(paths)}
+            # Avoid unbounded accumulation when users switch between many libraries.
+            if len(_SCAN_SNAPSHOTS) > 8:
+                stale = sorted(
+                    ((k, v.get('at', 0)) for k, v in _SCAN_SNAPSHOTS.items() if k != key),
+                    key=lambda kv: kv[1]
+                )
+                for old_key, _ in stale[:max(0, len(_SCAN_SNAPSHOTS) - 8)]:
+                    _SCAN_SNAPSHOTS.pop(old_key, None)
+            _SCAN_SNAPSHOT_CV.notify_all()
+    return list(paths)
+
+
 # --------------------------------------------------------------------------- #
 #  CULL
 # --------------------------------------------------------------------------- #
@@ -1920,7 +1973,7 @@ def run_cull(folder, strictness, adaptive, rescue_on, recursive=True):
               # not feed its partial survivor list into Dedup/Rank.
               'complete': False, 'src_folder': str(folder), 'recursive': bool(recursive)})
     try:
-        images = list_images(folder, recursive=recursive)
+        images = _shared_list_images(folder, recursive=recursive)
         current_paths = {str(p) for p in images}
         cull_cache = _load_cull_metrics_map(images)
         s['overrides'] = _load_review_overrides(images)
