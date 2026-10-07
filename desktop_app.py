@@ -32,15 +32,23 @@ INSTALL_ROOT = (
 DATA_ROOT = resolve_data_root(frozen=IS_FROZEN)
 DATA_MIGRATION_WARNING = None
 if IS_FROZEN:
-    legacy_root = legacy_frozen_data_root(INSTALL_ROOT)
-    try:
-        migrate_legacy_config(legacy_root, DATA_ROOT)
-    except Exception as exc:
-        # Never make an upgrade look like data loss. If the one-time migration
-        # cannot complete, continue from the legacy state and record a warning.
-        if legacy_root.exists():
-            DATA_ROOT = legacy_root
-        DATA_MIGRATION_WARNING = f"{type(exc).__name__}: {exc}"
+    # Merge every known historical catalog location. The stable per-user data
+    # root remains authoritative; old install-local/source-run databases are
+    # imported into it instead of switching the whole app back to an old root.
+    migration_sources = [
+        legacy_frozen_data_root(INSTALL_ROOT),
+        Path.home() / ".photo_curator",
+    ]
+    migration_errors = []
+    for legacy_root in migration_sources:
+        try:
+            migrate_legacy_config(legacy_root, DATA_ROOT)
+        except Exception as exc:
+            migration_errors.append(
+                f"{legacy_root}: {type(exc).__name__}: {exc}"
+            )
+    if migration_errors:
+        DATA_MIGRATION_WARNING = "\n".join(migration_errors)
 
 LOG_DIR = DATA_ROOT / "logs"
 try:
