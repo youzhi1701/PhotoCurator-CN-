@@ -170,6 +170,36 @@ class BackgroundTaskManager:
         except Exception:
             pass
 
+    def status_snapshot(self):
+        """Compact hot-path status for UI polling.
+
+        The task center only needs aggregate counts plus the most recent failure.
+        Avoid materializing the latest 30 rows every second while work is active.
+        """
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT state,COUNT(*) FROM background_task GROUP BY state"
+            ).fetchall()
+            failed = db.execute(
+                """SELECT id,kind,state,priority,created_at,updated_at,error
+                   FROM background_task
+                   WHERE state='failed'
+                   ORDER BY id DESC LIMIT 1"""
+            ).fetchone()
+        counts = {str(k): int(v) for k, v in rows}
+        latest_failed = None
+        if failed:
+            latest_failed = {
+                "id": int(failed[0]), "kind": failed[1], "state": failed[2],
+                "priority": int(failed[3]), "created_at": float(failed[4]),
+                "updated_at": float(failed[5]), "error": failed[6] or "",
+            }
+        return {
+            "counts": counts,
+            "active": counts.get("queued", 0) + counts.get("running", 0),
+            "latest_failed": latest_failed,
+        }
+
     def summary(self):
         with self._connect() as db:
             rows = db.execute("SELECT state,COUNT(*) FROM background_task GROUP BY state").fetchall()
