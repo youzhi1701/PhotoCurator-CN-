@@ -203,7 +203,8 @@ class DesktopApi:
     """Small native bridge used only by the desktop WebView."""
 
     def __init__(self):
-        self._maximized = True
+        self._maximized = False
+        self._restore_rect = None
         self.allow_exit = False
         self.tray = None
         self.window = None
@@ -221,6 +222,127 @@ class DesktopApi:
             return webview.active_window()
         except Exception:
             return None
+
+    def _native_hwnd(self):
+        if os.name != 'nt':
+            return None
+        window = self._window()
+        if window is None:
+            return None
+        try:
+            native = window.native
+            handle = native.Handle
+            try:
+                return int(handle.ToInt64())
+            except Exception:
+                return int(handle)
+        except Exception:
+            return None
+
+    def _set_windows_rect(self, rect):
+        if os.name != 'nt' or not rect:
+            return False
+        try:
+            import ctypes
+            hwnd = self._native_hwnd()
+            if not hwnd:
+                return False
+            left, top, right, bottom = map(int, rect)
+            width = max(1, right - left)
+            height = max(1, bottom - top)
+            SWP_NOZORDER = 0x0004
+            SWP_NOACTIVATE = 0x0010
+            ok = ctypes.windll.user32.SetWindowPos(
+                hwnd, 0, left, top, width, height,
+                SWP_NOZORDER | SWP_NOACTIVATE
+            )
+            return bool(ok)
+        except Exception:
+            return False
+
+    def maximize_to_work_area(self):
+        """Maximize a frameless Windows window to rcWork, never over taskbar."""
+        window = self._window()
+        if window is None:
+            return False
+        if os.name != 'nt':
+            window.maximize()
+            self._maximized = True
+            return True
+
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            class RECT(ctypes.Structure):
+                _fields_ = [
+                    ('left', wintypes.LONG), ('top', wintypes.LONG),
+                    ('right', wintypes.LONG), ('bottom', wintypes.LONG),
+                ]
+
+            class MONITORINFO(ctypes.Structure):
+                _fields_ = [
+                    ('cbSize', wintypes.DWORD),
+                    ('rcMonitor', RECT),
+                    ('rcWork', RECT),
+                    ('dwFlags', wintypes.DWORD),
+                ]
+
+            hwnd = self._native_hwnd()
+            if not hwnd:
+                return False
+
+            current = RECT()
+            if ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(current)):
+                self._restore_rect = (
+                    int(current.left), int(current.top),
+                    int(current.right), int(current.bottom),
+                )
+
+            MONITOR_DEFAULTTONEAREST = 2
+            monitor = ctypes.windll.user32.MonitorFromWindow(
+                hwnd, MONITOR_DEFAULTTONEAREST
+            )
+            info = MONITORINFO()
+            info.cbSize = ctypes.sizeof(MONITORINFO)
+            if not monitor or not ctypes.windll.user32.GetMonitorInfoW(
+                monitor, ctypes.byref(info)
+            ):
+                return False
+
+            work = info.rcWork
+            if not self._set_windows_rect((
+                work.left, work.top, work.right, work.bottom
+            )):
+                return False
+
+            self._maximized = True
+            return True
+        except Exception:
+            return False
+
+    def restore_from_work_area(self):
+        window = self._window()
+        if window is None:
+            return False
+        if os.name != 'nt':
+            window.restore()
+            self._maximized = False
+            return True
+
+        rect = self._restore_rect
+        if not rect:
+            try:
+                window.resize(1180, 760)
+                self._maximized = False
+                return True
+            except Exception:
+                return False
+
+        ok = self._set_windows_rect(rect)
+        if ok:
+            self._maximized = False
+        return ok
 
     def window_action(self, action):
         window = self._window()
@@ -252,12 +374,8 @@ class DesktopApi:
             return True
         if action == 'toggle_maximize':
             if self._maximized:
-                window.restore()
-                self._maximized = False
-            else:
-                window.maximize()
-                self._maximized = True
-            return True
+                return self.restore_from_work_area()
+            return self.maximize_to_work_area()
         return False
 
     def pick_folder(self):
@@ -324,7 +442,7 @@ def main():
         height=760,
         min_size=(720, 520),
         resizable=True,
-        maximized=True,
+        maximized=False,
         zoomable=False,
         confirm_close=False,
         text_select=True,
@@ -338,7 +456,7 @@ def main():
         try:
             window.show()
             if desktop_api._maximized:
-                window.maximize()
+                desktop_api.maximize_to_work_area()
             else:
                 window.restore()
         except Exception:
@@ -418,6 +536,17 @@ def main():
         return True
 
     window.events.closing += on_closing
+
+    def on_shown():
+        # Start maximized inside the monitor work area instead of fullscreen.
+        # For frameless windows this avoids covering the Windows taskbar.
+        try:
+            if not desktop_api._maximized:
+                desktop_api.maximize_to_work_area()
+        except Exception:
+            pass
+
+    window.events.shown += on_shown
 
     try:
         # On Windows force Edge WebView2. Falling back to IE/MSHTML would open
