@@ -873,22 +873,8 @@ def storage_summary(data_root, db_path):
                 continue
         return total
 
-    thumb_dir = data_root / "cache" / "thumbnails"
-    persistent_preview_bytes = 0
-    temporary_preview_bytes = 0
-    if thumb_dir.is_dir():
-        for p in thumb_dir.iterdir():
-            if not p.is_file():
-                continue
-            try:
-                size = int(p.stat().st_size)
-            except OSError:
-                continue
-            if p.name.startswith("catalog_") and p.suffix.lower() == ".jpg":
-                persistent_preview_bytes += size
-            else:
-                temporary_preview_bytes += size
-
+    temporary_preview_bytes = tree_size(data_root / "cache" / "thumbnails")
+    persistent_preview_bytes = tree_size(data_root / "offline_previews")
     db_bytes = tree_size(db_path)
     feature_bytes = tree_size(data_root / "config" / "dedup_features")
     log_bytes = tree_size(data_root / "logs")
@@ -907,6 +893,7 @@ def storage_summary(data_root, db_path):
         "demo_bytes": demo_bytes,
         "total_bytes": total,
     }
+
 
 def clear_rebuildable_storage(data_root, category):
     """Clear only rebuildable runtime data; never touch catalog databases."""
@@ -939,9 +926,6 @@ def clear_rebuildable_storage(data_root, category):
             for p in target.iterdir():
                 if not p.is_file():
                     continue
-                # catalog_* previews are durable offline-library assets.
-                if p.name.startswith("catalog_") and p.suffix.lower() == ".jpg":
-                    continue
                 try:
                     freed += int(p.stat().st_size)
                     p.unlink()
@@ -949,6 +933,8 @@ def clear_rebuildable_storage(data_root, category):
                 except OSError:
                     continue
         target.mkdir(parents=True, exist_ok=True)
+        # Durable offline previews live in data/offline_previews and are never
+        # removed by the ordinary rebuildable-preview cleanup.
         return {"category": category, "removed": removed, "freed_bytes": freed}
 
     target = targets.get(category)
