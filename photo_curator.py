@@ -904,6 +904,13 @@ VENDOR_FILES = {'maplibre-gl-csp.js': 'text/javascript',
                 'maplibre-gl.css': 'text/css'}
 
 RECENTS_FILE = DATA_ROOT / 'config' / 'recents.json'
+_RECENTS_CACHE = None
+_RECENTS_LOCK = threading.Lock()
+_ALLOWED_ROOTS_CACHE_KEY = None
+_ALLOWED_ROOTS_CACHE_VALUE = ()
+_ALLOWED_ROOTS_LOCK = threading.Lock()
+_MEDIA_ID_CACHE = {}
+_MEDIA_ID_CACHE_LOCK = threading.Lock()
 THUMB_DIR = DATA_ROOT / 'cache' / 'thumbnails'
 OFFLINE_PREVIEW_DIR = DATA_ROOT / 'offline_previews'
 THUMB_DIR.mkdir(parents=True, exist_ok=True)
@@ -1001,28 +1008,44 @@ UI_RESULT_CAP = UI_RESULT_CHUNK
 #  pointed at 127.0.0.1.
 # --------------------------------------------------------------------------- #
 def _allowed_roots():
-    """Resolved real paths the app is permitted to read from: the current
-    folder plus any recently-used folders."""
-    roots = []
-    cur = state.get('folder')
-    if cur:
-        roots.append(cur)
+    """Resolved roots permitted by the media API, cached by logical input state.
+
+    Thumbnail grids can issue hundreds of concurrent requests. Re-reading
+    recents.json and realpath()-resolving the same roots per image is pure
+    overhead; the security boundary is identical when the derived root set is
+    cached until its current-folder/custom-output/recent inputs change.
+    """
+    global _ALLOWED_ROOTS_CACHE_KEY, _ALLOWED_ROOTS_CACHE_VALUE
+    cur = str(state.get('folder') or '')
     scan = state.get('scan') or {}
-    if scan.get('output_mode') == 'custom' and scan.get('custom_output'):
-        # A custom output folder is user-selected app state too. Files moved
-        # there must remain viewable/deletable by the same safe media endpoints.
-        roots.append(scan.get('custom_output'))
+    custom = (str(scan.get('custom_output') or '')
+              if scan.get('output_mode') == 'custom' else '')
     try:
-        roots.extend(load_recents())
+        recents = tuple(str(x) for x in load_recents() if x)
     except Exception:
-        pass
-    out = []
-    for r in roots:
-        try:
-            out.append(os.path.realpath(r))
-        except Exception:
-            continue
-    return out
+        recents = ()
+    key = (cur, custom, recents)
+    if key == _ALLOWED_ROOTS_CACHE_KEY:
+        return _ALLOWED_ROOTS_CACHE_VALUE
+    with _ALLOWED_ROOTS_LOCK:
+        if key == _ALLOWED_ROOTS_CACHE_KEY:
+            return _ALLOWED_ROOTS_CACHE_VALUE
+        roots = [x for x in (cur, custom, *recents) if x]
+        out = []
+        seen = set()
+        for raw in roots:
+            try:
+                real = os.path.realpath(raw)
+                norm = os.path.normcase(real)
+                if norm in seen:
+                    continue
+                seen.add(norm)
+                out.append(real)
+            except Exception:
+                continue
+        _ALLOWED_ROOTS_CACHE_KEY = key
+        _ALLOWED_ROOTS_CACHE_VALUE = tuple(out)
+        return _ALLOWED_ROOTS_CACHE_VALUE
 
 
 def _safe_image_path(raw):
@@ -1929,15 +1952,38 @@ TASK_MANAGER.register('restore_trash', _background_restore_trash)
 TASK_MANAGER.register('purge_trash', _background_purge_trash)
 
 
+def _catalog_media_id_cached(image_path):
+    """Cache successful path -> media-id lookups; misses stay retryable.
+
+    A miss may become a hit moments later while the catalog scan is still
+    committing batches, so only successful lookups are retained.
+    """
+    key = os.path.normcase(os.path.realpath(str(image_path)))
+    with _MEDIA_ID_CACHE_LOCK:
+        cached = _MEDIA_ID_CACHE.get(key)
+    if cached:
+        return cached
+    try:
+        media_id = catalog_media_id_for_path(INDEX_DB, image_path)
+    except Exception:
+        media_id = None
+    if media_id:
+        with _MEDIA_ID_CACHE_LOCK:
+            if len(_MEDIA_ID_CACHE) >= 16384:
+                # Insertion-ordered dict: trim the oldest quarter in one cheap pass.
+                for old in list(_MEDIA_ID_CACHE)[:4096]:
+                    _MEDIA_ID_CACHE.pop(old, None)
+            _MEDIA_ID_CACHE[key] = str(media_id)
+        return str(media_id)
+    return None
+
+
 def _thumb_cache_path(image_path):
     # Catalog-backed previews use a stable media id, so a drive-letter change
     # (F: -> G:) does not invalidate the offline preview.
-    try:
-        media_id = catalog_media_id_for_path(INDEX_DB, image_path)
-        if media_id:
-            return OFFLINE_PREVIEW_DIR / f"{media_id}.jpg"
-    except Exception:
-        pass
+    media_id = _catalog_media_id_cached(image_path)
+    if media_id:
+        return OFFLINE_PREVIEW_DIR / f"{media_id}.jpg"
 
     p = Path(image_path)
     try:
@@ -2038,19 +2084,33 @@ def thumb_url(image_path):
 
 
 def load_recents():
-    try:
-        if RECENTS_FILE.exists():
-            return json.loads(RECENTS_FILE.read_text(encoding='utf-8'))
-    except Exception:
-        pass
-    return []
+    global _RECENTS_CACHE
+    if _RECENTS_CACHE is not None:
+        return list(_RECENTS_CACHE)
+    with _RECENTS_LOCK:
+        if _RECENTS_CACHE is not None:
+            return list(_RECENTS_CACHE)
+        rows = []
+        try:
+            if RECENTS_FILE.exists():
+                data = json.loads(RECENTS_FILE.read_text(encoding='utf-8'))
+                if isinstance(data, list):
+                    rows = [str(x) for x in data if str(x).strip()]
+        except Exception:
+            rows = []
+        _RECENTS_CACHE = rows[:24]
+        return list(_RECENTS_CACHE)
 
 
 def save_recent(folder):
+    global _RECENTS_CACHE
     recents = [r for r in load_recents() if r != folder]
     recents.insert(0, folder)
+    recents = recents[:8]
     try:
-        RECENTS_FILE.write_text(json.dumps(recents[:8], ensure_ascii=False), encoding='utf-8')
+        RECENTS_FILE.write_text(json.dumps(recents, ensure_ascii=False), encoding='utf-8')
+        with _RECENTS_LOCK:
+            _RECENTS_CACHE = list(recents)
     except Exception as e:
         logger.warning(f"save recents fail: {e}")
 
