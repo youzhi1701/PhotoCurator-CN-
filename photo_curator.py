@@ -88,6 +88,7 @@ INDEX_DB = DATA_ROOT / 'config' / 'library_index.sqlite3'
 _DB_LOCK = threading.Lock()
 _STATE_LOCK = threading.RLock()
 _RUN_GATE_LOCK = threading.Lock()
+_FILE_PLAN_LOCK = threading.Lock()
 _GEOCODE_LOCK = threading.Lock()
 _GEOCODE_LAST_AT = 0.0
 CULL_METRICS_VERSION = 1
@@ -1114,18 +1115,51 @@ def relative_folder(path, root):
         return Path(path).parent.name or '当前文件夹'
 
 
-def _unique_destination(dest):
-    """Avoid overwriting an existing file while preserving its extension."""
+def _path_reservation_key(path):
+    return os.path.normcase(os.path.realpath(str(path)))
+
+
+def _unique_destination(dest, reserved=None):
+    """Avoid overwriting existing or already-planned destinations."""
     dest = Path(dest)
-    if not dest.exists():
+    reserved_keys = {
+        _path_reservation_key(p) for p in (reserved or ()) if p
+    }
+
+    def blocked(path):
+        return path.exists() or _path_reservation_key(path) in reserved_keys
+
+    if not blocked(dest):
         return dest
     stamp = time.strftime('%Y%m%d_%H%M%S')
     candidate = dest.with_name(f"{dest.stem}_{stamp}{dest.suffix}")
     n = 1
-    while candidate.exists():
+    while blocked(candidate):
         n += 1
         candidate = dest.with_name(f"{dest.stem}_{stamp}_{n}{dest.suffix}")
     return candidate
+
+
+def _active_restore_reservations():
+    """Return destinations already owned by queued/running restore tasks."""
+    reserved = set()
+    try:
+        with sqlite3.connect(str(INDEX_DB), timeout=15) as db:
+            rows = db.execute(
+                """SELECT payload_json FROM background_task
+                   WHERE kind='restore_trash' AND state IN ('queued','running')"""
+            ).fetchall()
+        for (payload_json,) in rows:
+            try:
+                payload = json.loads(payload_json or '{}')
+                path = str(payload.get('restore_path') or '').strip()
+                if path:
+                    reserved.add(_path_reservation_key(path))
+            except Exception:
+                continue
+    except Exception:
+        logger.debug("restore destination reservation lookup failed", exc_info=True)
+    return reserved
 
 
 def _output_destination(src, kind, root, mode='source', custom_output=''):
@@ -5975,17 +6009,21 @@ def api_trash_restore():
     row = next((x for x in current if x['id'] == trash_id), None)
     if not row:
         return jsonify({'error': '当前照片库的回收站中没有这条记录'}), 404
-    restore_path = str(_unique_destination(Path(row['original_path'])).resolve())
-    task_id, created = TASK_MANAGER.enqueue(
-        'restore_trash',
-        {'trash_id': trash_id,
-         'original_path': row['original_path'],
-         'trash_path': row['path'],
-         'source_step': row.get('source_step') or '',
-         'restore_path': restore_path},
-        priority=8,
-        idempotency_key=f"restore_trash:{trash_id}"
-    )
+    with _FILE_PLAN_LOCK:
+        reserved = _active_restore_reservations()
+        restore_path = str(_unique_destination(
+            Path(row['original_path']), reserved=reserved
+        ).resolve())
+        task_id, created = TASK_MANAGER.enqueue(
+            'restore_trash',
+            {'trash_id': trash_id,
+             'original_path': row['original_path'],
+             'trash_path': row['path'],
+             'source_step': row.get('source_step') or '',
+             'restore_path': restore_path},
+            priority=8,
+            idempotency_key=f"restore_trash:{trash_id}"
+        )
     _media_state_set(row['original_path'], row['path'], 'pending_restore',
                      row.get('source_step') or '', detail=str(task_id))
     return jsonify({'ok': True, 'queued': True, 'created': created,
@@ -6031,19 +6069,28 @@ def api_trash_restore_all():
         return jsonify({'error': '请先选择照片文件夹'}), 400
     rows = _trash_rows(folder)
     task_ids = []
-    for row in rows:
-        restore_path = str(_unique_destination(Path(row['original_path'])).resolve())
-        task_id, _ = TASK_MANAGER.enqueue(
-            'restore_trash',
-            {'trash_id': row['id'],
-             'original_path': row['original_path'],
-             'trash_path': row['path'],
-             'source_step': row.get('source_step') or '',
-             'restore_path': restore_path},
-            priority=15,
-            idempotency_key=f"restore_trash:{row['id']}"
-        )
-        task_ids.append(task_id)
+    planned_rows = []
+    with _FILE_PLAN_LOCK:
+        reserved = _active_restore_reservations()
+        for row in rows:
+            restore_path = str(_unique_destination(
+                Path(row['original_path']), reserved=reserved
+            ).resolve())
+            task_id, created = TASK_MANAGER.enqueue(
+                'restore_trash',
+                {'trash_id': row['id'],
+                 'original_path': row['original_path'],
+                 'trash_path': row['path'],
+                 'source_step': row.get('source_step') or '',
+                 'restore_path': restore_path},
+                priority=15,
+                idempotency_key=f"restore_trash:{row['id']}"
+            )
+            task_ids.append(task_id)
+            if created:
+                reserved.add(_path_reservation_key(restore_path))
+            planned_rows.append((row, task_id))
+    for row, task_id in planned_rows:
         _media_state_set(row['original_path'], row['path'], 'pending_restore',
                          row.get('source_step') or '', detail=str(task_id))
     return jsonify({'ok': True, 'queued': True, 'task_ids': task_ids,
