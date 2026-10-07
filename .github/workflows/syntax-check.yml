@@ -84,6 +84,19 @@ jobs:
           expected_installer = f"PhotoCurator-Setup-v{dv}.exe"
           if manifest.get("installer") != expected_installer:
               raise SystemExit("Release manifest installer name does not match version")
+          latest_marker = "<!-- LATEST_RELEASE_START -->"
+          expected_download = (
+              f"https://github.com/youzhi1701/PhotoCurator-CN-/releases/download/"
+              f"v{dv}/{expected_installer}"
+          )
+          marker_pos = readme.find(latest_marker)
+          if marker_pos < 0 or marker_pos > 1200:
+              raise SystemExit("README latest-release block must stay near the top")
+          if expected_download not in readme:
+              raise SystemExit(
+                  "README latest EXE download link does not match current release: "
+                  + expected_download
+              )
           if manifest.get("upgrade_mode") != "in_place" or manifest.get("same_app_id") is not True:
               raise SystemExit("Release manifest must keep in-place upgrade + stable AppId policy")
           if manifest.get("replace") != ["app"]:
