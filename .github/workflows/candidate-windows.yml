@@ -205,7 +205,7 @@ jobs:
               [DllImport("user32.dll")] public static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint flags);
               [DllImport("user32.dll")] public static extern bool GetMonitorInfo(IntPtr hMonitor, ref MONITORINFO info);
             }
-'@
+          '@
             $wr = New-Object PhotoCuratorGeometry+RECT
             if (-not [PhotoCuratorGeometry]::GetWindowRect($p.MainWindowHandle, [ref]$wr)) {
               throw "Unable to read candidate window geometry"
