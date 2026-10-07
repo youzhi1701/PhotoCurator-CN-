@@ -2882,7 +2882,7 @@ def run_rank(folder, ftype='all', pair='both', recursive=True):
 # --------------------------------------------------------------------------- #
 HTML = r'''<!doctype html><html lang="zh-CN"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>照片筛选 · PhotoCurator 中文版</title>
+<title>PhotoCurator</title>
 <style>
   :root{--bg:#f4f6fb;--panel:#fff;--panel2:#eef1f7;--text:#1c2330;--muted:#6b7280;
         --accent:#2563eb;--good:#16a34a;--warn:#d97706;--bad:#dc2626;--border:#dde3ec;--shadow:rgba(20,40,80,.10);color-scheme:light}
@@ -2911,6 +2911,16 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   .folder-row input{flex:1;min-width:0}
   .folder-row .btn{width:auto;flex:0 0 auto;white-space:nowrap;padding:11px 16px}
   .main{flex:1;min-width:0;min-height:0;overflow-y:auto;padding:14px 18px;overscroll-behavior:contain}
+  .surface[hidden]{display:none!important}
+  .dashboard-view{display:flex;flex-direction:column;gap:14px;min-height:100%}
+  .dashboard-hero{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px 20px;border:1px solid rgba(255,255,255,.78);border-radius:18px;background:rgba(255,255,255,.58);backdrop-filter:blur(20px) saturate(145%);box-shadow:0 12px 32px rgba(56,76,126,.08)}
+  .dashboard-hero h1{font-size:20px;line-height:1.2;margin:0 0 5px}.dashboard-hero p{margin:0;color:var(--muted);font-size:12px}
+  .dashboard-hero .chip{flex:0 0 auto}
+  .dashboard-grid{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:12px}
+  .dashboard-card{min-height:104px;padding:15px 16px;border:1px solid rgba(255,255,255,.78);border-radius:16px;background:rgba(255,255,255,.55);backdrop-filter:blur(18px);box-shadow:0 10px 26px rgba(56,76,126,.06)}
+  .dashboard-card span{display:block;font-size:11px;color:var(--muted)}.dashboard-card b{display:block;margin-top:8px;font-size:26px;line-height:1;color:var(--text)}
+  .dashboard-note{padding:14px 16px;border:1px solid rgba(255,255,255,.72);border-radius:14px;background:rgba(255,255,255,.42);color:var(--muted);font-size:12px}
+  .toolbar-context{display:flex;align-items:baseline;gap:9px;min-width:0}.toolbar-context b{font-size:13px}.toolbar-context span{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .sidebar-title{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
   input[type=text],input[type=number]{width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--panel2);color:var(--text);-webkit-text-fill-color:var(--text)}
   input[type=text]::placeholder,input[type=number]::placeholder{color:var(--muted);-webkit-text-fill-color:var(--muted)}
@@ -3144,6 +3154,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
     .sidebar{width:260px;flex-basis:260px;padding:12px}
     .main{padding:12px}
     .gallery{grid-template-columns:repeat(auto-fill,minmax(145px,1fr));gap:10px}
+    .dashboard-grid{grid-template-columns:repeat(2,minmax(140px,1fr))}
     .lb-side{width:280px}
     .lb-bar{right:292px}
     .lb-next{right:298px}
@@ -3164,6 +3175,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
     .btn,.btn-ghost{padding-top:9px;padding-bottom:9px}
     .main{padding:10px}
     .gallery{grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:8px}
+    .dashboard-hero{align-items:flex-start}.dashboard-grid{grid-template-columns:repeat(2,minmax(120px,1fr))}
     .photo-info{padding:5px 6px}
     .lb-side{left:0;right:0;top:auto;bottom:0;width:100%;height:38dvh;padding:14px 16px 20px}
     .lb-img{max-width:94vw;max-height:52dvh;margin-bottom:34dvh}
@@ -3183,6 +3195,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
     .sidebar-actions>*{min-width:0}
     .main{flex:1;min-height:0;padding:8px}
     .gallery{grid-template-columns:repeat(auto-fill,minmax(118px,1fr));gap:7px}
+    .dashboard-grid{grid-template-columns:1fr 1fr}.dashboard-hero{flex-direction:column}.dashboard-hero .chip{width:100%}
     .filter-bar{gap:5px}.chip{padding:5px 9px}
     .pager{gap:8px;flex-wrap:wrap}
     .pager button{padding:6px 10px}
@@ -3208,11 +3221,11 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
       radial-gradient(circle at 60% 95%,rgba(255,142,213,.16),transparent 36%),
       linear-gradient(145deg,#eef7ff 0%,#f7f5ff 46%,#fff5fb 100%);background-attachment:fixed}
   .top{background:
-       radial-gradient(circle at 18% -80%,rgba(113,222,255,.34),transparent 44%),
-       radial-gradient(circle at 78% -120%,rgba(205,148,255,.28),transparent 46%),
-       rgba(33,78,191,.74);
-       backdrop-filter:blur(24px) saturate(150%);-webkit-backdrop-filter:blur(24px) saturate(150%);
-       border-bottom:1px solid rgba(255,255,255,.28);box-shadow:0 8px 28px rgba(52,72,140,.15)}
+       radial-gradient(circle at 18% -80%,rgba(113,222,255,.22),transparent 44%),
+       radial-gradient(circle at 78% -120%,rgba(205,148,255,.18),transparent 46%),
+       rgba(246,250,255,.72);color:var(--text);
+       backdrop-filter:blur(24px) saturate(145%);-webkit-backdrop-filter:blur(24px) saturate(145%);
+       border-bottom:1px solid rgba(255,255,255,.72);box-shadow:0 8px 28px rgba(52,72,140,.08)}
   .sidebar{background:rgba(255,255,255,.58);backdrop-filter:blur(24px) saturate(145%);-webkit-backdrop-filter:blur(24px) saturate(145%);
            border-right:1px solid rgba(255,255,255,.65)}
   .panel-box,.shortcut,.folder-group,.dedup-group,.photo-card,.btn-ghost,.chip,input[type=text],input[type=number],.wgroup select{
@@ -3226,10 +3239,8 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   body.processing .photo-card,body.processing .remove-btn,body.processing .delete-btn,body.processing .status-toggle,
   body.processing .badge-tier,body.processing .move-select,body.processing .move-bulk{pointer-events:auto;opacity:1;filter:none}
   .top-right{display:flex;align-items:center;gap:8px;flex:0 0 auto}
-  .window-controls{display:flex;gap:3px;padding-left:2px}
-  .window-controls button{border:0;background:transparent;color:#fff;width:38px;height:32px;border-radius:8px;cursor:pointer;font-size:15px;line-height:1}
-  .window-controls button:hover{background:rgba(255,255,255,.22)}
-  .window-controls #winClose:hover{background:rgba(220,38,38,.88)}
+  .title-action{color:var(--text)!important;background:rgba(255,255,255,.62)!important;border-color:rgba(130,150,190,.18)!important}
+  .title-action:hover{background:rgba(255,255,255,.9)!important}
   .lb-stage{position:absolute;left:0;top:0;right:clamp(280px,24vw,340px);bottom:0;overflow:hidden;display:flex;align-items:center;justify-content:center}
   .lb-img{transition:transform .08s linear;will-change:transform;cursor:grab;max-width:calc(100% - 36px);max-height:calc(100% - 90px)}
   .lb-img.dragging{cursor:grabbing}
@@ -3263,7 +3274,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   .sidebar-nav{display:flex;flex-direction:column;gap:5px;padding:0 0 10px;margin-bottom:10px;border-bottom:1px solid var(--border)}
   .sidebar-nav button{display:flex;align-items:center;gap:10px;width:100%;height:40px;padding:0 11px;border:1px solid transparent;border-radius:11px;background:transparent;color:var(--text);font-weight:700;cursor:pointer;text-align:left}
   .sidebar-nav button:hover{background:var(--panel2)}
-  .sidebar-nav .step.active{background:color-mix(in srgb,var(--accent) 11%,var(--panel));color:var(--accent);border-color:color-mix(in srgb,var(--accent) 20%,transparent)}
+  .sidebar-nav .step.active,.sidebar-nav .home-nav.active{background:color-mix(in srgb,var(--accent) 11%,var(--panel));color:var(--accent);border-color:color-mix(in srgb,var(--accent) 20%,transparent)}
   .nav-icon{width:22px;text-align:center;font-size:16px}.nav-label{white-space:nowrap}
   .source-panel,.settings-fold,.stats-fold{border:1px solid color-mix(in srgb,var(--border) 85%,transparent);border-radius:11px;padding:8px 9px;background:rgba(255,255,255,.42)}
   .source-panel>summary,.settings-fold>summary,.stats-fold>summary{cursor:pointer;font-size:12px;font-weight:700;color:var(--text);user-select:none}
@@ -3283,35 +3294,31 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   body.sidebar-collapsed .sidebar-nav button{justify-content:center;padding:0}
   body.sidebar-collapsed .nav-icon{width:auto}
   body.sidebar-collapsed .task-center{left:94px}
-  .top button,.top input,.top .title-action,.top .window-controls{position:relative;z-index:2}
+  .top button,.top input,.top .title-action{position:relative;z-index:2}
   .folder-grid .photo-card{content-visibility:auto;contain-intrinsic-size:190px 240px}
   body.processing #settingsPanel input,
   body.processing #settingsPanel select{opacity:.58;pointer-events:none}
 </style></head><body>
-<div class="top pywebview-drag-region">
-  <div class="brand">
-    <span class="brand-mark">C</span>
-    <span class="brand-copy"><b>PhotoCurator</b><small>照片整理工作区 · v{{ app_version }}</small></span>
+<div class="top app-toolbar">
+  <div class="toolbar-context">
+    <b>照片整理工作区</b>
+    <span id="toolbarPath">未选择照片库</span>
   </div>
   <div class="top-right">
     <button class="title-action" id="taskToggle" title="任务中心" aria-label="任务中心"><span>◉</span><span>任务</span></button>
-    <div class="window-controls">
-      <button id="winMin" title="最小化">—</button>
-      <button id="winMax" title="最大化/还原">□</button>
-      <button id="winClose" title="关闭到后台">×</button>
-    </div>
   </div>
 </div>
 <div class="viewport">
   <div class="sidebar" id="sidebar">
     <nav class="sidebar-nav" aria-label="核心照片整理">
-      <button class="step active" data-step="cull"><span class="nav-icon">◐</span><span class="nav-label">模糊废片</span></button>
+      <button class="home-nav active" id="homeNav"><span class="nav-icon">⌂</span><span class="nav-label">概览</span></button>
+      <button class="step" data-step="cull"><span class="nav-icon">◐</span><span class="nav-label">模糊废片</span></button>
       <button class="step" data-step="dedup"><span class="nav-icon">▱</span><span class="nav-label">相似照片</span></button>
       <button class="step" data-step="trash"><span class="nav-icon">♲</span><span class="nav-label">回收站</span></button>
       <button class="toolbox-open" id="toolboxOpen"><span class="nav-icon">⌘</span><span class="nav-label">工具箱</span></button>
     </nav>
     <div class="sidebar-scroll">
-      <details class="source-panel" open>
+      <details class="source-panel" id="sourceDetails">
         <summary>📁 照片来源</summary>
       <div class="folder-row">
         <input type="text" id="folderInput" placeholder="请选择或粘贴照片文件夹路径">
@@ -3325,7 +3332,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
         <div id="settingsPanel" style="margin-top:10px"></div>
       </details>
 
-      <details class="stats-fold" open>
+      <details class="stats-fold" id="dataStatsDetails">
         <summary>📊 当前结果</summary>
         <div class="panel-box" style="margin-top:8px">
         <div class="stat-row" data-steps="cull dedup rank"><span>照片数量</span><span class="v" id="sImages">0</span></div>
@@ -3351,6 +3358,20 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
     </div>
   </div>
   <div class="main">
+    <section class="surface dashboard-view" id="dashboardView">
+      <div class="dashboard-hero">
+        <div><h1>照片整理概览</h1><p>首屏只读取本地索引摘要，不扫描硬盘、不生成测试图库。</p></div>
+        <button class="chip" id="dashboardPickFolder">选择照片文件夹</button>
+      </div>
+      <div class="dashboard-grid">
+        <div class="dashboard-card"><span>已索引清晰度记录</span><b id="dashIndexed">0</b></div>
+        <div class="dashboard-card"><span>相似照片分组</span><b id="dashGroups">0</b></div>
+        <div class="dashboard-card"><span>人工复核记录</span><b id="dashReviewed">0</b></div>
+        <div class="dashboard-card"><span>软件回收站</span><b id="dashTrash">0</b></div>
+      </div>
+      <div class="dashboard-note" id="dashActivity">本地索引已就绪。选择照片文件夹后进入筛选工作区。</div>
+    </section>
+    <section class="surface" id="galleryView" hidden>
     <div class="workspace-heading">
       <div><b id="workspaceTitle">模糊废片</b><span id="workspaceHint">快速复核已分析结果，后台扫描不会打断当前操作。</span></div>
       <button class="chip" id="settingsQuick">筛选设置</button>
@@ -3373,6 +3394,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
     </div>
     <div class="pager" id="pager" style="display:none!important"></div>
     <div class="gallery" id="gallery"><div class="empty"><div class="icon">🎞️</div><div>选择照片文件夹后点击“开始分析”</div></div></div>
+    </section>
   </div>
 </div>
 
@@ -3442,7 +3464,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   <button class="task-exit" id="appExit">退出 PhotoCurator</button>
 </aside>
 <div class="toast-wrap" id="toastWrap"></div>
-<div id="cn-build-badge" style="position:fixed;right:10px;bottom:8px;z-index:50;font-size:10px;color:var(--muted);opacity:.55;pointer-events:none">照片筛选 · 中文桌面版 v{{ app_version }}</div>
+<div id="cn-build-badge" style="position:fixed;right:10px;bottom:8px;z-index:50;font-size:10px;color:var(--muted);opacity:.55;pointer-events:none">v{{ app_version }}</div>
 
 <script>
 function toast(msg,type){
