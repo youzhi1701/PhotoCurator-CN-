@@ -3,24 +3,22 @@
 <!-- LATEST_RELEASE_START -->
 ## ⬇️ 最新版 Windows 安装包
 
-**当前正式版：v1.5.0**
+**当前正式版：v1.5.4**
 
-[**点击下载 PhotoCurator-Setup-v1.5.0.exe**](https://github.com/youzhi1701/PhotoCurator-CN-/releases/download/v1.5.0/PhotoCurator-Setup-v1.5.0.exe)
+[**点击下载 PhotoCurator-Setup-v1.5.4.exe**](https://github.com/youzhi1701/PhotoCurator-CN-/releases/download/v1.5.4/PhotoCurator-Setup-v1.5.4.exe)
 
 > Windows 10 / 11 x64 · 正式稳定版 · 安装版 EXE  
-> 如需查看版本说明，可前往 [v1.5.0 Release](https://github.com/youzhi1701/PhotoCurator-CN-/releases/tag/v1.5.0)。
+> 如需查看版本说明，可前往 [v1.5.4 Release](https://github.com/youzhi1701/PhotoCurator-CN-/releases/tag/v1.5.4)。
 <!-- LATEST_RELEASE_END -->
 
-> 🧪 当前修复测试版本：**v1.5.4**（尚未正式发布；正式下载仍以上方 v1.5.0 为准）
-
-> 面向大图库的 Windows 照片清理工具。v1.5.0 将主流程收敛为 **模糊废片筛选 → 相似照片筛选 → 软件回收站复核**，并重构前后台运行机制。
+> 面向大图库的 Windows 照片清理工具。v1.5.4 在既有清理主流程上完成 Windows 原生壳、首屏零阻塞、数据源/离线图库和 Dashboard/照片视图分层收口。
 
 | 项目 | 信息 |
 | --- | --- |
-| 当前版本 | **v1.5.0** |
+| 当前版本 | **v1.5.4** |
 | 项目类型 | Windows 照片筛选桌面应用 |
 | 上游基线 | Photo Curator v7.0 |
-| 当前状态 | **v1.5.0 稳定版 / 正式发布** |
+| 当前状态 | **v1.5.4 稳定版 / 正式发布** |
 
 ## 产品定位
 
@@ -33,7 +31,7 @@ PhotoCurator 的两个核心任务：
 
 支持 JPEG、PNG、WebP、TIFF、BMP、HEIC/HEIF/HIF，以及 CR2、CR3、NEF、ARW、DNG、RAF、ORF、RW2、PEF 等常见 RAW 格式。
 
-## v1.5.0 运行架构
+## v1.5.4 运行架构
 
 ### 前台优先
 
@@ -196,15 +194,15 @@ GitHub Actions：
 
 开发阶段每次推送到 `main` 都会构建 Windows 安装包用于验证，但**不会自动覆盖正式 Release**。
 
-发布版本由 `packaging/release_manifest.json` 驱动。当前版本为 **1.5.0**，因此当前正式标签应为：
+发布版本由 `packaging/release_manifest.json` 驱动。当前版本为 **1.5.4**，因此当前正式标签应为：
 
-`v1.5.0`
+`v1.5.4`
 
 发布工作流接受 `v*` 标签，但会在构建开始时强制检查：**Git 标签必须与 manifest 中的版本完全一致**。标签不一致会直接失败，避免误把旧代码发布成新版本或把新代码挂到旧标签。
 
 当前安装包：
 
-`PhotoCurator-Setup-v1.5.0.exe`
+`PhotoCurator-Setup-v1.5.4.exe`
 
 CI 同时校验以下版本必须一致：
 - `desktop_app.py` / `photo_curator.py` 的应用版本
@@ -229,7 +227,7 @@ PhotoCurator 使用固定 AppId 原位覆盖升级。正式安装与运行数据
 
 正式 EXE 位于安装目录的 `app/PhotoCurator.exe`，运行数据固定写入 `%LOCALAPPDATA%/PhotoCurator/data`。即使以后把程序安装到其它磁盘或受保护目录，也不会改变用户数据位置。覆盖升级只清理并替换程序 `app/`，不会把运行数据混进程序替换目录。
 
-从旧版 `{app}/data` 升级时，v1.5.0 首次启动会自动迁移其中的 `config` 持久化状态（SQLite 索引、人工筛选决策、相似组状态、后台任务、最近目录和相似特征存储）。缓存、日志和内置测试数据属于可重建数据，不作为迁移阻塞条件；若迁移异常，桌面壳会继续使用旧数据目录并写入迁移告警，避免出现“升级后像丢数据”的空白状态。
+从旧版 `{app}/data` 升级时，v1.5.4 首次启动会自动迁移并合并历史 `config` 持久化状态（SQLite 索引、人工筛选决策、相似组状态、后台任务、最近目录和相似特征存储）。缓存、日志和内置测试数据属于可重建数据，不作为迁移阻塞条件；若迁移异常，桌面壳会继续使用旧数据目录并写入迁移告警，避免出现“升级后像丢数据”的空白状态。
 
 升级原则：
 - 只替换程序文件
@@ -299,7 +297,7 @@ PhotoCurator-CN-/
 
 许可证保持原项目 **MIT License**。
 
-## v1.5.0 发布门槛
+## v1.5.4 发布门槛
 
 正式发布前必须同时满足：
 - Python / 嵌入式 JavaScript / HTML / CSS 自动检查通过
