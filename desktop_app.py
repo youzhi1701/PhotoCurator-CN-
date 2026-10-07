@@ -20,7 +20,7 @@ from runtime_paths import (
 )
 
 APP_TITLE = "PhotoCurator"
-APP_VERSION = "1.6.0"
+APP_VERSION = "1.7.0"
 HOST = "127.0.0.1"
 DEFAULT_PORT = 5014
 
@@ -235,12 +235,11 @@ def load_tray_image():
     return img
 
 
-def _windows_work_area():
-    """Return the Windows work area for the monitor under the mouse cursor.
+def _windows_work_area(point=None):
+    """Return the Windows work area for a screen point.
 
-    This deliberately uses only monitor geometry APIs, not a pywebview native
-    handle.  Clicking the custom maximize button therefore targets the monitor
-    the user is interacting with while keeping the taskbar visible.
+    The desktop runtime stays on the proven pywebview lifecycle: this uses only
+    monitor geometry APIs and never reaches into window.native/DWM handles.
     """
     if os.name != "nt":
         return None
@@ -264,10 +263,13 @@ def _windows_work_area():
         user32.GetMonitorInfoW.argtypes = [wintypes.HANDLE, ctypes.POINTER(MONITORINFO)]
         user32.GetMonitorInfoW.restype = wintypes.BOOL
 
-        point = wintypes.POINT()
-        if not user32.GetCursorPos(ctypes.byref(point)):
-            return None
-        monitor = user32.MonitorFromPoint(point, 2)  # MONITOR_DEFAULTTONEAREST
+        if point is None:
+            probe = wintypes.POINT()
+            if not user32.GetCursorPos(ctypes.byref(probe)):
+                return None
+        else:
+            probe = wintypes.POINT(int(point[0]), int(point[1]))
+        monitor = user32.MonitorFromPoint(probe, 2)
         if not monitor:
             return None
         info = MONITORINFO()
@@ -275,15 +277,35 @@ def _windows_work_area():
         if not user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
             return None
         work = info.rcWork
-        width = max(1, int(work.right - work.left))
-        height = max(1, int(work.bottom - work.top))
-        return int(work.left), int(work.top), width, height
+        return (
+            int(work.left), int(work.top),
+            max(1, int(work.right - work.left)),
+            max(1, int(work.bottom - work.top)),
+        )
     except Exception:
         return None
 
 
+def _window_bounds(window):
+    try:
+        return (
+            int(window.x), int(window.y),
+            max(1, int(window.width)), max(1, int(window.height)),
+        )
+    except Exception:
+        return None
+
+
+def _work_area_for_window(window):
+    bounds = _window_bounds(window)
+    if bounds:
+        x, y, width, height = bounds
+        return _windows_work_area((x + width // 2, y + height // 2))
+    return _windows_work_area()
+
+
 def _fit_window_to_work_area(window):
-    area = _windows_work_area()
+    area = _work_area_for_window(window)
     if not area:
         window.maximize()
         return True
@@ -293,16 +315,25 @@ def _fit_window_to_work_area(window):
     return True
 
 
-def _restore_window_size(window, width=1180, height=760):
-    area = _windows_work_area()
-    if not area:
-        window.restore()
-        return True
-    left, top, work_width, work_height = area
-    width = min(int(width), work_width)
-    height = min(int(height), work_height)
-    x = left + max(0, (work_width - width) // 2)
-    y = top + max(0, (work_height - height) // 2)
+def _restore_window_bounds(window, bounds=None):
+    if not bounds:
+        area = _work_area_for_window(window) or _windows_work_area()
+        if not area:
+            window.restore()
+            return True
+        left, top, work_width, work_height = area
+        width, height = min(1180, work_width), min(760, work_height)
+        x = left + max(0, (work_width - width) // 2)
+        y = top + max(0, (work_height - height) // 2)
+    else:
+        x, y, width, height = [int(v) for v in bounds]
+        area = _windows_work_area((x + width // 2, y + height // 2))
+        if area:
+            left, top, work_width, work_height = area
+            width = min(max(720, width), work_width)
+            height = min(max(520, height), work_height)
+            x = min(max(x, left), left + max(0, work_width - width))
+            y = min(max(y, top), top + max(0, work_height - height))
     window.resize(width, height)
     window.move(x, y)
     return True
@@ -313,6 +344,7 @@ class DesktopApi:
 
     def __init__(self):
         self._maximized = True
+        self._normal_bounds = None
         self.allow_exit = False
         self.tray = None
 
@@ -349,9 +381,10 @@ class DesktopApi:
             return True
         if action == 'toggle_maximize':
             if self._maximized:
-                _restore_window_size(window)
+                _restore_window_bounds(window, self._normal_bounds)
                 self._maximized = False
             else:
+                self._normal_bounds = _window_bounds(window) or self._normal_bounds
                 _fit_window_to_work_area(window)
                 self._maximized = True
             return True
@@ -443,7 +476,7 @@ def main():
             if desktop_api._maximized:
                 _fit_window_to_work_area(window)
             else:
-                _restore_window_size(window)
+                _restore_window_bounds(window, desktop_api._normal_bounds)
         except Exception:
             pass
 
