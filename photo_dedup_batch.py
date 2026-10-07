@@ -80,6 +80,7 @@ class FastBatchDeduplicator:
         self._bf = (cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
                     if self.use_orb_confirm else None)
         self._sig_cache = {}
+        self._file_key_cache = {}
         # In-memory ORB descriptor cache (keyed by path), so a representative's
         # features are computed at most once even if confirmed repeatedly.
         self._orb_desc_cache = {}
@@ -135,21 +136,18 @@ class FastBatchDeduplicator:
         except Exception as e:
             logger.warning(f"无法保存去重特征缓存：{e}")
 
-    @staticmethod
-    def _cache_key(image_path: str):
-        """Versioned, high-resolution fingerprint for persistent similarity cache.
-
-        Use nanosecond mtime + exact byte size, matching the main SQLite index.
-        The v2 prefix intentionally invalidates older second-resolution keys once,
-        preventing stale perceptual hashes when a file is rewritten within the
-        same second without changing its byte length.
-        """
+    def _cache_key(self, image_path: str):
+        """Versioned file fingerprint, memoized for the lifetime of this run."""
+        if image_path in self._file_key_cache:
+            return self._file_key_cache[image_path]
         try:
             st = os.stat(image_path)
             mtime_ns = getattr(st, 'st_mtime_ns', int(st.st_mtime * 1_000_000_000))
-            return f"v2|{image_path}|{int(mtime_ns)}|{int(st.st_size)}"
+            key = f"v2|{image_path}|{int(mtime_ns)}|{int(st.st_size)}"
         except Exception:
-            return None
+            key = None
+        self._file_key_cache[image_path] = key
+        return key
 
     # ----------------------------------------------------------------- signatures
     def _signature(self, image_path: str):
@@ -321,6 +319,7 @@ class FastBatchDeduplicator:
         """Clear incremental clustering state before a new run."""
         self.clusters = []
         self._active_cache_keys = set()
+        self._file_key_cache = {}
         self._rep_bits = None
         self._rep_ts = None
         self._rep_valid = None
