@@ -94,6 +94,16 @@ def main():
                         for p in recursive),
                     f"递归扫描错误包含了程序输出目录：{recursive}")
 
+        # v1.5 Cull + Dedup must share one source enumeration snapshot rather
+        # than recursively calling the snapshot helper or walking the HDD twice.
+        photo_curator._SCAN_SNAPSHOTS.clear()
+        shared_first = photo_curator._shared_list_images(root, recursive=True, max_age=60.0)
+        shared_second = photo_curator._shared_list_images(root, recursive=True, max_age=60.0)
+        assert_true(shared_first == shared_second,
+                    "共享扫描快照前后结果不一致")
+        assert_true(nested_img in shared_first,
+                    "共享扫描快照没有包含递归子目录照片")
+
         rel = photo_curator.relative_folder(nested_img, root)
         assert_true("2026" in rel and "三亚" in rel and "第一天" in rel,
                     f"来源相对路径错误：{rel}")
