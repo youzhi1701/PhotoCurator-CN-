@@ -2053,6 +2053,8 @@ def run_cull(folder, strictness, adaptive, rescue_on, recursive=True):
 
         last_rel = None
         for idx, p in enumerate(images):
+            if TASK_MANAGER.foreground_busy():
+                time.sleep(0.015)
             rel = relative_folder(str(p), folder)
             if rel != last_rel:
                 if last_rel is not None:
@@ -2322,6 +2324,8 @@ def run_dedup(folder, threshold, ftype='all', pair='both',
             dd.reset()
 
             for p in batch_paths:
+                if TASK_MANAGER.foreground_busy():
+                    time.sleep(0.015)
                 if s.get('cancel'):
                     break
                 processed += 1
