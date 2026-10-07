@@ -120,7 +120,9 @@ jobs:
               "def _background_purge_trash",
               "@app.route('/api/tasks')",
               "function coreRun()",
-              "Promise.all(['cull','dedup']",
+              "const coreSteps=['cull','dedup'];",
+              "Promise.allSettled",
+              "核心分析未完整启动，已回滚已启动任务",
               "pending_trash",
               "pending_permanent_delete",
               "permanently_deleted",
@@ -232,6 +234,8 @@ jobs:
               "function dedupGroupStatusLabel",
               "function askDeleteMode",
               "function askBatchConfirm",
+              "document.getElementById('appExit').onclick=async()=>",
+              "Promise.allSettled(activeSteps.map(step=>fetch('/api/stop/'+step",
           ]
           missing = [x for x in required if x not in js]
           if missing:
