@@ -5,12 +5,15 @@
   "installer": "PhotoCurator-Setup-v1.5.0.exe",
   "upgrade_mode": "in_place",
   "same_app_id": true,
+  "data_root": "%LOCALAPPDATA%/PhotoCurator/data",
+  "legacy_data_root": "{app}/data",
+  "migrate_legacy_config": true,
   "preserve": [
-    "data/config/library_index.sqlite3",
-    "data/config/dedup_features",
-    "data/config/recents.json",
-    "data/cache",
-    "data/logs",
+    "%LOCALAPPDATA%/PhotoCurator/data/config/library_index.sqlite3",
+    "%LOCALAPPDATA%/PhotoCurator/data/config/dedup_features",
+    "%LOCALAPPDATA%/PhotoCurator/data/config/recents.json",
+    "%LOCALAPPDATA%/PhotoCurator/data/cache",
+    "%LOCALAPPDATA%/PhotoCurator/data/logs",
     "user_photo_folders",
     "PhotoCurator_Result（照片筛选结果）",
     "custom_output_directories",
@@ -19,5 +22,5 @@
   "replace": [
     "app"
   ],
-  "notes": "v1.5.0 可直接覆盖 v1.4.2 / v1.4.1 / v1.4.0 / v1.3.0；仅替换 app，保留配置、本地分析索引、长期相似特征缓存、运行日志、缓存数据、用户照片及 PhotoCurator 软件回收站。"
+  "notes": "v1.5.0 可直接覆盖 v1.4.2 / v1.4.1 / v1.4.0 / v1.3.0；仅替换 app。运行数据固定在 %LOCALAPPDATA%/PhotoCurator/data，首次启动会从旧 {app}/data/config 安全迁移持久化状态；缓存与日志可重建，用户照片、筛选结果、自定义输出目录及 PhotoCurator 软件回收站不受程序升级影响。"
 }

@@ -41,22 +41,22 @@ from raw_loader import (RAW_EXTS, HAS_RAWPY, is_raw,
 from photo_ranking_v3 import AdvancedPhotoAnalyzer, PhotoScoreV3
 from photo_dedup_batch import FastBatchDeduplicator
 from background_tasks import BackgroundTaskManager
+from runtime_paths import resolve_data_root
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Installed builds keep all PhotoCurator-owned writable data on the same drive
-# as the chosen installation directory. Development/source runs keep the older
-# per-user fallback so existing contributors are not forced to write into Git.
+# Writable state is independent from replaceable program files. The desktop
+# launcher resolves/migrates the installed data directory first and passes the
+# exact root through PHOTOCURATOR_DATA_DIR; direct source runs keep ~/.photo_curator.
 IS_FROZEN = bool(getattr(sys, 'frozen', False))
 if IS_FROZEN:
     INSTALL_ROOT = Path(sys.executable).resolve().parent.parent
-    DATA_ROOT = INSTALL_ROOT / 'data'
     RESOURCE_ROOT = Path(getattr(sys, '_MEIPASS', Path(sys.executable).resolve().parent))
 else:
     INSTALL_ROOT = Path(__file__).resolve().parent
-    DATA_ROOT = Path(os.environ.get('PHOTOCURATOR_DATA_DIR', '')).expanduser() if os.environ.get('PHOTOCURATOR_DATA_DIR') else (Path.home() / '.photo_curator')
     RESOURCE_ROOT = Path(__file__).resolve().parent
+DATA_ROOT = resolve_data_root(frozen=IS_FROZEN)
 
 for _dir in (DATA_ROOT, DATA_ROOT / 'logs', DATA_ROOT / 'cache', DATA_ROOT / 'config'):
     try:
@@ -2839,13 +2839,19 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
         --accent:#2563eb;--good:#16a34a;--warn:#d97706;--bad:#dc2626;--border:#dde3ec;--shadow:rgba(20,40,80,.10);color-scheme:light}
   *{box-sizing:border-box}
   body{margin:0;font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text)}
-  .top{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:58px;padding:12px 20px;background:linear-gradient(90deg,#1e40af,#2563eb);color:#fff}
-  .brand{font-size:17px;font-weight:700}.brand small{font-weight:400;opacity:.8;font-size:12px}
+  .top{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:54px;padding:8px 12px 8px 14px;background:linear-gradient(90deg,#1e40af,#2563eb);color:#fff}
+  .brand{display:flex;align-items:center;gap:10px;min-width:0}
+  .brand-mark{width:32px;height:32px;display:grid;place-items:center;flex:0 0 auto;border-radius:10px;
+    background:linear-gradient(145deg,rgba(255,255,255,.34),rgba(255,255,255,.12));border:1px solid rgba(255,255,255,.42);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.36),0 6px 16px rgba(19,47,119,.18);font-size:18px;font-weight:800}
+  .brand-copy{display:flex;flex-direction:column;min-width:0;line-height:1.12}
+  .brand-copy b{font-size:15px;letter-spacing:.01em}.brand-copy small{margin-top:3px;font-weight:500;opacity:.72;font-size:10px;white-space:nowrap}
   .steps{display:flex;gap:8px;min-width:0;overflow-x:auto;scrollbar-width:none}.steps::-webkit-scrollbar{display:none}
   .step{padding:7px 16px;background:rgba(255,255,255,.18);border:2px solid transparent;border-radius:9px;cursor:pointer;font-weight:600;font-size:13px;color:#fff}
   .step:hover{background:rgba(255,255,255,.3)} .step.active{background:#fff;color:var(--accent)}
-  .theme{background:rgba(255,255,255,.18);border:none;color:#fff;width:38px;height:32px;border-radius:8px;cursor:pointer}
-  .viewport{display:flex;height:calc(100vh - 58px);height:calc(100dvh - 58px);min-height:0}
+  .title-action{display:inline-flex;align-items:center;gap:6px;background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.18);color:#fff;height:32px;padding:0 10px;border-radius:9px;cursor:pointer;font-size:11px;font-weight:700}
+  .title-action:hover{background:rgba(255,255,255,.24)}
+  .viewport{display:flex;height:calc(100vh - 54px);height:calc(100dvh - 54px);min-height:0}
   .sidebar{width:clamp(260px,22vw,320px);flex:0 0 clamp(260px,22vw,320px);background:var(--panel);border-right:1px solid var(--border);padding:16px;overflow:hidden;display:flex;flex-direction:column}
   /* Scrollable region holds folder + settings + stats; the action footer below
      is pinned so Start / Export / 移动模糊照片 stay above the fold. */
@@ -3121,7 +3127,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   }
   @media (max-width: 620px){
     .top{position:relative;z-index:20}
-    .viewport{height:calc(100vh - 96px);height:calc(100dvh - 96px);flex-direction:column}
+    .viewport{height:calc(100vh - 54px);height:calc(100dvh - 54px);flex-direction:column}
     .sidebar{width:100%;flex:0 0 auto;max-height:44dvh;border-right:0;border-bottom:1px solid var(--border);padding:10px}
     .sidebar-scroll{max-height:26dvh}
     .sidebar-actions{display:grid;grid-template-columns:1fr 1fr;gap:6px}
@@ -3152,7 +3158,11 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
       radial-gradient(circle at 88% 12%,rgba(170,118,255,.20),transparent 34%),
       radial-gradient(circle at 60% 95%,rgba(255,142,213,.16),transparent 36%),
       linear-gradient(145deg,#eef7ff 0%,#f7f5ff 46%,#fff5fb 100%);background-attachment:fixed}
-  .top{background:rgba(33,78,191,.72);backdrop-filter:blur(24px) saturate(150%);-webkit-backdrop-filter:blur(24px) saturate(150%);
+  .top{background:
+       radial-gradient(circle at 18% -80%,rgba(113,222,255,.34),transparent 44%),
+       radial-gradient(circle at 78% -120%,rgba(205,148,255,.28),transparent 46%),
+       rgba(33,78,191,.74);
+       backdrop-filter:blur(24px) saturate(150%);-webkit-backdrop-filter:blur(24px) saturate(150%);
        border-bottom:1px solid rgba(255,255,255,.28);box-shadow:0 8px 28px rgba(52,72,140,.15)}
   .sidebar{background:rgba(255,255,255,.58);backdrop-filter:blur(24px) saturate(145%);-webkit-backdrop-filter:blur(24px) saturate(145%);
            border-right:1px solid rgba(255,255,255,.65)}
@@ -3166,9 +3176,11 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   .photo-info{min-height:48px}
   body.processing .photo-card,body.processing .remove-btn,body.processing .delete-btn,body.processing .status-toggle,
   body.processing .badge-tier,body.processing .move-select,body.processing .move-bulk{pointer-events:auto;opacity:1;filter:none}
-  .window-controls{display:flex;gap:4px}
-  .window-controls button{border:0;background:rgba(255,255,255,.14);color:#fff;width:34px;height:30px;border-radius:8px;cursor:pointer}
-  .window-controls button:hover{background:rgba(255,255,255,.25)}
+  .top-right{display:flex;align-items:center;gap:8px;flex:0 0 auto}
+  .window-controls{display:flex;gap:3px;padding-left:2px}
+  .window-controls button{border:0;background:transparent;color:#fff;width:38px;height:32px;border-radius:8px;cursor:pointer;font-size:15px;line-height:1}
+  .window-controls button:hover{background:rgba(255,255,255,.22)}
+  .window-controls #winClose:hover{background:rgba(220,38,38,.88)}
   .lb-stage{position:absolute;left:0;top:0;right:clamp(280px,24vw,340px);bottom:0;overflow:hidden;display:flex;align-items:center;justify-content:center}
   .lb-img{transition:transform .08s linear;will-change:transform;cursor:grab;max-width:calc(100% - 36px);max-height:calc(100% - 90px)}
   .lb-img.dragging{cursor:grabbing}
@@ -3222,15 +3234,18 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   body.sidebar-collapsed .sidebar-nav button{justify-content:center;padding:0}
   body.sidebar-collapsed .nav-icon{width:auto}
   body.sidebar-collapsed .task-center{left:94px}
-  .top button,.top input,.top .theme,.top .window-controls{position:relative;z-index:2}
+  .top button,.top input,.top .title-action,.top .window-controls{position:relative;z-index:2}
   .folder-grid .photo-card{content-visibility:auto;contain-intrinsic-size:190px 240px}
   body.processing #settingsPanel input,
   body.processing #settingsPanel select{opacity:.58;pointer-events:none}
 </style></head><body>
 <div class="top pywebview-drag-region">
-  <div class="brand">🖼️ PhotoCurator <small>照片整理工作区 · v{{ app_version }}</small></div>
+  <div class="brand">
+    <span class="brand-mark">C</span>
+    <span class="brand-copy"><b>PhotoCurator</b><small>照片整理工作区 · v{{ app_version }}</small></span>
+  </div>
   <div class="top-right">
-    <button class="theme" id="taskToggle" title="任务中心" aria-label="任务中心">◉</button>
+    <button class="title-action" id="taskToggle" title="任务中心" aria-label="任务中心"><span>◉</span><span>任务</span></button>
     <div class="window-controls">
       <button id="winMin" title="最小化">—</button>
       <button id="winMax" title="最大化/还原">□</button>

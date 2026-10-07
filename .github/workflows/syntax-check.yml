@@ -21,6 +21,7 @@ jobs:
         run: |
           python -m py_compile \
             desktop_app.py \
+            runtime_paths.py \
             photo_curator.py \
             background_tasks.py \
             photo_dedup_batch.py \
@@ -42,6 +43,7 @@ jobs:
 
           json.loads(Path(".devcontainer/devcontainer.json").read_text(encoding="utf-8"))
           desktop = Path("desktop_app.py").read_text(encoding="utf-8")
+          runtime_paths = Path("runtime_paths.py").read_text(encoding="utf-8")
           core = Path("photo_curator.py").read_text(encoding="utf-8")
           readme = Path("README.md").read_text(encoding="utf-8")
 
@@ -75,9 +77,9 @@ jobs:
           if manifest.get("replace") != ["app"]:
               raise SystemExit("Release manifest may replace only the app directory")
           required_preserve = {
-              "data/config/library_index.sqlite3",
-              "data/cache",
-              "data/logs",
+              "%LOCALAPPDATA%/PhotoCurator/data/config/library_index.sqlite3",
+              "%LOCALAPPDATA%/PhotoCurator/data/cache",
+              "%LOCALAPPDATA%/PhotoCurator/data/logs",
               "user_photo_folders",
               "PhotoCurator_RecycleBin（软件回收站）",
           }
@@ -115,11 +117,12 @@ jobs:
               raise SystemExit("Release workflow must not hardcode a single version tag")
 
           # Frozen layout contract:
-          #   {app}/app/PhotoCurator.exe -> parent.parent == {app}
-          #   writable state lives under {app}/data and is not replaced on upgrade.
+          #   {app}/app/PhotoCurator.exe is replaceable program content.
+          #   writable state lives under %LOCALAPPDATA%/PhotoCurator/data.
           layout_required = [
               'DestDir: "{app}\\app"',
-              'Name: "{app}\\data"',
+              'Name: "{localappdata}\\PhotoCurator\\data"',
+              'Name: "{localappdata}\\PhotoCurator\\data\\config"',
               'Filename: "{app}\\app\\{#MyAppExeName}"',
               'Type: filesandordirs; Name: "{app}\\app"',
           ]
@@ -127,12 +130,30 @@ jobs:
           if missing_layout:
               raise SystemExit("Installer layout contract regression: " + repr(missing_layout))
           install_delete = installer.split("[InstallDelete]", 1)[1].split("[Files]", 1)[0]
-          if "{app}\\data" in install_delete:
-              raise SystemExit("Cover upgrade must never delete the persistent data directory")
-          if 'INSTALL_ROOT = Path(sys.executable).resolve().parent.parent' not in desktop:
+          if 'Type: filesandordirs; Name: "{localappdata}\\PhotoCurator\\data' in install_delete:
+              raise SystemExit("Cover upgrade must never delete the per-user runtime data directory")
+          if 'INSTALL_ROOT = (' not in desktop or 'Path(sys.executable).resolve().parent.parent' not in desktop:
               raise SystemExit("Frozen desktop root no longer matches {app}/app executable layout")
-          if 'DATA_ROOT = INSTALL_ROOT / "data"' not in desktop:
-              raise SystemExit("Frozen writable data root must stay under {app}/data")
+          if 'DATA_ROOT = resolve_data_root(frozen=IS_FROZEN)' not in desktop:
+              raise SystemExit("Desktop runtime data must use the shared resolver")
+          if 'migrate_legacy_config(legacy_root, DATA_ROOT)' not in desktop:
+              raise SystemExit("Installed upgrades must preserve the legacy config migration")
+          if 'os.environ["PHOTOCURATOR_DATA_DIR"] = str(DATA_ROOT)' not in desktop:
+              raise SystemExit("Desktop must pass the resolved data root into the core")
+          if 'DATA_ROOT = resolve_data_root(frozen=IS_FROZEN)' not in core:
+              raise SystemExit("Core must honor the shared runtime data resolver")
+          runtime_required = [
+              'ENV_DATA_DIR = "PHOTOCURATOR_DATA_DIR"',
+              'return base / APP_DIR_NAME / "data"',
+              'def migrate_legacy_config',
+              'copy_function=_link_or_copy',
+              'target_config = target_root / "config"',
+          ]
+          missing_runtime = [x for x in runtime_required if x not in runtime_paths]
+          if missing_runtime:
+              raise SystemExit("Runtime path/migration contract regression: " + repr(missing_runtime))
+          if "DATA_ROOT = INSTALL_ROOT /" in desktop or "DATA_ROOT = INSTALL_ROOT /" in core:
+              raise SystemExit("Installed writable data must not be coupled to the program directory")
 
           print("Packaging + version/update consistency OK:", dv)
           PY
@@ -166,6 +187,7 @@ jobs:
           core = Path("photo_curator.py").read_text(encoding="utf-8")
           tasks = Path("background_tasks.py").read_text(encoding="utf-8")
           desktop = Path("desktop_app.py").read_text(encoding="utf-8")
+          runtime_paths = Path("runtime_paths.py").read_text(encoding="utf-8")
           requirements = Path("requirements.txt").read_text(encoding="utf-8")
           workflow = Path(".github/workflows/build-release.yml").read_text(encoding="utf-8")
 
@@ -236,12 +258,24 @@ jobs:
               "退出 PhotoCurator",
               "def stop_analysis_and_wait",
               "stop_analysis_and_wait()",
+              "migrate_legacy_config(legacy_root, DATA_ROOT)",
+              'os.environ["PHOTOCURATOR_DATA_DIR"] = str(DATA_ROOT)',
           ]
           missing = [x for x in required_desktop if x not in desktop]
           if missing:
               raise SystemExit("desktop tray regression: " + repr(missing))
           if "pystray" not in requirements:
               raise SystemExit("pystray dependency missing")
+          required_runtime_paths = [
+              "def default_user_data_root",
+              "def resolve_data_root",
+              "def migrate_legacy_config",
+              "LOCALAPPDATA",
+              "PhotoCurator",
+          ]
+          missing_runtime_paths = [x for x in required_runtime_paths if x not in runtime_paths]
+          if missing_runtime_paths:
+              raise SystemExit("runtime path policy regression: " + repr(missing_runtime_paths))
           if "id: release_meta" not in workflow or "refs/tags/v1.5.0" in workflow:
               raise SystemExit("Manifest-driven tag release workflow missing or hardcoded")
 
@@ -473,7 +507,38 @@ jobs:
 
       - name: Compile Python sources
         run: |
-          python -m py_compile desktop_app.py photo_curator.py background_tasks.py photo_dedup_batch.py photo_file_organizer.py photo_ranking_engine.py photo_ranking_v3.py raw_loader.py "基础冒烟测试.py" "Codespaces冒烟测试.py" windows_smoke_test.py
+          python -m py_compile desktop_app.py runtime_paths.py photo_curator.py background_tasks.py photo_dedup_batch.py photo_file_organizer.py photo_ranking_engine.py photo_ranking_v3.py raw_loader.py "基础冒烟测试.py" "Codespaces冒烟测试.py" windows_smoke_test.py
+
+      - name: Runtime data path and migration smoke test
+        shell: powershell
+        run: |
+          @'
+          import os
+          import tempfile
+          from pathlib import Path
+          from runtime_paths import default_user_data_root, migrate_legacy_config
+
+          expected = Path(os.environ["LOCALAPPDATA"]) / "PhotoCurator" / "data"
+          if default_user_data_root() != expected:
+              raise SystemExit(f"wrong Windows data root: {default_user_data_root()} != {expected}")
+
+          with tempfile.TemporaryDirectory() as td:
+              root = Path(td)
+              legacy = root / "install" / "data"
+              target = root / "user" / "data"
+              cfg = legacy / "config"
+              cfg.mkdir(parents=True)
+              (cfg / "library_index.sqlite3").write_bytes(b"db")
+              (legacy / "cache").mkdir(parents=True)
+              (legacy / "cache" / "rebuildable.bin").write_bytes(b"cache")
+              if not migrate_legacy_config(legacy, target):
+                  raise SystemExit("legacy config migration did not run")
+              if (target / "config" / "library_index.sqlite3").read_bytes() != b"db":
+                  raise SystemExit("legacy config migration lost durable state")
+              if (target / "cache").exists():
+                  raise SystemExit("rebuildable cache should not be migrated")
+          print("Runtime data path/migration OK")
+          '@ | python -
 
       - name: Unicode path and background lifecycle smoke test
         run: |

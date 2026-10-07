@@ -13,24 +13,48 @@ import urllib.request
 import webbrowser
 from pathlib import Path
 
+from runtime_paths import (
+    legacy_frozen_data_root,
+    migrate_legacy_config,
+    resolve_data_root,
+)
+
 APP_TITLE = "照片筛选 · PhotoCurator 中文版"
 APP_VERSION = "1.5.0"
 HOST = "127.0.0.1"
 DEFAULT_PORT = 5014
 
 IS_FROZEN = bool(getattr(sys, "frozen", False))
+INSTALL_ROOT = (
+    Path(sys.executable).resolve().parent.parent
+    if IS_FROZEN else Path(__file__).resolve().parent
+)
+DATA_ROOT = resolve_data_root(frozen=IS_FROZEN)
+DATA_MIGRATION_WARNING = None
 if IS_FROZEN:
-    INSTALL_ROOT = Path(sys.executable).resolve().parent.parent
-    DATA_ROOT = INSTALL_ROOT / "data"
-else:
-    INSTALL_ROOT = Path(__file__).resolve().parent
-    DATA_ROOT = Path(os.environ.get("PHOTOCURATOR_DATA_DIR", "")).expanduser() if os.environ.get("PHOTOCURATOR_DATA_DIR") else (Path.home() / ".photo_curator")
+    legacy_root = legacy_frozen_data_root(INSTALL_ROOT)
+    try:
+        migrate_legacy_config(legacy_root, DATA_ROOT)
+    except Exception as exc:
+        # Never make an upgrade look like data loss. If the one-time migration
+        # cannot complete, continue from the legacy state and record a warning.
+        if legacy_root.exists():
+            DATA_ROOT = legacy_root
+        DATA_MIGRATION_WARNING = f"{type(exc).__name__}: {exc}"
+
 LOG_DIR = DATA_ROOT / "logs"
 try:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
 except Exception:
     pass
-os.environ.setdefault("PHOTOCURATOR_DATA_DIR", str(DATA_ROOT))
+os.environ["PHOTOCURATOR_DATA_DIR"] = str(DATA_ROOT)
+if DATA_MIGRATION_WARNING:
+    try:
+        (LOG_DIR / "data-migration-warning.log").write_text(
+            DATA_MIGRATION_WARNING, encoding="utf-8"
+        )
+    except Exception:
+        pass
 
 
 def _write_early_error_log():
@@ -276,7 +300,7 @@ def main():
         server.stop()
         raise RuntimeError(
             f"本地服务启动失败（端口 {PORT}）。"
-            "请重新启动 PhotoCurator；如仍失败，请查看安装目录 data/logs/startup-error.log。"
+            f"请重新启动 PhotoCurator；如仍失败，请查看 {LOG_DIR / 'startup-error.log'}。"
         )
 
     desktop_api = DesktopApi()
@@ -446,6 +470,11 @@ def self_test():
         raise RuntimeError("packaged HEIC support is unavailable")
 
     if IS_FROZEN:
+        try:
+            if DATA_ROOT.resolve() == legacy_frozen_data_root(INSTALL_ROOT).resolve():
+                raise RuntimeError("packaged writable data root is still coupled to the install directory")
+        except OSError:
+            pass
         icon_path = resource_path("packaging", "PhotoCurator.ico")
         if not icon_path.is_file():
             raise RuntimeError("packaged tray/taskbar icon is unavailable")
