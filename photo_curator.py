@@ -4185,7 +4185,6 @@ document.addEventListener('keydown',e=>{
   if(!modal.classList.contains('open'))return;
   if(e.key==='Escape'){e.preventDefault();closeDeleteDialog(null);}
   else if(e.key==='Enter'){e.preventDefault();closeDeleteDialog('trash');}
-  else if(e.key==='p'||e.key==='P'){e.preventDefault();closeDeleteDialog('permanent');}
 });
 let folder=null, photos=[], lbList=[], lbIndex=0, currentStep='cull', folderStatus={};
 let sourceCatalog=[], discoveredDevices=[], selectedSource=null, catalogRootView=null;
@@ -6345,6 +6344,14 @@ async function deletePhoto(step,path,fromLightbox=false){
   const name=p&&p.name?p.name:path.split(/[\\/]/).pop();
   const mode=await askDeleteMode(name);
   if(!mode)return;
+  if(mode==='permanent'){
+    const confirmed=await askBatchConfirm(
+      '确认永久删除',
+      '“'+name+'”将绕过 PhotoCurator 软件回收站并永久删除。此操作无法恢复。',
+      '永久删除'
+    );
+    if(!confirmed)return;
+  }
   try{
     const r=await fetch('/api/delete-photo',{
       method:'POST',headers:{'Content-Type':'application/json'},
