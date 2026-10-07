@@ -11,9 +11,9 @@ jobs:
   syntax:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
 
@@ -106,6 +106,7 @@ jobs:
               "if: startsWith(github.ref, 'refs/tags/v')",
               'tag_name: ' + gh_expr + ' github.ref_name }}',
               'files: release/' + gh_expr + ' steps.release_meta.outputs.installer }}',
+              'generate_release_notes: true',
           ]
           missing_release = [x for x in release_required if x not in build_workflow]
           if missing_release:
@@ -434,9 +435,9 @@ jobs:
   windows-smoke:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
 
