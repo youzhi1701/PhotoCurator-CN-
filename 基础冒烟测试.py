@@ -167,13 +167,15 @@ def main():
             safe = photo_curator._safe_image_path(str(p))
             assert_true(safe is not None, f"安全路径校验误拒绝：{p}")
 
-        # Built-in test data must always be available through the same API the
-        # sidebar uses. The canonical 12 files are persistent and may be
-        # replenished if a previous file-move test moved one away.
+        # Built-in test data is a realistic recursive fixture: 36 JPEGs across
+        # several subfolders, including a duplicate burst folder.
         demo_dir = Path(photo_curator.ensure_builtin_demo())
-        demo_files = sorted(p for p in demo_dir.iterdir() if p.suffix.lower() == ".jpg")
-        assert_true(len(demo_files) >= 12,
+        demo_files = sorted(p for p in demo_dir.rglob("*.jpg"))
+        demo_folders = {p.parent.relative_to(demo_dir) for p in demo_files}
+        assert_true(len(demo_files) >= 36,
                     f"内置测试数据数量不足：{len(demo_files)}")
+        assert_true(len(demo_folders) >= 6,
+                    f"内置测试数据子目录不足：{sorted(map(str, demo_folders))}")
 
         shortcuts = photo_curator.app.test_client().get(
             "/api/shortcuts",
@@ -184,8 +186,10 @@ def main():
         shortcut_data = shortcuts.get_json()
         assert_true(shortcut_data.get("demo_folder") == str(demo_dir.resolve()),
                     f"内置测试数据入口缺失：{shortcut_data}")
-        assert_true(shortcut_data.get("demo_count") == 12,
+        assert_true(shortcut_data.get("demo_count") == 36,
                     f"内置测试数据标称数量错误：{shortcut_data}")
+        assert_true(isinstance(shortcut_data.get("sources"), list),
+                    f"数据源目录接口缺少 sources：{shortcut_data}")
 
         # Verify the local HTTP endpoints also survive Unicode/special paths.
         client = photo_curator.app.test_client()
