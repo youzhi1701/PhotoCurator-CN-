@@ -3482,11 +3482,30 @@ document.getElementById('openRankTool').onclick=()=>{
 const taskCenter=document.getElementById('taskCenter');
 document.getElementById('taskToggle').onclick=()=>taskCenter.classList.toggle('open');
 document.getElementById('taskClose').onclick=()=>taskCenter.classList.remove('open');
-document.getElementById('appExit').onclick=()=>{
-  const msg=isRunning?'当前仍有分析任务在运行。确定停止并退出 PhotoCurator 吗？':'确定退出 PhotoCurator 吗？';
-  if(!confirm(msg))return;
-  if(isRunning&&runningStep)fetch('/api/stop/'+runningStep,{method:'POST'}).finally(()=>setTimeout(()=>nativeWindow('exit'),250));
-  else nativeWindow('exit');
+document.getElementById('appExit').onclick=async()=>{
+  let activeSteps=[];
+  try{
+    const rows=await Promise.all(['cull','dedup','rank'].map(step=>
+      fetch('/api/progress/'+step).then(r=>r.json()).then(d=>({step,running:!!d.running}))
+    ));
+    activeSteps=rows.filter(x=>x.running).map(x=>x.step);
+  }catch(_){
+    if(coreRunning)activeSteps.push('cull','dedup');
+    if(isRunning&&runningStep)activeSteps.push(runningStep);
+    activeSteps=[...new Set(activeSteps)];
+  }
+  const activeAny=activeSteps.length>0;
+  const msg=activeAny
+    ?'当前仍有分析任务在运行。退出前将先发送停止请求；已完成的分析结果和后台文件任务状态会继续保留。'
+    :'确定退出 PhotoCurator 吗？';
+  const ok=await askBatchConfirm('退出 PhotoCurator',msg,activeAny?'停止并退出':'退出');
+  if(!ok)return;
+  if(activeAny){
+    await Promise.allSettled(activeSteps.map(step=>fetch('/api/stop/'+step,{method:'POST'})));
+    setTimeout(()=>nativeWindow('exit'),250);
+  }else{
+    nativeWindow('exit');
+  }
 };
 function taskLabel(d){
   if(!d)return '待开始';
@@ -4003,21 +4022,37 @@ async function coreRun(){
   if(!folder){toast('请先选择照片文件夹','bad');return;}
   if(coreRunning||stateBusyFromUi()){return;}
   const cfg=snapshotPipelineConfig();
+  const coreSteps=['cull','dedup'];
   coreRunning=true;setStartBtn(true);
   document.getElementById('progressWrap').style.display='block';
   document.getElementById('progressText').textContent='正在启动模糊分析与相似分析…';
   try{
-    const responses=await Promise.all(['cull','dedup'].map(step=>fetch('/api/run/'+step,{
+    const settled=await Promise.allSettled(coreSteps.map(step=>fetch('/api/run/'+step,{
       method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify(corePayload(step,cfg))
     })));
-    const payloads=await Promise.all(responses.map(async r=>({ok:r.ok,data:await r.json().catch(()=>({}))})));
-    const failed=payloads.find(x=>!x.ok);
-    if(failed)throw new Error(failed.data.error||'核心分析启动失败');
+    const payloads=await Promise.all(settled.map(async(entry,i)=>{
+      const step=coreSteps[i];
+      if(entry.status==='rejected'){
+        return {step,ok:false,data:{error:entry.reason&&entry.reason.message?entry.reason.message:'网络请求失败'}};
+      }
+      const r=entry.value;
+      return {step,ok:r.ok,data:await r.json().catch(()=>({}))};
+    }));
+    const failed=payloads.filter(x=>!x.ok);
+    if(failed.length){
+      const started=payloads.filter(x=>x.ok).map(x=>x.step);
+      if(started.length){
+        await Promise.allSettled(started.map(step=>fetch('/api/stop/'+step,{method:'POST'})));
+      }
+      const detail=failed.map(x=>x.step+'：'+(x.data.error||'启动失败')).join('；');
+      throw new Error(detail||'核心分析启动失败');
+    }
     toast('已在后台同时启动：模糊废片分析 + 相似照片分析','good');
     pollCore();
   }catch(err){
     coreRunning=false;setStartBtn(false);
+    document.getElementById('progressText').textContent='核心分析未完整启动，已回滚已启动任务';
     toast('启动失败：'+(err.message||'未知错误'),'bad');
   }
 }
