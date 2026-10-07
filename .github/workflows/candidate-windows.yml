@@ -152,19 +152,10 @@ jobs:
               throw "Candidate desktop did not create a native Windows window within 20 seconds"
             }
 
-            Add-Type @"
-using System;
-using System.Runtime.InteropServices;
-public static class PhotoCuratorWindowProbe {
-    [DllImport("user32.dll", SetLastError=true)]
-    public static extern IntPtr SendMessageTimeout(
-        IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam,
-        uint fuFlags, uint uTimeout, out IntPtr lpdwResult);
-}
-"@
+            Add-Type -Namespace PhotoCurator -Name WindowProbe -MemberDefinition '[System.Runtime.InteropServices.DllImport("user32.dll", SetLastError=true)] public static extern System.IntPtr SendMessageTimeout(System.IntPtr hWnd, uint Msg, System.IntPtr wParam, System.IntPtr lParam, uint fuFlags, uint uTimeout, out System.IntPtr lpdwResult);'
             $result = [IntPtr]::Zero
             $SMTO_ABORTIFHUNG = 0x0002
-            $ok = [PhotoCuratorWindowProbe]::SendMessageTimeout(
+            $ok = [PhotoCurator.WindowProbe]::SendMessageTimeout(
               $p.MainWindowHandle, 0x0000, [IntPtr]::Zero, [IntPtr]::Zero,
               $SMTO_ABORTIFHUNG, 3000, [ref]$result
             )
