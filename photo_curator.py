@@ -2893,7 +2893,6 @@ def run_cull(folder, strictness, adaptive, rescue_on, recursive=True):
                     f"模糊 {s['blurry']} ({s['blurry']/k*100:.0f}%)")
 
         last_rel = None
-        last_status_tick = 0.0
         for idx, p in enumerate(images):
             if TASK_MANAGER.foreground_busy():
                 time.sleep(0.015)
@@ -3442,6 +3441,7 @@ def run_rank(folder, ftype='all', pair='both', recursive=True):
         rank_cache_buffer = []
 
         t0 = time.time()
+        last_status_tick = 0.0
 
         def _fmt(sec):
             sec = int(max(0, sec)); h, r = divmod(sec, 3600); m, s_ = divmod(r, 60)
