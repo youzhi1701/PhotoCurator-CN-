@@ -2880,6 +2880,7 @@ def run_cull(folder, strictness, adaptive, rescue_on, recursive=True):
             s['sharp_paths'] = kept   # kept = sharp + soft (flows to Dedup/Rank)
 
         t0 = time.time()
+        last_status_tick = 0.0
 
         def _fmt(sec):
             sec = int(max(0, sec)); h, r = divmod(sec, 3600); m, s_ = divmod(r, 60)
@@ -2892,6 +2893,7 @@ def run_cull(folder, strictness, adaptive, rescue_on, recursive=True):
                     f"模糊 {s['blurry']} ({s['blurry']/k*100:.0f}%)")
 
         last_rel = None
+        last_status_tick = 0.0
         for idx, p in enumerate(images):
             if TASK_MANAGER.foreground_busy():
                 time.sleep(0.015)
@@ -2911,12 +2913,15 @@ def run_cull(folder, strictness, adaptive, rescue_on, recursive=True):
                 return
             done = idx + 1
             s['progress'] = int(done / total * 100)
-            elapsed = time.time() - t0
-            rate = done / elapsed if elapsed > 0 else 0
-            eta = (total - done) / rate if rate > 0 else 0
-            s['status'] = (f"模糊筛选 {p.name}（{done}/{total}，{done/total*100:.0f}%）· "
-                           f"{_tiers(done)} · 已用时 {_fmt(elapsed)} · 预计剩余 {_fmt(eta)}")
-            cached = cull_cache.get(str(p))
+            status_tick = time.monotonic()
+            if done == 1 or done == total or status_tick - last_status_tick >= 0.12:
+                elapsed = time.time() - t0
+                rate = done / elapsed if elapsed > 0 else 0
+                eta = (total - done) / rate if rate > 0 else 0
+                s['status'] = (f"模糊筛选 {p.name}（{done}/{total}，{done/total*100:.0f}%）· "
+                               f"{_tiers(done)} · 已用时 {_fmt(elapsed)} · 预计剩余 {_fmt(eta)}")
+                last_status_tick = status_tick
+            cached = cull_cache.pop(str(p), None)
             if cached is not None:
                 region_s, quality = cached
                 s['cache_hits'] = int(s.get('cache_hits', 0)) + 1
@@ -3163,6 +3168,7 @@ def run_dedup(folder, threshold, ftype='all', pair='both',
         seen_paths = {str(p) for p in paths}
         kept = []
         t0 = time.time()
+        last_status_tick = 0.0
 
         def _fmt(sec):
             sec = int(max(0, sec)); h, r = divmod(sec, 3600); m, ss = divmod(r, 60)
@@ -3187,13 +3193,16 @@ def run_dedup(folder, threshold, ftype='all', pair='both',
                     break
                 processed += 1
                 s['progress'] = int(processed / total * 100)
-                elapsed = time.time() - t0
-                rate = processed / elapsed if elapsed > 0 else 0
-                eta = (total - processed) / rate if rate > 0 else 0
-                scope_txt = '全局对比' if compare_scope == 'global' else f'文件夹：{batch_label}'
-                s['status'] = (f"相似去重 · {scope_txt} · {p.name}（{processed}/{total}）· "
-                               f"已用时 {_fmt(elapsed)} · 预计剩余 {_fmt(eta)}")
-                cached_metrics = cull_metric_cache.get(str(p))
+                status_tick = time.monotonic()
+                if processed == 1 or processed == total or status_tick - last_status_tick >= 0.12:
+                    elapsed = time.time() - t0
+                    rate = processed / elapsed if elapsed > 0 else 0
+                    eta = (total - processed) / rate if rate > 0 else 0
+                    scope_txt = '全局对比' if compare_scope == 'global' else f'文件夹：{batch_label}'
+                    s['status'] = (f"相似去重 · {scope_txt} · {p.name}（{processed}/{total}）· "
+                                   f"已用时 {_fmt(elapsed)} · 预计剩余 {_fmt(eta)}")
+                    last_status_tick = status_tick
+                cached_metrics = cull_metric_cache.pop(str(p), None)
                 if cached_metrics is not None:
                     sharp = float(cached_metrics[0])
                 else:
@@ -3447,24 +3456,29 @@ def run_rank(folder, ftype='all', pair='both', recursive=True):
                 return
             done = idx + 1
             s['progress'] = int(done / total * 100)
-            elapsed = time.time() - t0
-            rate = done / elapsed if elapsed > 0 else 0
-            eta = (total - done) / rate if rate > 0 else 0
-            s['status'] = (f"智能优选 {p.name}（{done}/{total}，{done/total*100:.0f}%）· "
-                           f"已用时 {_fmt(elapsed)} · 预计剩余 {_fmt(eta)}")
-            sc = rank_cache_map.get(str(p))
+            status_tick = time.monotonic()
+            if done == 1 or done == total or status_tick - last_status_tick >= 0.12:
+                elapsed = time.time() - t0
+                rate = done / elapsed if elapsed > 0 else 0
+                eta = (total - done) / rate if rate > 0 else 0
+                s['status'] = (f"智能优选 {p.name}（{done}/{total}，{done/total*100:.0f}%）· "
+                               f"已用时 {_fmt(elapsed)} · 预计剩余 {_fmt(eta)}")
+                last_status_tick = status_tick
+            key = str(p)
+            sc = rank_cache_map.pop(key, None)
             if sc is not None:
                 s['cache_hits'] = int(s.get('cache_hits', 0)) + 1
             else:
                 sc = analyzer.analyze_image(str(p))
                 if sc:
-                    fp = rank_fingerprints.get(str(p))
-                    rank_cache_buffer.append((str(p), sc, fp[0], fp[1]) if fp else (str(p), sc))
+                    fp = rank_fingerprints.get(key)
+                    rank_cache_buffer.append((key, sc, fp[0], fp[1]) if fp else (key, sc))
                     if len(rank_cache_buffer) >= 32:
                         _save_rank_scores_batch(rank_cache_buffer)
                         rank_cache_buffer.clear()
             if sc:
                 s['scores'].append(sc)
+            rank_fingerprints.pop(key, None)
             s['analyzed'] = len(s['scores'])
         _save_rank_scores_batch(rank_cache_buffer)
         rank_cache_buffer.clear()
