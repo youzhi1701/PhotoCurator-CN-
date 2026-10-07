@@ -31,7 +31,8 @@ jobs:
             raw_loader.py \
             "基础冒烟测试.py" \
             "Codespaces冒烟测试.py" \
-            windows_smoke_test.py
+            windows_smoke_test.py \
+            ui_smoke_test.py
 
       - name: Parse GitHub Actions YAML
         run: |
@@ -553,6 +554,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install -r requirements-optional.txt
+          pip install "selenium>=4.25,<5"
 
       - name: Verify optional photo formats
         run: |
@@ -577,7 +579,7 @@ jobs:
 
       - name: Compile Python sources
         run: |
-          python -m py_compile desktop_app.py runtime_paths.py photo_curator.py background_tasks.py photo_dedup_batch.py photo_file_organizer.py photo_ranking_engine.py photo_ranking_v3.py raw_loader.py "基础冒烟测试.py" "Codespaces冒烟测试.py" windows_smoke_test.py
+          python -m py_compile desktop_app.py runtime_paths.py photo_curator.py background_tasks.py photo_dedup_batch.py photo_file_organizer.py photo_ranking_engine.py photo_ranking_v3.py raw_loader.py "基础冒烟测试.py" "Codespaces冒烟测试.py" windows_smoke_test.py ui_smoke_test.py
 
       - name: Runtime data path and migration smoke test
         shell: powershell
@@ -613,6 +615,10 @@ jobs:
       - name: Unicode path and background lifecycle smoke test
         run: |
           python "基础冒烟测试.py"
+
+      - name: Real desktop UI interaction smoke test
+        run: |
+          python ui_smoke_test.py
 
       - name: Codespaces forwarding security smoke test
         run: |
