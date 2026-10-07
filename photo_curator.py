@@ -3396,6 +3396,22 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
 <div id="cn-build-badge" style="position:fixed;right:10px;bottom:8px;z-index:50;font-size:10px;color:var(--muted);opacity:.55;pointer-events:none">照片筛选 · 中文桌面版 v{{ app_version }}</div>
 
 <script>
+function reportUiFatal(reason){
+  const msg=String((reason&&reason.message)||reason||'未知前端错误');
+  document.documentElement.dataset.uiFatal='1';
+  console.error('PhotoCurator UI fatal:',reason);
+  let box=document.getElementById('uiFatalBanner');
+  if(!box){
+    box=document.createElement('div');
+    box.id='uiFatalBanner';
+    box.style.cssText='position:fixed;left:18px;right:18px;top:66px;z-index:9999;padding:12px 14px;border-radius:12px;background:#fff1f2;border:1px solid #fecdd3;color:#9f1239;font:600 12px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;box-shadow:0 12px 40px rgba(127,29,29,.18)';
+    document.body.appendChild(box);
+  }
+  box.textContent='界面运行异常，部分按钮可能不可用。请重启 PhotoCurator；若仍出现，请查看运行日志。错误：'+msg;
+}
+window.addEventListener('error',e=>reportUiFatal(e.error||e.message));
+window.addEventListener('unhandledrejection',e=>reportUiFatal(e.reason));
+
 function toast(msg,type){
   const w=document.getElementById('toastWrap');
   const el=document.createElement('div');el.className='toast '+(type||'good');el.textContent=msg;
@@ -5395,7 +5411,9 @@ document.getElementById('moveBlurryBtn').onclick=async function(){
   }finally{
     this.disabled=false;updateCullMoveButton();
   }
-}</script></body></html>'''
+}
+document.documentElement.dataset.uiReady='1';
+</script></body></html>'''
 
 
 # --------------------------------------------------------------------------- #
