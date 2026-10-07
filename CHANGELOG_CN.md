@@ -1,3 +1,13 @@
+## v1.5.5
+
+### Windows 壳层死锁修复
+- 根据 Windows 实机出现的 **“PhotoCurator（未响应）”** 复现，确认 v1.5.4 仍存在桌面壳层风险。
+- 移除运行期对 pywebview 原生 WinForms 对象、窗口 Handle 和 DWM 标题栏接口的跨线程访问。
+- 保留原生 Windows frame，但不再从 Python 工作线程修改标题栏；WebView2 / WinForms GUI 消息循环保持单一所有者。
+- 启动回调仅负责系统托盘初始化，不再探测原生句柄或进行 DWM 主题循环。
+- CI 增加反回归约束，禁止重新引入 window.native、DwmSetWindowAttribute、SetWindowTextW 和原生标题栏主题函数。
+- 发布元数据区分“目标构建版本”和“已实际发布版本”，README 不再把尚未生成的 EXE 当成可下载正式版。
+
 ## v1.5.4
 
 - Windows 桌面壳恢复原生系统窗口：`frameless=False`，拖动、最大化、还原、Snap、任务栏避让全部交给 Windows
