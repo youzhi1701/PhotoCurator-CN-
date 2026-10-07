@@ -359,8 +359,14 @@ def refresh_connections(db_path):
         db.commit()
 
 
-def list_sources(db_path):
-    refresh_connections(db_path)
+def list_sources(db_path, *, refresh=True):
+    """List persisted sources without forcing hardware probes on first paint.
+
+    Use refresh=False for fast UI startup; refresh physical device state in
+    a later background request.
+    """
+    if refresh:
+        refresh_connections(db_path)
     with _connect(db_path) as db:
         rows = db.execute(
             """SELECT s.*,r.root_id,r.relative_root,r.original_root,r.current_root,
