@@ -19,8 +19,8 @@ from runtime_paths import (
     resolve_data_root,
 )
 
-APP_TITLE = "照片筛选 · PhotoCurator 中文版"
-APP_VERSION = "1.5.0"
+APP_TITLE = "PhotoCurator"
+APP_VERSION = "1.5.4"
 HOST = "127.0.0.1"
 DEFAULT_PORT = 5014
 
@@ -127,11 +127,21 @@ else:
 
 
 def choose_port():
-    """Prefer 5014 for compatibility, otherwise ask Windows for a free port."""
+    """Prefer the requested/standard local port, otherwise ask Windows for a free one."""
+    preferred = DEFAULT_PORT
+    requested = os.environ.get("PHOTOCURATOR_PORT", "").strip()
+    if requested:
+        try:
+            candidate = int(requested)
+            if 1024 <= candidate <= 65535:
+                preferred = candidate
+        except ValueError:
+            pass
+
     probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
-        probe.bind((HOST, DEFAULT_PORT))
-        return DEFAULT_PORT
+        probe.bind((HOST, preferred))
+        return preferred
     except OSError:
         probe.close()
         probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -292,6 +302,45 @@ def wait_until_ready(timeout=15.0):
     return False
 
 
+def _colorref(hex_color):
+    value = str(hex_color).lstrip("#")
+    r, g, b = (int(value[i:i + 2], 16) for i in (0, 2, 4))
+    return r | (g << 8) | (b << 16)
+
+
+def apply_windows_titlebar_theme(timeout=6.0):
+    """Theme the native Windows caption without replacing the system frame."""
+    if os.name != "nt":
+        return False
+    try:
+        import ctypes
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        dwmapi = ctypes.WinDLL("dwmapi", use_last_error=True)
+        deadline = time.monotonic() + max(0.5, float(timeout))
+        hwnd = 0
+        while time.monotonic() < deadline and not hwnd:
+            hwnd = user32.FindWindowW(None, APP_TITLE)
+            if not hwnd:
+                time.sleep(0.05)
+        if not hwnd:
+            return False
+
+        def set_attr(attr, value, ctype=ctypes.c_int):
+            data = ctype(value)
+            return dwmapi.DwmSetWindowAttribute(
+                hwnd, int(attr), ctypes.byref(data), ctypes.sizeof(data)
+            ) == 0
+
+        set_attr(20, 0)
+        set_attr(33, 2)
+        set_attr(34, _colorref("#B8C7D9"), ctypes.c_uint)
+        set_attr(35, _colorref("#DDEAF5"), ctypes.c_uint)
+        set_attr(36, _colorref("#17233B"), ctypes.c_uint)
+        return True
+    except Exception:
+        return False
+
+
 def main():
     server = LocalServer()
     server.start()
@@ -317,7 +366,7 @@ def main():
         confirm_close=False,
         text_select=True,
         background_color="#eef7ff",
-        frameless=True,
+        frameless=False,
         easy_drag=False,
     )
 
@@ -407,6 +456,13 @@ def main():
     window.events.closing += on_closing
 
     try:
+        if os.name == "nt":
+            threading.Thread(
+                target=apply_windows_titlebar_theme,
+                name="photocurator-titlebar-theme",
+                daemon=True,
+            ).start()
+
         # On Windows force Edge WebView2. Falling back to IE/MSHTML would open
         # a window but break the modern UI, which is worse than a clear error.
         if os.name == 'nt':
@@ -503,11 +559,38 @@ def self_test():
             if response.status != 200:
                 raise RuntimeError("packaged vendor resources are unavailable")
 
-        with urllib.request.urlopen(URL + "/api/shortcuts", timeout=5.0) as response:
+        with urllib.request.urlopen(URL + "/api/health", timeout=3.0) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+            if payload.get("version") != APP_VERSION:
+                raise RuntimeError(f"packaged health/version mismatch: {payload}")
+
+        with urllib.request.urlopen(URL + "/api/bootstrap", timeout=3.0) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+            if payload.get("version") != APP_VERSION:
+                raise RuntimeError(f"bootstrap/version mismatch: {payload}")
+
+        req = urllib.request.Request(URL + "/api/demo/prepare", method="POST")
+        with urllib.request.urlopen(req, timeout=8.0) as response:
             payload = json.loads(response.read().decode("utf-8"))
             if payload.get("demo_count") != 12:
                 raise RuntimeError(f"packaged writable data test failed: {payload}")
 
+        return 0
+    finally:
+        server.stop()
+
+
+def ci_probe(duration=24.0):
+    """Run the packaged local service long enough for CI responsiveness probes."""
+    server = LocalServer()
+    server.start()
+    try:
+        if not wait_until_ready(timeout=12.0):
+            raise RuntimeError("CI probe local server did not become ready")
+        print(f"PHOTOCURATOR_CI_READY={URL}", flush=True)
+        deadline = time.monotonic() + max(21.0, float(duration))
+        while time.monotonic() < deadline:
+            time.sleep(0.2)
         return 0
     finally:
         server.stop()
@@ -533,6 +616,9 @@ if __name__ == "__main__":
     try:
         if "--self-test" in sys.argv:
             raise SystemExit(self_test())
+        if "--ci-probe" in sys.argv:
+            duration = float(os.environ.get("PHOTOCURATOR_CI_PROBE_SECONDS", "24"))
+            raise SystemExit(ci_probe(duration))
         main()
     except SystemExit:
         raise
