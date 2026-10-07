@@ -479,7 +479,7 @@ jobs:
           print("Core workflow / large-library guards OK")
           PY
 
-      - name: Check native Windows shell contract
+      - name: Check stable Windows shell contract
         run: |
           python - <<'PY'
           from pathlib import Path
@@ -490,15 +490,17 @@ jobs:
 
           required = (
               'APP_TITLE = "PhotoCurator"',
-              "frameless=False",
+              "frameless=True",
               "maximized=True",
               "resizable=True",
               "min_size=(860, 600)",
-              "webview.start(after_webview_start",
+              "webview.start(gui='edgechromium'",
+              "tray.run_detached()",
+              "def window_action(self, action)",
           )
           missing = [item for item in required if item not in desktop]
           if missing:
-              raise SystemExit("Native Windows shell contract missing: " + repr(missing))
+              raise SystemExit("Stable Windows shell contract missing: " + repr(missing))
 
           forbidden_desktop = (
               "window.events.closing +=",
@@ -508,24 +510,27 @@ jobs:
               "DwmSetWindowAttribute",
               "SetWindowTextW",
               "apply_native_titlebar_theme",
+              "def after_webview_start",
+              "webview.start(after_webview_start",
           )
           bad = [item for item in forbidden_desktop if item in desktop]
           if bad:
               raise SystemExit(
-                  "Native window must not re-enter pywebview lifecycle events: "
+                  "Windows shell must not re-enter pywebview lifecycle/native handles: "
                   + repr(bad)
               )
 
-          forbidden_ui = (
+          required_chrome = (
               'id="winMin"',
               'id="winMax"',
               'id="winClose"',
               "function nativeWindow(action)",
               "pywebview-drag-region",
+              'class="app-brand"',
           )
-          bad_ui = [item for item in forbidden_ui if item in ui]
-          if bad_ui:
-              raise SystemExit("Custom desktop chrome leaked back into UI: " + repr(bad_ui))
+          missing_chrome = [item for item in required_chrome if item not in ui]
+          if missing_chrome:
+              raise SystemExit("Stable frameless desktop chrome missing: " + repr(missing_chrome))
 
           required_ui = (
               'class="workspace-tabs"',
@@ -539,7 +544,7 @@ jobs:
           )
           missing_ui = [item for item in required_ui if item not in ui]
           if missing_ui:
-              raise SystemExit("v1.5.5 workspace contract missing: " + repr(missing_ui))
+              raise SystemExit("v1.5.6 workspace contract missing: " + repr(missing_ui))
 
           shortcuts = core.split("@app.route('/api/shortcuts')", 1)[1].split(
               "@app.route('/api/sources')", 1
