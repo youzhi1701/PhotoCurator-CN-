@@ -136,6 +136,22 @@ def main():
         assert_true(all(custom_inside not in p.parents for p in shared_custom),
                     f"共享扫描快照错误复用了未排除自定义目录的旧结果：{shared_custom}")
 
+        # The snapshot cache may legitimately reuse the earlier source-mode
+        # entry until max_age expires. The regression boundary is key identity:
+        # source and custom configurations must coexist as distinct entries.
+        snapshot_keys = list(photo_curator._SCAN_SNAPSHOTS)
+        custom_real = os.path.normcase(os.path.realpath(str(custom_inside)))
+        assert_true(
+            any(len(k) >= 4 and k[2] == "source" and k[3] == ""
+                for k in snapshot_keys),
+            f"共享扫描缓存缺少 source 配置身份：{snapshot_keys}",
+        )
+        assert_true(
+            any(len(k) >= 4 and k[2] == "custom" and k[3] == custom_real
+                for k in snapshot_keys),
+            f"共享扫描缓存缺少 custom 配置身份：{snapshot_keys}",
+        )
+
         photo_curator.state["scan"].update({
             "output_mode": "source",
             "custom_output": "",
@@ -143,9 +159,8 @@ def main():
         shared_source_again = photo_curator._shared_list_images(
             root, recursive=True, max_age=60.0
         )
-        custom_probe = custom_inside / "不应扫描_自定义.jpg"
-        assert_true(custom_probe in shared_source_again,
-                    "切回源目录模式后错误复用了 custom 输出排除快照")
+        assert_true(shared_source_again == shared_first,
+                    "切回 source 配置后没有复用原 source 快照")
 
         photo_curator.state["folder"] = str(root)
         for p in found:
