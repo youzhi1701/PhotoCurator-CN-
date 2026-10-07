@@ -1,8 +1,8 @@
 {
   "product": "PhotoCurator",
   "channel": "stable",
-  "version": "1.5.5",
-  "installer": "PhotoCurator-Setup-v1.5.5.exe",
+  "version": "1.5.6",
+  "installer": "PhotoCurator-Setup-v1.5.6.exe",
   "upgrade_mode": "in_place",
   "same_app_id": true,
   "data_root": "%LOCALAPPDATA%/PhotoCurator/data",
@@ -22,7 +22,7 @@
   "replace": [
     "app"
   ],
-  "notes": "v1.5.5 Windows 壳稳定性修复：彻底移除运行时跨线程 WinForms Handle / DWM 标题栏操作，保留原生 frame 与 WebView2 单一 GUI 消息循环；首屏继续保持零阻塞，Dashboard/照片视图、设备身份、离线图库、持久索引和安全覆盖升级机制保持不变。",
+  "notes": "v1.5.6 Windows 实机稳定性修复：撤回 v1.5.4 起的原生 WinForms frame 路径，恢复已在同一台 Windows 机器验证稳定的 frameless WebView2 生命周期；托盘在 GUI loop 前初始化，webview.start 不再挂启动回调；保留单层自定义标题栏以及 v1.5.x 的数据源、离线图库、Dashboard/照片视图、持久索引等功能。",
   "release_date": "2026-10-07",
   "published_version": "1.5.0",
   "published_installer": "PhotoCurator-Setup-v1.5.0.exe"
