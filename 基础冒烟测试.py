@@ -471,6 +471,18 @@ def main():
         # All destructive operations are asynchronous and expose task state.
         photo_curator.state["folder"] = str(root)
 
+        # Two historical trash rows can point back to the same original path.
+        # Destination planning must reserve the first future path before the
+        # second task starts, otherwise restore-all would make task #2 fail.
+        repeated_original = root / "同一路径重复恢复.jpg"
+        first_restore_plan = photo_curator._unique_destination(repeated_original)
+        reserved_restore = {photo_curator._path_reservation_key(first_restore_plan)}
+        second_restore_plan = photo_curator._unique_destination(
+            repeated_original, reserved=reserved_restore
+        )
+        assert_true(first_restore_plan != second_restore_plan,
+                    "恢复目标预订没有避开同批次已规划的同名路径")
+
         # Fault injection: simulate a hard stop after the file rename but before
         # the background task committed its metadata. The persisted destination
         # in payload_json must make both move and restore operations recoverable.
