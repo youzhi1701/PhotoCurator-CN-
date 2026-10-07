@@ -11,6 +11,8 @@
 > 如需查看版本说明，可前往 [v1.5.0 Release](https://github.com/youzhi1701/PhotoCurator-CN-/releases/tag/v1.5.0)。
 <!-- LATEST_RELEASE_END -->
 
+> 🧪 当前修复测试版本：**v1.5.4**（尚未正式发布；正式下载仍以上方 v1.5.0 为准）
+
 > 面向大图库的 Windows 照片清理工具。v1.5.0 将主流程收敛为 **模糊废片筛选 → 相似照片筛选 → 软件回收站复核**，并重构前后台运行机制。
 
 | 项目 | 信息 |
