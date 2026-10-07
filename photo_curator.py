@@ -2954,8 +2954,8 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
     <div class="sidebar-actions">
       <button class="btn-ghost" id="exportBtn" style="display:none">⬇ 导出优选照片…</button>
       <button class="btn-ghost" id="exportPbgBtn" style="display:none">📱 导出手机壁纸…</button>
-      <button class="btn-ghost" id="moveBlurryBtn" style="display:none">🗂️ 移动模糊照片 → Blurred（模糊照片）</button>
-      <button class="btn cta" id="dedupApplyBtn" style="display:none">✓ 确认处理未保留照片</button>
+      <button class="btn-ghost" id="moveBlurryBtn" style="display:none">🗑 将选中模糊照片移入软件回收站</button>
+      <button class="btn cta" id="dedupApplyBtn" style="display:none!important" aria-hidden="true">旧版批量处理</button>
       <button class="btn" id="startBtn">▶ 开始分析</button>
       <button class="btn-ghost sidebar-collapse" id="sidebarCollapse" title="收起/展开侧栏">⇤ 收起侧栏</button>
       <button class="btn god" id="godBtn" style="display:none" aria-hidden="true">内部全流程</button>
@@ -4828,30 +4828,25 @@ document.getElementById('exportPbgBtn').onclick=async function(){
 document.getElementById('moveBlurryBtn').onclick=async function(){
   const before=cullMoveCounts();
   if(!before.selected)return;
-  if(!confirm('是否移动已选择的 '+before.selected+' 张“模糊”照片？\n\n将按当前存放位置设置进入 Blurred（模糊照片）结果目录；未勾选照片保留原位，只移动，不删除。'))return;
-  this.disabled=true;this.textContent='正在移动 '+before.selected+' 张…';
+  const ok=await askBatchConfirm(
+    '批量移入软件回收站',
+    '将选中的 '+before.selected+' 张模糊照片移入 PhotoCurator 软件回收站。之后仍可恢复。',
+    '移入回收站'
+  );
+  if(!ok)return;
+  this.disabled=true;this.textContent='正在提交 '+before.selected+' 张…';
   try{
     const r=await fetch('/api/move-blurry',{method:'POST'});
     const d=await r.json();
     if(!r.ok||d.error)throw new Error(d.error||('HTTP '+r.status));
-    const extra=d.failed?('；'+d.failed+' 张失败'):'';
-    toast('✓ 已移动 '+d.moved+' 张'+extra+'\n'+d.dest,d.failed?'bad':'good');
-
-    // Pull the authoritative paths/selections back after files were moved so
-    // thumbnails, large-image viewing and later actions never keep stale paths.
-    const pr=await fetch('/api/progress/cull');
-    if(pr.ok){
-      const snap=await pr.json();
-      photos=snap.photos||[];
-      lastCullSig='';lastCullMoveSig='';renderCullStep(photos);
-    }
+    toast('已提交后台处理 '+(d.queued||0)+' 张模糊照片','good');
+    lastCullSig='';lastCullMoveSig='';renderCullStep(photos);refreshTaskCenter();
   }catch(err){
-    toast('移动失败：'+(err.message||'未知错误'),'bad');
+    toast('提交失败：'+(err.message||'未知错误'),'bad');
   }finally{
     this.disabled=false;updateCullMoveButton();
   }
-};
-</script></body></html>'''
+}</script></body></html>'''
 
 
 # --------------------------------------------------------------------------- #
@@ -5434,115 +5429,34 @@ def api_dedup_group_action():
 
 @app.route('/api/dedup-apply', methods=['POST'])
 def api_dedup_apply():
-    """Move non-selected members only after the user explicitly confirms."""
-    blocked = _reject_mutation_while_running()
-    if blocked:
-        return blocked
+    """Compatibility batch action: queue non-kept duplicates into software trash."""
     folder = state.get('folder')
     s = state['dedup']
     if not folder or not Path(folder).is_dir():
         return jsonify({'error': '未选择有效的照片文件夹'}), 400
-    if not s.get('complete'):
-        return jsonify({'error': '请先完成相似照片筛选'}), 409
-    if s.get('applied'):
-        return jsonify({'ok': True, 'moved': 0, 'already_applied': True})
     _sync_dedup_with_cull()
     allowed = _cull_allowed_for_dedup()
-    dups = []
+    queued = []
     for group in s.get('groups_data', []):
-        if group.get('count', 0) <= 1:
+        if group.get('status') not in ('reviewed',):
             continue
         selected = set(group.get('selected_paths') or [])
-        dups.extend(m.get('path') for m in group.get('members', [])
-                    if m.get('path')
-                    and (allowed is None or m.get('path') in allowed)
-                    and m.get('path') not in selected)
-    if not dups:
-        s['applied'] = True
-        return jsonify({'ok': True, 'moved': 0,
-                        'dest': '按当前“处理文件存放位置”规则'})
-    try:
-        prefs = state.get('scan', {})
-        result = _move_reviewed_files(
-            dups, 'Duplicates', folder,
-            prefs.get('output_mode', 'source'), prefs.get('custom_output', '')
-        )
-        moved = int(result.get('moved', 0) or 0)
-        failed = int(result.get('failed', 0) or 0)
-        moved_old = {row.get('old') for row in result.get('destinations', []) if row.get('old')}
-
-        if moved_old:
-            # Processed duplicates leave the active source workspace. Keeping
-            # stale old paths in Cull/Rank made cards point at files that had
-            # already moved into PhotoCurator_Result.
-            for old in moved_old:
-                _delete_review_override(old)
-                state['excluded'].discard(old)
-                state['phone_bg'].discard(old)
-
-            cull = state['cull']
-            cull['photos'] = [p for p in cull.get('photos', [])
-                              if p.get('path') not in moved_old]
-            cull['sharp_paths'] = [p for p in cull.get('sharp_paths', [])
-                                   if p not in moved_old]
-            cull.setdefault('removed_paths', set()).update(moved_old)
-            cull['sharp'] = sum(1 for p in cull['photos'] if p.get('tier') == 'sharp')
-            cull['soft'] = sum(1 for p in cull['photos'] if p.get('tier') == 'soft')
-            cull['blurry'] = sum(1 for p in cull['photos'] if p.get('tier') == 'blurry')
-
-            rank = state['rank']
-            rank['scores'] = [sc for sc in rank.get('scores', [])
-                              if getattr(sc, 'path', None) not in moved_old]
-            rank['total'] = len(rank['scores'])
-            rank['preview_at'] = 0.0
-
-            if isinstance(s.get('seen_paths'), set):
-                s['seen_paths'].difference_update(moved_old)
-
-        # Remove successfully moved (or externally missing) non-kept members
-        # from the review state. Failed files that still exist remain visible,
-        # so the user can retry instead of seeing stale cards pointing at files
-        # that have already moved away.
-        for group in s.get('groups_data', []):
-            selected_set = set(group.get('selected_paths') or [])
-            remaining = []
-            for member in group.get('members', []):
-                p = member.get('path')
-                if p in selected_set or (p and Path(p).is_file()):
-                    remaining.append(member)
-            group['members'] = remaining
-            group['count'] = len(remaining)
-
-        s['groups_data'] = [g for g in s.get('groups_data', []) if g.get('members')]
-        _sync_dedup_with_cull()
-        state['rank']['preview'] = build_topn()
-        state['rank']['preview_at'] = time.time()
-        unresolved = []
-        allowed_after = _cull_allowed_for_dedup()
-        for group in s['groups_data']:
-            selected_set = set(group.get('selected_paths') or [])
-            if any(
-                m.get('path') not in selected_set
-                and (allowed_after is None or m.get('path') in allowed_after)
-                for m in group.get('members', [])
-            ):
-                unresolved.append(group)
-        s['photos'] = unresolved
-        s['applied'] = not unresolved
-        s['status'] = (
-            f"{'处理完成' if not unresolved else '部分处理完成'} · "
-            f"已移动 {moved} 张未保留照片"
-            + (f" · {failed} 张失败，可再次尝试" if failed else '')
-        )
-        return jsonify({'ok': not unresolved, 'moved': moved, 'failed': failed,
-                        'photos': s['photos'][:UI_RESULT_CHUNK],
-                        'result_total': len(s['photos']),
-                        'truncated': len(s['photos']) > UI_RESULT_CHUNK,
-                        'duplicate_groups': len(s['photos']),
-                        'dest': '按当前“处理文件存放位置”规则'})
-    except Exception as e:
-        logger.warning(f"dedup apply failed: {e}")
-        return jsonify({'error': f'处理相似照片失败：{e}'}), 500
+        for m in group.get('members', []):
+            p = m.get('path')
+            if not p or p in selected:
+                continue
+            if m.get('lifecycle') in ('pending_trash','pending_permanent_delete','trashed','permanently_deleted'):
+                continue
+            if allowed is not None and p not in allowed:
+                continue
+            original = _find_original_for_path(p)
+            _apply_media_lifecycle(original, p, 'pending_trash', 'dedup')
+            task_id, _ = TASK_MANAGER.enqueue(
+                'move_to_trash', {'path': p, 'folder': str(folder), 'step': 'dedup'},
+                priority=12, idempotency_key=f"move_to_trash:{original}"
+            )
+            queued.append(task_id)
+    return jsonify({'ok': True, 'queued': len(queued), 'task_ids': queued}), 202
 
 
 def _known_step_paths(step):
@@ -5885,57 +5799,31 @@ def api_select_blurry():
 
 @app.route('/api/move-blurry', methods=['POST'])
 def api_move_blurry():
-    """Move reviewed Blurry-tier photos only after explicit user action."""
-    blocked = _reject_mutation_while_running()
-    if blocked:
-        return blocked
+    """Queue selected blurry photos into PhotoCurator software trash."""
     folder = state.get('folder')
     if not folder or not Path(folder).is_dir():
         return jsonify({'error': '未选择有效的照片文件夹'}), 400
-
-    blurry_photos = [
+    rows = [
         pp for pp in state['cull'].get('photos', [])
-        if pp.get('tier') == 'blurry' and pp.get('move_selected', True)
+        if pp.get('tier') == 'blurry'
+        and pp.get('move_selected', True)
+        and pp.get('lifecycle') not in
+        ('pending_trash','pending_permanent_delete','trashed','permanently_deleted')
+        and pp.get('path')
     ]
-    if not blurry_photos:
-        return jsonify({'ok': True, 'moved': 0, 'dest': '无待移动照片'})
-
-    prefs = state.get('scan', {})
-    original_paths = [p.get('path') for p in blurry_photos if p.get('path')]
-    result = _move_reviewed_files(
-        original_paths, 'Blurred', folder,
-        prefs.get('output_mode', 'source'), prefs.get('custom_output', '')
-    )
-    moved_map = {row['old']: row['new'] for row in result.get('destinations', [])}
-    moved_old = set(moved_map)
-
-    if moved_old:
-        for old in moved_old:
-            _delete_review_override(old)
-            state['excluded'].discard(old)
-            state['phone_bg'].discard(old)
-        cull = state['cull']
-        cull['photos'] = [p for p in cull.get('photos', []) if p.get('path') not in moved_old]
-        cull['sharp_paths'] = [p for p in cull.get('sharp_paths', []) if p not in moved_old]
-        cull.setdefault('removed_paths', set()).update(moved_old)
-        cull['sharp'] = sum(1 for p in cull['photos'] if p.get('tier') == 'sharp')
-        cull['soft'] = sum(1 for p in cull['photos'] if p.get('tier') == 'soft')
-        cull['blurry'] = sum(1 for p in cull['photos'] if p.get('tier') == 'blurry')
-
-        rank = state['rank']
-        rank['scores'] = [sc for sc in rank.get('scores', [])
-                          if getattr(sc, 'path', None) not in moved_old]
-        rank['total'] = len(rank['scores'])
-        rank['preview'] = build_topn()
-        rank['preview_at'] = time.time()
-        _sync_dedup_with_cull()
-
+    task_ids = []
+    for pp in rows:
+        path = str(pp['path'])
+        original = _find_original_for_path(path)
+        _apply_media_lifecycle(original, path, 'pending_trash', 'cull')
+        task_id, _ = TASK_MANAGER.enqueue(
+            'move_to_trash', {'path': path, 'folder': str(folder), 'step': 'cull'},
+            priority=12, idempotency_key=f"move_to_trash:{original}"
+        )
+        task_ids.append(task_id)
     selected_left, blurry_total = _blurry_move_counts()
-    return jsonify({'ok': result.get('failed', 0) == 0,
-                    'moved': result.get('moved', 0),
-                    'failed': result.get('failed', 0),
-                    'selected': selected_left, 'total': blurry_total,
-                    'dest': '按当前“处理文件存放位置”规则'})
+    return jsonify({'ok': True, 'queued': len(task_ids), 'task_ids': task_ids,
+                    'selected': selected_left, 'total': blurry_total}), 202
 
 
 @app.route('/api/export', methods=['POST'])
