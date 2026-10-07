@@ -678,7 +678,7 @@ def _prune_index_db():
 threading.Thread(target=_prune_index_db, daemon=True,
                  name='photocurator-index-prune').start()
 
-APP_VERSION = "1.5.6"
+APP_VERSION = "1.5.7"
 IS_CODESPACES = os.environ.get('CODESPACES', '').strip().lower() == 'true'
 CODESPACE_NAME = os.environ.get('CODESPACE_NAME', '').strip()
 _CODESPACES_DOMAIN_RAW = os.environ.get(
@@ -6255,19 +6255,19 @@ def api_shortcuts():
 
 @app.route('/api/environment-refresh')
 def api_environment_refresh():
-    # This is intentionally separate from first paint.
+    # Periodic refresh is presence-only.  Never crawl DCIM or touch every
+    # mounted filesystem from this timer path: a sleeping/slow USB disk can
+    # stall Windows for long enough to make the pywebview host look hung.
+    started = time.monotonic()
     try:
         sources = catalog_list_sources(INDEX_DB, refresh=True)
     except Exception:
         sources = []
         logger.warning("data source connection refresh failed", exc_info=True)
-    sd = []
-    if not CODESPACES_PUBLIC_HOST:
-        try:
-            sd = detect_sd_cards()
-        except Exception:
-            logger.warning("camera-card detection failed", exc_info=True)
-    return jsonify({'sources': sources, 'sd': sd})
+    elapsed = time.monotonic() - started
+    if elapsed > 1.0:
+        logger.warning("slow environment refresh: %.3fs", elapsed)
+    return jsonify({'sources': sources, 'sd': [], 'elapsed_ms': int(elapsed * 1000)})
 
 
 @app.route('/api/demo-status')
