@@ -1246,25 +1246,60 @@ def _trash_destination(src, root):
     return _unique_destination(base / src.name)
 
 
-def _move_to_software_trash(src, root, source_step):
-    """Move one source photo into PhotoCurator's own reversible recycle bin."""
+def _ensure_software_trash_record(original, trash_path, source_step):
+    """Idempotently persist one reversible-trash record and return its id."""
+    original = os.path.realpath(str(original))
+    trash_path = os.path.realpath(str(trash_path))
+    with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=15) as db:
+        row = db.execute(
+            "SELECT id FROM software_trash WHERE trash_path=?",
+            (trash_path,)
+        ).fetchone()
+        if row:
+            return int(row[0])
+        db.execute(
+            """INSERT INTO software_trash(original_path,trash_path,source_step,deleted_at)
+               VALUES(?,?,?,?)""",
+            (original, trash_path, str(source_step or ''), time.time())
+        )
+        trash_id = int(db.execute("SELECT last_insert_rowid()").fetchone()[0])
+        db.commit()
+    return trash_id
+
+
+def _move_to_software_trash(src, root, source_step, planned_trash_path=None):
+    """Move one photo into the reversible trash using a persisted planned path.
+
+    The planned path is stored in the background-task payload before filesystem
+    work starts. A retried task can therefore reconcile a move that completed
+    just before the previous process stopped.
+    """
     src = Path(src)
-    dst = _trash_destination(src, root)
     original = str(src.resolve())
+    root = Path(root).resolve()
+    if planned_trash_path:
+        dst = Path(planned_trash_path).resolve()
+        trash_root = (root / SOFTWARE_TRASH_DIR).resolve()
+        try:
+            if os.path.commonpath([
+                os.path.normcase(str(dst)), os.path.normcase(str(trash_root))
+            ]) != os.path.normcase(str(trash_root)):
+                raise ValueError("后台回收站目标超出当前照片库")
+        except ValueError:
+            raise
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        if dst.exists():
+            raise FileExistsError("计划的回收站目标已存在，未覆盖任何文件")
+    else:
+        dst = _trash_destination(src, root)
+
     shutil.move(str(src), str(dst))
     trash_path = str(dst.resolve())
     try:
-        with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=15) as db:
-            db.execute(
-                """INSERT INTO software_trash(original_path,trash_path,source_step,deleted_at)
-                   VALUES(?,?,?,?)""",
-                (original, trash_path, str(source_step or ''), time.time())
-            )
-            trash_id = int(db.execute("SELECT last_insert_rowid()").fetchone()[0])
-            db.commit()
+        trash_id = _ensure_software_trash_record(
+            original, trash_path, source_step
+        )
     except Exception:
-        # Never strand a photo in an unindexed trash directory. If metadata
-        # persistence fails, best-effort roll back the file move immediately.
         try:
             Path(original).parent.mkdir(parents=True, exist_ok=True)
             if not Path(original).exists() and Path(trash_path).is_file():
@@ -1489,22 +1524,47 @@ def _background_move_to_trash(payload):
     original = os.path.realpath(str(payload['path']))
     folder = os.path.realpath(str(payload['folder']))
     source_step = str(payload.get('step') or '')
+    planned_trash = str(payload.get('trash_path') or '').strip()
     target = _safe_image_path(original)
     try:
         if target is None or not Path(target).is_file():
             row = _media_state_get(original)
             if row and row.get('state') == 'trashed':
                 return {'ok': True, 'already_done': True, 'path': row.get('current_path')}
+
+            # Crash-safe continuation: the same-drive rename may already have
+            # completed even though SQLite/lifecycle updates did not.
+            if planned_trash and Path(planned_trash).is_file():
+                trash_id = _ensure_software_trash_record(
+                    original, planned_trash, source_step
+                )
+                _delete_review_override(original)
+                _apply_media_lifecycle(
+                    original, planned_trash, 'trashed', source_step, trash_id
+                )
+                _write_trash_manifest(folder)
+                return {
+                    'ok': True, 'recovered': True,
+                    'original_path': original,
+                    'trash_path': os.path.realpath(planned_trash),
+                    'trash_id': trash_id,
+                }
             raise FileNotFoundError("待删除照片已不存在")
-        trash_id, trash_path = _move_to_software_trash(target, folder, source_step)
+
+        trash_id, trash_path = _move_to_software_trash(
+            target, folder, source_step,
+            planned_trash_path=(planned_trash or None)
+        )
         _delete_review_override(original)
         _apply_media_lifecycle(original, trash_path, 'trashed', source_step, trash_id)
         return {'ok': True, 'original_path': original, 'trash_path': trash_path,
                 'trash_id': trash_id}
     except Exception:
-        # Foreground uses optimistic pending state; a filesystem failure must
-        # restore the authoritative lifecycle instead of leaving a false delete.
-        if target is not None and Path(target).is_file():
+        # Foreground uses optimistic pending state. A normal filesystem failure
+        # restores the previous lifecycle. If the planned trash file exists,
+        # the move itself succeeded and a recovered task must reconcile it.
+        if (target is not None and Path(target).is_file()
+                and not (planned_trash and Path(planned_trash).is_file())):
             _apply_media_lifecycle(
                 original, str(target), str(payload.get('previous_lifecycle') or 'normal'),
                 source_step
@@ -1540,17 +1600,54 @@ def _background_permanent_delete(payload):
 
 def _background_restore_trash(payload):
     trash_id = int(payload['trash_id'])
+    original_hint = str(payload.get('original_path') or '').strip()
+    restore_hint = str(payload.get('restore_path') or '').strip()
+
     with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=15) as db:
         row = db.execute(
             "SELECT original_path,trash_path,source_step FROM software_trash WHERE id=?", (trash_id,)
         ).fetchone()
+
     if not row:
+        # If a prior attempt already committed the trash-row deletion, the
+        # persisted restore path lets this recovered task finish lifecycle sync.
+        if original_hint and restore_hint and Path(restore_hint).is_file():
+            _apply_media_lifecycle(
+                original_hint, restore_hint, 'normal',
+                str(payload.get('source_step') or '')
+            )
+            return {
+                'ok': True, 'already_done': True, 'recovered': True,
+                'original_path': os.path.realpath(original_hint),
+                'restored_path': os.path.realpath(restore_hint),
+            }
         raise FileNotFoundError("回收站记录不存在")
+
     original, trash_path, source_step = str(row[0]), str(row[1]), str(row[2] or '')
+    planned_restore = restore_hint or str(_unique_destination(Path(original)).resolve())
     try:
-        restored = _restore_trash_item(trash_id)
-        _apply_media_lifecycle(original, restored, 'normal', source_step)
-        return {'ok': True, 'original_path': original, 'restored_path': restored}
+        trash_file = Path(trash_path)
+        restored_file = Path(planned_restore)
+
+        if trash_file.is_file():
+            restored_file.parent.mkdir(parents=True, exist_ok=True)
+            if restored_file.exists():
+                raise FileExistsError("计划的恢复目标已存在，未覆盖任何文件")
+            shutil.move(str(trash_file), str(restored_file))
+        elif not restored_file.is_file():
+            raise FileNotFoundError("回收站中的照片和计划恢复目标均不存在")
+
+        with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=15) as db:
+            db.execute("DELETE FROM software_trash WHERE id=?", (trash_id,))
+            db.commit()
+        _write_trash_manifest(state.get('folder'))
+        _activity('从软件回收站恢复', str(restored_file), original)
+        _apply_media_lifecycle(original, str(restored_file), 'normal', source_step)
+        return {
+            'ok': True,
+            'original_path': original,
+            'restored_path': str(restored_file.resolve()),
+        }
     except Exception:
         if Path(trash_path).is_file():
             _apply_media_lifecycle(original, trash_path, 'trashed', source_step, trash_id)
