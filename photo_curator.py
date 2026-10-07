@@ -1219,7 +1219,7 @@ def _apply_media_lifecycle(original_path, current_path, lifecycle, source_step='
                                if os.path.realpath(str(p)) != original]
         cull.setdefault('removed_paths', set()).add(original)
         active_cull = [p for p in cull.get('photos', [])
-                       if p.get('lifecycle') not in ('pending_trash','trashed','permanently_deleted')]
+                       if p.get('lifecycle') not in ('pending_trash','pending_permanent_delete','trashed','permanently_deleted')]
         cull['sharp'] = sum(1 for p in active_cull if p.get('tier') == 'sharp')
         cull['soft'] = sum(1 for p in active_cull if p.get('tier') == 'soft')
         cull['blurry'] = sum(1 for p in active_cull if p.get('tier') == 'blurry')
@@ -1243,7 +1243,7 @@ def _apply_media_lifecycle(original_path, current_path, lifecycle, source_step='
                     if os.path.realpath(str(p)) != original
                 ]
                 active = [m for m in group.get('members', [])
-                          if m.get('lifecycle') not in ('pending_trash','trashed','permanently_deleted')]
+                          if m.get('lifecycle') not in ('pending_trash','pending_permanent_delete','trashed','permanently_deleted')]
                 if len(active) == 1:
                     active[0]['selected'] = True
                     group['selected_paths'] = [active[0].get('path')]
@@ -1252,10 +1252,12 @@ def _apply_media_lifecycle(original_path, current_path, lifecycle, source_step='
                     group['status'] = group.get('status') or 'pending'
                 else:
                     group['status'] = 'reviewed'
+                if group.get('group_key'):
+                    _set_similarity_group_status(group['group_key'], group['status'])
                 group['active_count'] = len(active)
                 group['deleted_count'] = sum(
                     1 for m in group.get('members', [])
-                    if m.get('lifecycle') in ('pending_trash','trashed','permanently_deleted')
+                    if m.get('lifecycle') in ('pending_trash','pending_permanent_delete','trashed','permanently_deleted')
                 )
         dedup['photos'] = [g for g in dedup.get('groups_data', []) if g.get('count', 0) > 1]
         dedup['groups'] = len(dedup['photos'])
@@ -5003,6 +5005,41 @@ def api_dedup_select():
                     'changed_group': group,
                     'result_total': len(s['photos']),
                     'kept': len(s['kept_paths']), 'selected': now_selected})
+
+
+@app.route('/api/dedup-complete', methods=['POST'])
+def api_dedup_complete():
+    """Explicitly finish one multi-photo group without forcing file movement."""
+    data = request.get_json() or {}
+    try:
+        gid = int(data.get('group_id'))
+    except (TypeError, ValueError):
+        return jsonify({'error': '相似组编号无效'}), 400
+    group = next((g for g in state['dedup'].get('groups_data', [])
+                  if g.get('group_id') == gid), None)
+    if not group:
+        return jsonify({'error': '未找到这个相似组'}), 404
+    active = [m for m in group.get('members', [])
+              if m.get('lifecycle') not in
+              ('pending_trash','pending_permanent_delete','trashed','permanently_deleted')]
+    if not active:
+        return jsonify({'error': '这个相似组没有可保留照片'}), 409
+    # "完成本组" means every currently active photo is accepted as kept.
+    selected = [m.get('path') for m in active if m.get('path')]
+    group['selected_paths'] = selected
+    selected_set = set(selected)
+    for m in group.get('members', []):
+        m['selected'] = m.get('path') in selected_set
+    group['status'] = 'reviewed'
+    if group.get('group_key'):
+        _set_similarity_group_status(group['group_key'], 'reviewed')
+    state['dedup']['kept_paths'] = list(state['dedup'].get('singleton_paths') or []) + [
+        p for g in state['dedup'].get('groups_data', [])
+        for p in (g.get('selected_paths') or [])
+    ]
+    _activity('完成相似组复核', '', f'组 {gid} · 保留 {len(selected)} 张')
+    return jsonify({'ok': True, 'changed_group': group,
+                    'status': 'reviewed', 'kept': len(selected)})
 
 
 @app.route('/api/dedup-group-action', methods=['POST'])
