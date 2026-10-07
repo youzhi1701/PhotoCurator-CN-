@@ -43,7 +43,8 @@ jobs:
             "Codespaces冒烟测试.py" \
             windows_smoke_test.py \
             ui_smoke_test.py \
-            release_gate_test.py
+            release_gate_test.py \
+            performance_gate_test.py
 
       - name: Parse GitHub Actions YAML
         run: |
@@ -919,6 +920,10 @@ jobs:
         run: |
           python "基础冒烟测试.py"
           python release_gate_test.py
+
+      - name: Performance architecture regression gate
+        run: |
+          python performance_gate_test.py
 
       - name: Real desktop UI interaction smoke test
         run: |
