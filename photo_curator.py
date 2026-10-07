@@ -4824,8 +4824,8 @@ async function refreshEnvironment(){
   }catch(_){}
 }
 loadShortcuts();
-setTimeout(refreshEnvironment,1800);
-setInterval(refreshEnvironment,30000);
+setTimeout(refreshEnvironment,5000);
+setInterval(refreshEnvironment,60000);
 document.getElementById('folderInput').onchange=e=>selectFolderValue(e.target.value);
 document.getElementById('folderInput').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();selectFolderValue(e.target.value);}};
 document.getElementById('browseBtn').onclick=async()=>{
