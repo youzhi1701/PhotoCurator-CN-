@@ -771,20 +771,34 @@ def root_snapshot(db_path, root_id, limit=2000, offset=0):
             ).fetchall()
         }
         total = sum(counts.values())
-        rows = db.execute(
-            """SELECT m.media_id,m.relative_path,m.original_path,m.current_path,
-                      m.size,m.mtime_ns,m.state,m.lifecycle,m.first_seen_at,m.last_seen_at,
-                      m.missing_since,
-                      r.tier AS review_tier,
-                      CASE WHEN c.path IS NULL THEN 0 ELSE 1 END AS has_cull_cache
-               FROM media_catalog m
-               LEFT JOIN review_override r ON r.path=m.current_path
-               LEFT JOIN cull_cache c ON c.path=m.current_path
-               WHERE m.root_id=?
-               ORDER BY m.relative_path COLLATE NOCASE
-               LIMIT ? OFFSET ?""",
-            (str(root_id), limit, offset),
-        ).fetchall()
+        tables = {
+            str(row["name"])
+            for row in db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        review_select = "r.tier AS review_tier" if "review_override" in tables else "'' AS review_tier"
+        cull_select = (
+            "CASE WHEN c.path IS NULL THEN 0 ELSE 1 END AS has_cull_cache"
+            if "cull_cache" in tables else "0 AS has_cull_cache"
+        )
+        joins = []
+        if "review_override" in tables:
+            joins.append("LEFT JOIN review_override r ON r.path=m.current_path")
+        if "cull_cache" in tables:
+            joins.append(
+                "LEFT JOIN cull_cache c ON c.path=m.current_path "
+                "AND c.size=m.size AND c.mtime_ns=m.mtime_ns"
+            )
+        sql = f"""SELECT m.media_id,m.relative_path,m.original_path,m.current_path,
+                         m.size,m.mtime_ns,m.state,m.lifecycle,m.first_seen_at,m.last_seen_at,
+                         m.missing_since,{review_select},{cull_select}
+                  FROM media_catalog m
+                  {' '.join(joins)}
+                  WHERE m.root_id=?
+                  ORDER BY m.relative_path COLLATE NOCASE
+                  LIMIT ? OFFSET ?"""
+        rows = db.execute(sql, (str(root_id), limit, offset)).fetchall()
 
     return {
         "source": {
