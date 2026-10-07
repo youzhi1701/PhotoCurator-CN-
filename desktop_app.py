@@ -20,7 +20,7 @@ from runtime_paths import (
 )
 
 APP_TITLE = "PhotoCurator"
-APP_VERSION = "1.5.7"
+APP_VERSION = "1.5.8"
 HOST = "127.0.0.1"
 DEFAULT_PORT = 5014
 
@@ -63,6 +63,34 @@ if DATA_MIGRATION_WARNING:
         )
     except Exception:
         pass
+
+_DIAGNOSTIC_TRACE_FILE = None
+if os.environ.get("PHOTOCURATOR_DIAGNOSTICS") == "1":
+    try:
+        import faulthandler
+        _DIAGNOSTIC_TRACE_FILE = open(
+            LOG_DIR / "hang-trace.log",
+            "a",
+            encoding="utf-8",
+            buffering=1,
+        )
+        _DIAGNOSTIC_TRACE_FILE.write(
+            "\n===== PhotoCurator diagnostic session "
+            + time.strftime("%Y-%m-%d %H:%M:%S")
+            + f" · v{APP_VERSION} · pid={os.getpid()} =====\n"
+        )
+        faulthandler.enable(file=_DIAGNOSTIC_TRACE_FILE, all_threads=True)
+        # Independent watchdog thread inside CPython. If Windows reports the
+        # pywebview/Python host as unresponsive, repeated dumps preserve the
+        # Python thread stacks around the freeze instead of forcing us to guess.
+        faulthandler.dump_traceback_later(
+            5.0,
+            repeat=True,
+            file=_DIAGNOSTIC_TRACE_FILE,
+            exit=False,
+        )
+    except Exception:
+        _DIAGNOSTIC_TRACE_FILE = None
 
 
 def _write_early_error_log():
@@ -208,49 +236,32 @@ def load_tray_image():
 
 
 class DesktopApi:
-    """Minimal native bridge. Windows owns all window geometry/state."""
+    """Small native bridge used only by the desktop WebView."""
 
     def __init__(self):
-        self.tray = None
-        self.window = None
         self._maximized = True
+        self.allow_exit = False
+        self.tray = None
 
     def attach_tray(self, tray):
         self.tray = tray
 
-    def attach_window(self, window):
-        self.window = window
-
-    def _window(self):
-        if self.window is not None:
-            return self.window
-        try:
-            return webview.active_window()
-        except Exception:
-            return None
-
     def window_action(self, action):
-        window = self._window()
+        window = webview.active_window()
         if window is None:
             return False
         if action == 'minimize':
             window.minimize()
             return True
-        if action == 'toggle_maximize':
-            if self._maximized:
-                window.restore()
-                self._maximized = False
-            else:
-                window.maximize()
-                self._maximized = True
-            return True
         if action == 'close':
+            # Close-to-tray keeps background analysis and queued file work alive.
             try:
                 window.hide()
             except Exception:
                 window.minimize()
             return True
         if action == 'exit':
+            self.allow_exit = True
             stop_analysis_and_wait()
             try:
                 TASK_MANAGER.shutdown()
@@ -263,12 +274,20 @@ class DesktopApi:
                 pass
             window.destroy()
             return True
+        if action == 'toggle_maximize':
+            if self._maximized:
+                window.restore()
+                self._maximized = False
+            else:
+                window.maximize()
+                self._maximized = True
+            return True
         return False
 
     def pick_folder(self):
-        window = self._window()
+        window = webview.active_window()
         if window is None:
-            raise RuntimeError("桌面主窗口尚未就绪")
+            return None
         enum = getattr(webview, 'FileDialog', None)
         dialog_type = getattr(enum, 'FOLDER', None) if enum else None
         if dialog_type is None:
@@ -279,7 +298,6 @@ class DesktopApi:
         if not result:
             return None
         return str(result[0])
-
 
 
 class LocalServer(threading.Thread):
@@ -326,9 +344,9 @@ def main():
         APP_TITLE,
         URL,
         js_api=desktop_api,
-        width=1280,
-        height=820,
-        min_size=(860, 600),
+        width=1180,
+        height=760,
+        min_size=(720, 520),
         resizable=True,
         maximized=True,
         zoomable=False,
@@ -338,11 +356,14 @@ def main():
         frameless=True,
         easy_drag=False,
     )
-    desktop_api.attach_window(window)
 
     def show_window(icon=None, item=None):
         try:
             window.show()
+            if desktop_api._maximized:
+                window.maximize()
+            else:
+                window.restore()
         except Exception:
             pass
 
@@ -369,6 +390,7 @@ def main():
                 state[key]['cancel'] = True
 
     def exit_from_tray(icon=None, item=None):
+        desktop_api.allow_exit = True
         stop_analysis_and_wait()
         try:
             TASK_MANAGER.shutdown()
@@ -385,11 +407,7 @@ def main():
             pass
 
     tray = None
-
-    def start_tray_after_ui():
-        nonlocal tray
-        if os.name != 'nt' or tray is not None:
-            return
+    if os.name == 'nt':
         try:
             tray = pystray.Icon(
                 "PhotoCurator",
@@ -409,9 +427,20 @@ def main():
             tray = None
             _write_early_error_log()
 
-    # Match the last known-good v1.5.0 lifecycle: create the tray before
-    # entering pywebview's GUI loop and do not inject a startup callback.
-    start_tray_after_ui()
+    def on_closing():
+        if desktop_api.allow_exit:
+            return True
+        # Native close / Alt+F4 follows the same close-to-tray rule as the
+        # custom title-bar button. Background tasks are never stopped here.
+        if tray is not None:
+            try:
+                window.hide()
+            except Exception:
+                pass
+            return False
+        return True
+
+    window.events.closing += on_closing
 
     try:
         # On Windows force Edge WebView2. Falling back to IE/MSHTML would open
