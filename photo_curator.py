@@ -3502,10 +3502,16 @@ document.getElementById('appExit').onclick=async()=>{
   if(!ok)return;
   if(activeAny){
     await Promise.allSettled(activeSteps.map(step=>fetch('/api/stop/'+step,{method:'POST'})));
-    setTimeout(()=>nativeWindow('exit'),250);
-  }else{
-    nativeWindow('exit');
+    const deadline=Date.now()+3500;
+    while(Date.now()<deadline){
+      try{
+        const rows=await Promise.all(activeSteps.map(step=>fetch('/api/progress/'+step).then(r=>r.json())));
+        if(rows.every(d=>!d.running))break;
+      }catch(_){break;}
+      await new Promise(resolve=>setTimeout(resolve,180));
+    }
   }
+  nativeWindow('exit');
 };
 function taskLabel(d){
   if(!d)return '待开始';
@@ -3973,10 +3979,16 @@ function updateNewResultsButton(){
   if(!b)return;
   const d=coreSnapshots[currentStep];
   if(!d||!['cull','dedup'].includes(currentStep)){b.style.display='none';return;}
-  const total=Number(d.result_total||((d.photos||[]).length)||0);
+  let total=Number(d.result_total||((d.photos||[]).length)||0);
+  if(currentStep==='dedup'){
+    const st=d.stats||{};
+    const key=dedupStatusFilter+'_groups';
+    if(Number.isFinite(Number(st[key])))total=Number(st[key]);
+  }
   const shown=Number(document.getElementById('sShowing').textContent||0);
-  b.textContent=(d.running?'后台新增结果 ':'查看最新结果 ')+Math.max(0,total-shown);
-  b.style.display='inline-flex';
+  const pending=Math.max(0,total-shown);
+  b.textContent=(d.running?'后台新增结果 ':'查看最新结果 ')+pending;
+  b.style.display=pending||!d.running?'inline-flex':'none';
 }
 function applyLatestCoreSnapshot(){
   const d=coreSnapshots[currentStep];
@@ -3987,10 +3999,7 @@ function applyLatestCoreSnapshot(){
     renderCullStep(Array.from(cullLiveStore.values()));
     if(!d.running)maybeLoadAllCull(d);
   }else if(currentStep==='dedup'){
-    const rows=d.photos||[];
-    dedupLiveStore.clear();rows.forEach(g=>{if(g&&g.group_id!=null)dedupLiveStore.set(String(g.group_id),g);});
-    renderDedupGroups(Array.from(dedupLiveStore.values()));
-    if(!d.running)maybeLoadAllDedup(d);
+    loadDedupPage(true);
   }
   const b=document.getElementById('loadNewResults');if(b)b.style.display='none';
 }
@@ -5556,7 +5565,10 @@ def api_progress(step):
                         'result_total': len(all_photos),
                         'stats': {'groups': s['groups'],
                                   'duplicate_groups': len(all_photos),
-                                  'duplicate_photos': duplicate_photos}})
+                                  'duplicate_photos': duplicate_photos,
+                                  'pending_groups': sum(1 for g in all_photos if str(g.get('status') or 'pending') == 'pending'),
+                                  'reviewed_groups': sum(1 for g in all_photos if str(g.get('status') or 'pending') == 'reviewed'),
+                                  'updated_groups': sum(1 for g in all_photos if str(g.get('status') or 'pending') == 'updated')}})
     if step == 'rank':
         s = state['rank']
         now = time.time()
