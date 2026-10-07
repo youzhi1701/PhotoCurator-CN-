@@ -1,6 +1,6 @@
 #define MyAppName "PhotoCurator"
 #ifndef MyAppVersion
-  #define MyAppVersion "1.5.0"
+  #define MyAppVersion "1.5.4"
 #endif
 #define MyAppPublisher "PhotoCurator-CN"
 #define MyAppExeName "PhotoCurator.exe"
@@ -29,10 +29,11 @@ SetupLogging=yes
 UsePreviousAppDir=yes
 Uninstallable=yes
 ShowLanguageDialog=no
-AppMutex=Local\PhotoCurator_CN_youzh1701
 VersionInfoVersion={#MyAppVersion}.0
 SetupIconFile=PhotoCurator.ico
-CloseApplications=yes
+; Upgrades terminate a running PhotoCurator instance automatically so mapped
+; program files can be replaced without asking the user to close it manually.
+CloseApplications=no
 RestartApplications=no
 
 [Tasks]
@@ -72,8 +73,56 @@ Type: filesandordirs; Name: "{app}\data\logs"
 Type: filesandordirs; Name: "{app}\data\内置测试数据"
 
 [Code]
+const
+  PhotoCuratorMutex = 'Local\PhotoCurator_CN_youzh1701';
+
 var
   DeleteSettings: Boolean;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  ResultCode: Integer;
+  I: Integer;
+begin
+  Result := '';
+
+  if CheckForMutexes(PhotoCuratorMutex) then
+  begin
+    Log('PhotoCurator is running; closing the old instance automatically before upgrade.');
+
+    { taskkill is scoped to the product executable and /T also closes a
+      transient child picker if one exists. }
+    if not Exec(
+      ExpandConstant('{sys}\taskkill.exe'),
+      '/F /T /IM "{#MyAppExeName}"',
+      '',
+      SW_HIDE,
+      ewWaitUntilTerminated,
+      ResultCode
+    ) then
+    begin
+      Result := '无法自动关闭正在运行的 PhotoCurator。请稍后重试安装。';
+      Exit;
+    end;
+
+    { Wait for Windows to release the named mutex and mapped executable files. }
+    for I := 1 to 30 do
+    begin
+      if not CheckForMutexes(PhotoCuratorMutex) then
+        Break;
+      Sleep(100);
+    end;
+
+    if CheckForMutexes(PhotoCuratorMutex) then
+    begin
+      Result := '正在运行的 PhotoCurator 未能自动退出。请稍后重试安装。';
+      Exit;
+    end;
+
+    Sleep(250);
+    Log('Previous PhotoCurator instance stopped; continuing in-place upgrade.');
+  end;
+end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin

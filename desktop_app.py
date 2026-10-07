@@ -19,8 +19,8 @@ from runtime_paths import (
     resolve_data_root,
 )
 
-APP_TITLE = "照片筛选 · PhotoCurator 中文版"
-APP_VERSION = "1.5.0"
+APP_TITLE = "PhotoCurator"
+APP_VERSION = "1.5.4"
 HOST = "127.0.0.1"
 DEFAULT_PORT = 5014
 
@@ -32,15 +32,23 @@ INSTALL_ROOT = (
 DATA_ROOT = resolve_data_root(frozen=IS_FROZEN)
 DATA_MIGRATION_WARNING = None
 if IS_FROZEN:
-    legacy_root = legacy_frozen_data_root(INSTALL_ROOT)
-    try:
-        migrate_legacy_config(legacy_root, DATA_ROOT)
-    except Exception as exc:
-        # Never make an upgrade look like data loss. If the one-time migration
-        # cannot complete, continue from the legacy state and record a warning.
-        if legacy_root.exists():
-            DATA_ROOT = legacy_root
-        DATA_MIGRATION_WARNING = f"{type(exc).__name__}: {exc}"
+    # Merge every known historical catalog location. The stable per-user data
+    # root remains authoritative; old install-local/source-run databases are
+    # imported into it instead of switching the whole app back to an old root.
+    migration_sources = [
+        legacy_frozen_data_root(INSTALL_ROOT),
+        Path.home() / ".photo_curator",
+    ]
+    migration_errors = []
+    for legacy_root in migration_sources:
+        try:
+            migrate_legacy_config(legacy_root, DATA_ROOT)
+        except Exception as exc:
+            migration_errors.append(
+                f"{legacy_root}: {type(exc).__name__}: {exc}"
+            )
+    if migration_errors:
+        DATA_MIGRATION_WARNING = "\n".join(migration_errors)
 
 LOG_DIR = DATA_ROOT / "logs"
 try:
@@ -200,58 +208,106 @@ def load_tray_image():
 
 
 class DesktopApi:
-    """Small native bridge used only by the desktop WebView."""
+    """Minimal native bridge. Windows owns all window geometry/state."""
 
     def __init__(self):
-        self._maximized = True
-        self.allow_exit = False
         self.tray = None
+        self.window = None
 
     def attach_tray(self, tray):
         self.tray = tray
 
-    def window_action(self, action):
-        window = webview.active_window()
-        if window is None:
-            return False
-        if action == 'minimize':
-            window.minimize()
-            return True
-        if action == 'close':
-            # Close-to-tray keeps background analysis and queued file work alive.
-            try:
-                window.hide()
-            except Exception:
-                window.minimize()
-            return True
-        if action == 'exit':
-            self.allow_exit = True
-            stop_analysis_and_wait()
-            try:
-                TASK_MANAGER.shutdown()
-            except Exception:
-                pass
-            try:
-                if self.tray is not None:
-                    self.tray.stop()
-            except Exception:
-                pass
-            window.destroy()
-            return True
-        if action == 'toggle_maximize':
-            if self._maximized:
-                window.restore()
-                self._maximized = False
-            else:
-                window.maximize()
-                self._maximized = True
-            return True
-        return False
+    def attach_window(self, window):
+        self.window = window
 
-    def pick_folder(self):
-        window = webview.active_window()
+    def _window(self):
+        if self.window is not None:
+            return self.window
+        try:
+            return webview.active_window()
+        except Exception:
+            return None
+
+    def _native_hwnd(self):
+        if os.name != 'nt':
+            return None
+        window = self._window()
         if window is None:
             return None
+        try:
+            native = window.native
+            handle = native.Handle
+            try:
+                return int(handle.ToInt64())
+            except Exception:
+                return int(handle)
+        except Exception:
+            return None
+
+    def apply_native_titlebar_theme(self):
+        """Theme native chrome without taking over Windows hit-testing."""
+        if os.name != 'nt':
+            return False
+        hwnd = self._native_hwnd()
+        if not hwnd:
+            return False
+        try:
+            import ctypes
+
+            def colorref(hex_color):
+                value = str(hex_color).lstrip('#')
+                r = int(value[0:2], 16)
+                g = int(value[2:4], 16)
+                b = int(value[4:6], 16)
+                return ctypes.c_uint32(r | (g << 8) | (b << 16))
+
+            dwm = ctypes.windll.dwmapi
+            attrs = (
+                (34, colorref('#2A3D68')),  # DWMWA_BORDER_COLOR
+                (35, colorref('#18243C')),  # DWMWA_CAPTION_COLOR
+                (36, colorref('#F8FAFF')),  # DWMWA_TEXT_COLOR
+            )
+            for attr, value in attrs:
+                try:
+                    dwm.DwmSetWindowAttribute(
+                        hwnd, attr, ctypes.byref(value), ctypes.sizeof(value)
+                    )
+                except Exception:
+                    pass
+
+            try:
+                corner = ctypes.c_int(2)  # DWMWCP_ROUND
+                dwm.DwmSetWindowAttribute(
+                    hwnd, 33, ctypes.byref(corner), ctypes.sizeof(corner)
+                )
+            except Exception:
+                pass
+
+            # Windows 10 does not honor the newer per-window caption-color
+            # attributes consistently, but it does support immersive dark
+            # captions on current builds. This is the compatibility fallback.
+            try:
+                dark = ctypes.c_int(1)
+                for dark_attr in (20, 19):
+                    try:
+                        if dwm.DwmSetWindowAttribute(
+                            hwnd, dark_attr, ctypes.byref(dark), ctypes.sizeof(dark)
+                        ) == 0:
+                            break
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+
+            ctypes.windll.user32.SetWindowTextW(hwnd, APP_TITLE)
+            return True
+        except Exception:
+            return False
+
+    def pick_folder(self):
+        window = self._window()
+        if window is None:
+            raise RuntimeError("桌面主窗口尚未就绪")
         enum = getattr(webview, 'FileDialog', None)
         dialog_type = getattr(enum, 'FOLDER', None) if enum else None
         if dialog_type is None:
@@ -262,6 +318,7 @@ class DesktopApi:
         if not result:
             return None
         return str(result[0])
+
 
 
 class LocalServer(threading.Thread):
@@ -308,26 +365,23 @@ def main():
         APP_TITLE,
         URL,
         js_api=desktop_api,
-        width=1180,
-        height=760,
-        min_size=(720, 520),
+        width=1280,
+        height=820,
+        min_size=(860, 600),
         resizable=True,
         maximized=True,
         zoomable=False,
         confirm_close=False,
         text_select=True,
         background_color="#eef7ff",
-        frameless=True,
+        frameless=False,
         easy_drag=False,
     )
+    desktop_api.attach_window(window)
 
     def show_window(icon=None, item=None):
         try:
             window.show()
-            if desktop_api._maximized:
-                window.maximize()
-            else:
-                window.restore()
         except Exception:
             pass
 
@@ -354,7 +408,6 @@ def main():
                 state[key]['cancel'] = True
 
     def exit_from_tray(icon=None, item=None):
-        desktop_api.allow_exit = True
         stop_analysis_and_wait()
         try:
             TASK_MANAGER.shutdown()
@@ -371,7 +424,11 @@ def main():
             pass
 
     tray = None
-    if os.name == 'nt':
+
+    def start_tray_after_ui():
+        nonlocal tray
+        if os.name != 'nt' or tray is not None:
+            return
         try:
             tray = pystray.Icon(
                 "PhotoCurator",
@@ -391,28 +448,37 @@ def main():
             tray = None
             _write_early_error_log()
 
-    def on_closing():
-        if desktop_api.allow_exit:
-            return True
-        # Native close / Alt+F4 follows the same close-to-tray rule as the
-        # custom title-bar button. Background tasks are never stopped here.
-        if tray is not None:
-            try:
-                window.hide()
-            except Exception:
-                pass
-            return False
-        return True
+    def after_webview_start():
+        # Never wait, probe handles or initialize tray objects on a callback
+        # that could share the native GUI thread. Dispatch all post-start work.
+        def post_start_worker():
+            if os.name == 'nt':
+                deadline = time.monotonic() + 5.0
+                while time.monotonic() < deadline:
+                    if desktop_api.apply_native_titlebar_theme():
+                        break
+                    time.sleep(0.10)
+            start_tray_after_ui()
 
-    window.events.closing += on_closing
+        threading.Thread(
+            target=post_start_worker,
+            daemon=True,
+            name="photocurator-post-start",
+        ).start()
+
+    # Native Windows title bar owns close/maximize/restore.  In particular,
+    # there is intentionally NO pywebview closing/shown/loaded callback here:
+    # those callbacks previously re-entered native window APIs and could lock
+    # WebView2's GUI message loop.  Closing the native window now exits the
+    # desktop shell normally; unfinished file tasks are persisted.
 
     try:
         # On Windows force Edge WebView2. Falling back to IE/MSHTML would open
         # a window but break the modern UI, which is worse than a clear error.
         if os.name == 'nt':
-            webview.start(gui='edgechromium', debug=False)
+            webview.start(after_webview_start, gui='edgechromium', debug=False)
         else:
-            webview.start(debug=False)
+            webview.start(after_webview_start, debug=False)
     except Exception as exc:
         # Formal installer builds do not expose maintenance BAT/CMD files.
         # If WebView2 itself is unavailable, keep the already-running local
@@ -503,10 +569,23 @@ def self_test():
             if response.status != 200:
                 raise RuntimeError("packaged vendor resources are unavailable")
 
-        with urllib.request.urlopen(URL + "/api/shortcuts", timeout=5.0) as response:
+        started = time.monotonic()
+        with urllib.request.urlopen(URL + "/api/shortcuts", timeout=3.0) as response:
             payload = json.loads(response.read().decode("utf-8"))
-            if payload.get("demo_count") != 12:
-                raise RuntimeError(f"packaged writable data test failed: {payload}")
+            if not isinstance(payload.get("sources"), list):
+                raise RuntimeError("packaged data-source catalog API is unavailable")
+        if time.monotonic() - started > 2.5:
+            raise RuntimeError("first-paint shortcuts API is doing blocking startup work")
+
+        request = urllib.request.Request(
+            URL + "/api/demo-prepare?wait=1",
+            data=b"",
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=35.0) as response:
+            demo = json.loads(response.read().decode("utf-8"))
+            if not demo.get("ready") or int(demo.get("count") or 0) < 36:
+                raise RuntimeError(f"packaged writable demo preparation failed: {demo}")
 
         return 0
     finally:

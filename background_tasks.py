@@ -21,11 +21,16 @@ class BackgroundTaskManager:
         self._heap, self._seq, self._stop = [], 0, False
         self._cv = threading.Condition()
         self._foreground_pressure = threading.Event()
+        self._threads = []
         self._init_db()
         self._recover_interrupted()
         for i in range(self.workers):
-            threading.Thread(target=self._worker, daemon=True,
-                             name=f"photocurator-task-{i+1}").start()
+            worker = threading.Thread(
+                target=self._worker, daemon=True,
+                name=f"photocurator-task-{i+1}"
+            )
+            self._threads.append(worker)
+            worker.start()
 
     def _connect(self):
         return sqlite3.connect(str(self.db_path), timeout=30)
@@ -190,7 +195,18 @@ class BackgroundTaskManager:
         return {"id": int(row[0]), "kind": row[1], "state": row[2], "priority": int(row[3]),
                 "created_at": float(row[4]), "updated_at": float(row[5]), "error": row[6] or "", "result": result}
 
-    def shutdown(self):
+    def shutdown(self, timeout=3.0):
+        """Stop idle workers and wait briefly for DB handles to be released."""
         self._stop = True
         with self._cv:
             self._cv.notify_all()
+
+        deadline = time.monotonic() + max(0.0, float(timeout))
+        current = threading.current_thread()
+        for worker in list(self._threads):
+            if worker is current or not worker.is_alive():
+                continue
+            remaining = max(0.0, deadline - time.monotonic())
+            if remaining <= 0:
+                break
+            worker.join(timeout=remaining)

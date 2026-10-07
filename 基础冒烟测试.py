@@ -167,13 +167,15 @@ def main():
             safe = photo_curator._safe_image_path(str(p))
             assert_true(safe is not None, f"安全路径校验误拒绝：{p}")
 
-        # Built-in test data must always be available through the same API the
-        # sidebar uses. The canonical 12 files are persistent and may be
-        # replenished if a previous file-move test moved one away.
+        # Built-in test data is a realistic recursive fixture: 36 JPEGs across
+        # several subfolders, including a duplicate burst folder.
         demo_dir = Path(photo_curator.ensure_builtin_demo())
-        demo_files = sorted(p for p in demo_dir.iterdir() if p.suffix.lower() == ".jpg")
-        assert_true(len(demo_files) >= 12,
+        demo_files = sorted(p for p in demo_dir.rglob("*.jpg"))
+        demo_folders = {p.parent.relative_to(demo_dir) for p in demo_files}
+        assert_true(len(demo_files) >= 36,
                     f"内置测试数据数量不足：{len(demo_files)}")
+        assert_true(len(demo_folders) >= 6,
+                    f"内置测试数据子目录不足：{sorted(map(str, demo_folders))}")
 
         shortcuts = photo_curator.app.test_client().get(
             "/api/shortcuts",
@@ -184,8 +186,10 @@ def main():
         shortcut_data = shortcuts.get_json()
         assert_true(shortcut_data.get("demo_folder") == str(demo_dir.resolve()),
                     f"内置测试数据入口缺失：{shortcut_data}")
-        assert_true(shortcut_data.get("demo_count") == 12,
+        assert_true(shortcut_data.get("demo_count") == 36,
                     f"内置测试数据标称数量错误：{shortcut_data}")
+        assert_true(isinstance(shortcut_data.get("sources"), list),
+                    f"数据源目录接口缺少 sources：{shortcut_data}")
 
         # Verify the local HTTP endpoints also survive Unicode/special paths.
         client = photo_curator.app.test_client()
@@ -771,6 +775,69 @@ def main():
         assert_true(cp.get("total") == 3 and cp.get("next_offset") == 2
                     and cp.get("photos", [{}])[0].get("group_id") == 102,
                     f"相似组分块结果错误：{cp}")
+
+        # Real end-to-end core run: do not mock the workers here. The release
+        # gate must prove that the exact HTTP start path can process actual image
+        # files through Cull + Dedup and reach a completed, non-error state.
+        e2e_dir = Path(td) / "端到端核心分析"
+        e2e_dir.mkdir(parents=True, exist_ok=True)
+        for i in range(8):
+            arr = np.zeros((180, 240, 3), dtype=np.uint8)
+            arr[:, :, 0] = 20 + i * 15
+            arr[:, :, 1] = np.arange(240, dtype=np.uint8)[None, :]
+            arr[:, :, 2] = np.arange(180, dtype=np.uint8)[:, None]
+            # Repeat two frames exactly so Dedup also exercises a real cluster.
+            if i in (6, 7):
+                arr[:] = 128
+                arr[30:150, 50:190] = (20, 220, 60)
+            Image.fromarray(arr).save(e2e_dir / f"真实运行_{i:02d}.jpg", quality=92)
+
+        photo_curator._SCAN_SNAPSHOTS.clear()
+        photo_curator.state["cull"]["running"] = False
+        photo_curator.state["dedup"]["running"] = False
+        photo_curator.state["rank"]["running"] = False
+
+        real_cull = client.post(
+            "/api/run/cull",
+            json={
+                "folder": str(e2e_dir), "opt": 1.0, "adaptive": True,
+                "rescue": True, "recursive": True,
+            },
+            headers={"Host": f"127.0.0.1:{photo_curator.PORT}"},
+        )
+        real_dedup = client.post(
+            "/api/run/dedup",
+            json={
+                "folder": str(e2e_dir), "opt": 0.8, "recursive": True,
+                "compare_scope": "folder", "ftype": "all", "pair": "both",
+            },
+            headers={"Host": f"127.0.0.1:{photo_curator.PORT}"},
+        )
+        assert_true(real_cull.status_code == 200,
+                    f"真实 Cull 无法启动：{real_cull.get_json()}")
+        assert_true(real_dedup.status_code == 200,
+                    f"真实 Dedup 无法启动：{real_dedup.get_json()}")
+
+        deadline = time.time() + 30
+        while time.time() < deadline and (
+                photo_curator.state["cull"].get("running")
+                or photo_curator.state["dedup"].get("running")):
+            time.sleep(0.05)
+
+        assert_true(not photo_curator.state["cull"].get("running"),
+                    "真实 Cull 超时未结束")
+        assert_true(not photo_curator.state["dedup"].get("running"),
+                    "真实 Dedup 超时未结束")
+        assert_true(photo_curator.state["cull"].get("complete") is True,
+                    f"真实 Cull 未完成：{photo_curator.state['cull'].get('status')}")
+        assert_true(photo_curator.state["dedup"].get("complete") is True,
+                    f"真实 Dedup 未完成：{photo_curator.state['dedup'].get('status')}")
+        assert_true("发生错误" not in str(photo_curator.state["cull"].get("status") or ""),
+                    f"真实 Cull 发生错误：{photo_curator.state['cull'].get('status')}")
+        assert_true("发生错误" not in str(photo_curator.state["dedup"].get("status") or ""),
+                    f"真实 Dedup 发生错误：{photo_curator.state['dedup'].get('status')}")
+        assert_true(len(photo_curator.state["cull"].get("photos") or []) == 8,
+                    "真实 Cull 没有返回全部测试照片")
 
         # A completed Cull with zero survivors is a valid result. Dedup/Rank
         # must never fall back to scanning the original folder again, otherwise

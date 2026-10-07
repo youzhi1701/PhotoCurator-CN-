@@ -42,6 +42,17 @@ from photo_ranking_v3 import AdvancedPhotoAnalyzer, PhotoScoreV3
 from photo_dedup_batch import FastBatchDeduplicator
 from background_tasks import BackgroundTaskManager
 from runtime_paths import resolve_data_root
+from catalog import (
+    catalog_media_scan,
+    init_catalog_schema,
+    list_sources as catalog_list_sources,
+    register_source as catalog_register_source,
+    storage_summary as catalog_storage_summary,
+    clear_rebuildable_storage,
+    root_snapshot as catalog_root_snapshot,
+    media_record as catalog_media_record,
+    media_id_for_path as catalog_media_id_for_path,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -631,6 +642,7 @@ def _save_rank_scores_batch(rows):
 
 try:
     _db_init()
+    init_catalog_schema(INDEX_DB)
 except Exception:
     logger.warning("library index unavailable", exc_info=True)
 
@@ -666,7 +678,7 @@ def _prune_index_db():
 threading.Thread(target=_prune_index_db, daemon=True,
                  name='photocurator-index-prune').start()
 
-APP_VERSION = "1.5.0"
+APP_VERSION = "1.5.4"
 IS_CODESPACES = os.environ.get('CODESPACES', '').strip().lower() == 'true'
 CODESPACE_NAME = os.environ.get('CODESPACE_NAME', '').strip()
 _CODESPACES_DOMAIN_RAW = os.environ.get(
@@ -1715,6 +1727,15 @@ TASK_MANAGER.register('purge_trash', _background_purge_trash)
 
 
 def _thumb_cache_path(image_path):
+    # Catalog-backed previews use a stable media id, so a drive-letter change
+    # (F: -> G:) does not invalidate the offline preview.
+    try:
+        media_id = catalog_media_id_for_path(INDEX_DB, image_path)
+        if media_id:
+            return THUMB_DIR / f"catalog_{media_id}.jpg"
+    except Exception:
+        pass
+
     p = Path(image_path)
     try:
         st = p.stat()
@@ -1723,8 +1744,6 @@ def _thumb_cache_path(image_path):
     except OSError:
         mtime_ns = 0
         size_bytes = 0
-    # Versioned high-resolution file fingerprint. Including mtime_ns + size
-    # prevents a replaced same-name photo from reusing an old thumbnail.
     key = hashlib.md5(
         f"{image_path}:{mtime_ns}:{size_bytes}:v3".encode()
     ).hexdigest()
@@ -1775,55 +1794,233 @@ def save_recent(folder):
 
 
 def ensure_builtin_demo():
-    """Keep one built-in test dataset inside the program directory.
+    """Create a small but realistic multi-folder library for real UI testing.
 
-    The dataset is deterministic and intentionally small: 12 JPEGs total,
-    including 4 clear, 4 slightly-soft and 4 blurry samples. Existing files
-    are never overwritten. If a test moves a canonical sample away, only the
-    missing canonical file is recreated on the next shortcut refresh.
+    36 JPEGs live under several nested folders. The set deliberately contains
+    sharp/soft/blurry frames and near-duplicate bursts so recursive scanning,
+    source-folder grouping and similarity review can all be exercised.
     """
     demo = DATA_ROOT / '内置测试数据'
     try:
         demo.mkdir(parents=True, exist_ok=True)
-        from PIL import ImageDraw, ImageFilter
-        for i in range(12):
-            kind = 'blurry' if i >= 8 else ('soft' if i >= 4 else 'sharp')
-            zh = {'sharp': '清晰', 'soft': '轻微软', 'blurry': '模糊'}[kind]
-            target = demo / f"测试_{i+1:02d}_{zh}.jpg"
-            if target.exists():
-                continue
+        from PIL import ImageDraw, ImageFilter, ImageEnhance
+        import random
+
+        # Remove only the old canonical flat demo fixtures. User-created files
+        # under the demo root are never touched.
+        for old in demo.glob('测试_*_*.jpg'):
+            try:
+                old.unlink()
+            except OSError:
+                pass
+
+        folders = [
+            ('旅行/海边日落', 'coast'),
+            ('旅行/山野徒步', 'mountain'),
+            ('家庭/室内聚会', 'indoor'),
+            ('城市/夜景', 'city'),
+            ('手机导入/2026-10', 'daily'),
+            ('重复测试/连拍组', 'burst'),
+        ]
+        kinds = ('sharp', 'soft', 'blurry')
+        kind_zh = {'sharp': '清晰', 'soft': '轻微软', 'blurry': '模糊'}
+
+        def gradient(size, top, bottom):
+            w, h = size
+            rows = []
+            for y in range(h):
+                t = y / max(1, h - 1)
+                rows.append(tuple(
+                    int(top[c] * (1 - t) + bottom[c] * t)
+                    for c in range(3)
+                ))
+            strip = Image.new('RGB', (1, h))
+            strip.putdata(rows)
+            return strip.resize((w, h), Image.Resampling.BILINEAR)
+
+        def draw_scene(scene, seed, variant):
+            rng = random.Random(seed)
             w, h = 960, 640
-            img = Image.new('RGB', (w, h), (238, 241, 247))
+
+            if scene == 'coast':
+                img = gradient((w, h), (92, 139, 206), (246, 178, 122))
+                d = ImageDraw.Draw(img)
+                d.rectangle((0, 385, w, h), fill=(44, 111, 143))
+                d.ellipse((690 + variant * 3, 105, 790 + variant * 3, 205),
+                          fill=(255, 224, 151))
+                d.polygon([(0, 430), (180, 380), (330, 430), (500, 392),
+                           (650, 438), (w, 400), (w, 470), (0, 470)],
+                          fill=(32, 68, 82))
+                for x in (130, 330, 545, 760):
+                    d.line((x, 420, x + 18, 520), fill=(28, 39, 45), width=5)
+                    d.ellipse((x - 10, 390, x + 25, 430), fill=(28, 39, 45))
+            elif scene == 'mountain':
+                img = gradient((w, h), (116, 166, 213), (224, 232, 220))
+                d = ImageDraw.Draw(img)
+                d.polygon([(0, 410), (180, 205), (330, 410)], fill=(74, 104, 103))
+                d.polygon([(210, 420), (480, 150), (720, 420)], fill=(61, 88, 91))
+                d.polygon([(510, 430), (760, 235), (w, 430)], fill=(83, 112, 104))
+                d.polygon([(410, h), (500 + variant * 4, 390), (585, h)],
+                          fill=(172, 146, 111))
+                for _ in range(28):
+                    x = rng.randint(0, w - 1); y = rng.randint(360, h - 20)
+                    d.polygon([(x, y), (x - 9, y + 32), (x + 9, y + 32)],
+                              fill=(41, 89 + rng.randint(0, 30), 66))
+            elif scene == 'indoor':
+                img = gradient((w, h), (239, 211, 178), (183, 132, 99))
+                d = ImageDraw.Draw(img)
+                d.rectangle((585, 70, 890, 330), fill=(191, 222, 231),
+                            outline=(247, 240, 220), width=14)
+                d.rectangle((0, 430, w, h), fill=(111, 73, 53))
+                d.rectangle((170, 365, 810, 500), fill=(156, 103, 67))
+                for p in range(4):
+                    cx = 250 + p * 155 + variant * (p % 2)
+                    d.ellipse((cx - 38, 245, cx + 38, 321),
+                              fill=(214, 168 - p * 6, 132))
+                    d.rounded_rectangle((cx - 55, 315, cx + 55, 430),
+                                        radius=24,
+                                        fill=(80 + p * 25, 94 + p * 9, 126 + p * 12))
+                for x in (310, 445, 590):
+                    d.ellipse((x, 395, x + 55, 435), fill=(228, 204, 152))
+            elif scene == 'city':
+                img = gradient((w, h), (24, 28, 59), (78, 48, 88))
+                d = ImageDraw.Draw(img)
+                base = 555
+                for x in range(-20, w, 95):
+                    bw = rng.randint(70, 110); bh = rng.randint(180, 390)
+                    d.rectangle((x, base - bh, x + bw, base),
+                                fill=(28 + rng.randint(0, 20), 35, 54))
+                    for wx in range(x + 14, x + bw - 10, 24):
+                        for wy in range(base - bh + 20, base - 15, 30):
+                            if rng.random() > .45:
+                                d.rectangle((wx, wy, wx + 8, wy + 10),
+                                            fill=(244, 197 + rng.randint(0, 40), 110))
+                d.rectangle((0, 555, w, h), fill=(34, 35, 43))
+                for x in range(0, w, 125):
+                    d.ellipse((x + variant * 2, 575, x + 18 + variant * 2, 585),
+                              fill=(245, 212, 150))
+            elif scene == 'daily':
+                img = gradient((w, h), (168, 206, 222), (224, 221, 185))
+                d = ImageDraw.Draw(img)
+                d.rectangle((0, 400, w, h), fill=(102, 149, 96))
+                d.rectangle((90, 290, 405, 520), fill=(228, 222, 204))
+                d.polygon([(65, 300), (250, 160), (435, 300)], fill=(117, 87, 74))
+                d.rectangle((620, 290, 815, 520), fill=(201, 187, 164))
+                for _ in range(22):
+                    x = rng.randint(0, w); y = rng.randint(380, h)
+                    d.ellipse((x, y, x + 10, y + 10), fill=(76, 127, 71))
+            else:  # burst / near-duplicate people-like outdoor sequence
+                img = gradient((w, h), (118, 174, 211), (210, 222, 188))
+                d = ImageDraw.Draw(img)
+                d.rectangle((0, 405, w, h), fill=(87, 137, 75))
+                shift = (variant % 3) * 7
+                for p in range(3):
+                    cx = 330 + p * 130 + shift
+                    d.ellipse((cx - 33, 235, cx + 33, 301),
+                              fill=(221, 176, 139))
+                    d.rounded_rectangle((cx - 52, 298, cx + 52, 448),
+                                        radius=20,
+                                        fill=((61 + p * 38), (92 + p * 15), (154 - p * 17)))
+                d.rectangle((120, 190, 195, 405), fill=(92, 72, 54))
+                d.ellipse((83, 120, 235, 250), fill=(72, 126, 74))
+
+            # Keep startup generation cheap. Scene structure, blur levels and
+            # burst variants are what the culling/dedup tests need; thousands
+            # of Python-level texture mutations only steal time from the GUI.
             d = ImageDraw.Draw(img)
+            for _ in range(120):
+                x = rng.randrange(w); y = rng.randrange(h)
+                c = rng.randint(0, 14)
+                base = img.getpixel((x, y))
+                d.point((x, y), fill=tuple(max(0, min(255, v + c - 7)) for v in base))
+            return img
 
-            # Distinct geometry gives the cull / dedup / ranking views enough
-            # visual structure to exercise their real UI instead of blank cards.
-            step = 30 + (i % 4) * 7
-            for x in range(0, w, step):
-                d.line((x, 0, max(0, w - x // 2), h),
-                       width=2 + (i % 3),
-                       fill=(40 + i * 7, 72 + (i % 4) * 10, 118 + i * 5))
-            for y in range(0, h, step + 8):
-                d.line((0, y, w, max(0, h - y // 2)),
-                       width=1 + (i % 2),
-                       fill=(118, 72 + i * 6, 66 + (i % 3) * 12))
-            d.ellipse((150 + i * 10, 120, 500 + i * 8, 490),
-                      outline=(30, 35, 45), width=10)
-            d.rectangle((600, 105 + i * 6, 855, 410 + i * 3),
-                        outline=(30, 118, 88), width=8)
-            d.text((34, 28), f"PhotoCurator 内置测试 {i+1:02d} / 12",
-                   fill=(25, 30, 40))
-            d.text((34, 58), f"类型：{zh}", fill=(25, 30, 40))
+        global_i = 0
+        for folder_rel, scene in folders:
+            target_dir = demo / Path(folder_rel)
+            target_dir.mkdir(parents=True, exist_ok=True)
+            for j in range(6):
+                kind = kinds[global_i % 3]
+                target = target_dir / (
+                    f"{global_i + 1:02d}_{scene}_{j + 1:02d}_{kind_zh[kind]}.jpg"
+                )
+                if not target.exists():
+                    # Burst pairs deliberately reuse a scene seed; other folders
+                    # vary enough to exercise grouping without becoming identical.
+                    seed = (5000 + j // 2) if scene == 'burst' else (1000 + global_i)
+                    img = draw_scene(scene, seed, j)
+                    if scene == 'burst' and j % 2:
+                        img = ImageEnhance.Brightness(img).enhance(1.025)
+                    if kind == 'blurry':
+                        img = img.filter(ImageFilter.GaussianBlur(radius=5.0))
+                    elif kind == 'soft':
+                        img = img.filter(ImageFilter.GaussianBlur(radius=1.35))
+                    img.save(target, quality=92)
+                global_i += 1
 
-            if kind == 'blurry':
-                img = img.filter(ImageFilter.GaussianBlur(radius=5.0))
-            elif kind == 'soft':
-                img = img.filter(ImageFilter.GaussianBlur(radius=1.4))
-            img.save(target, quality=92)
         return os.path.realpath(demo)
     except Exception as e:
         logger.warning(f"ensure built-in demo failed: {e}")
         return os.path.realpath(demo) if demo.is_dir() else None
+
+
+DEMO_ROOT = DATA_ROOT / '内置测试数据'
+_demo_prepare_lock = threading.Lock()
+_demo_prepare_thread = None
+
+
+def builtin_demo_status():
+    """Cheap status check; never generates demo media on the caller thread."""
+    try:
+        if not DEMO_ROOT.is_dir():
+            return {
+                'folder': os.path.realpath(DEMO_ROOT),
+                'ready': False,
+                'count': 0,
+                'folders': 0,
+            }
+        files = list(DEMO_ROOT.rglob('*.jpg'))
+        folders = {p.parent for p in files}
+        return {
+            'folder': os.path.realpath(DEMO_ROOT),
+            'ready': len(files) >= 36 and len(folders) >= 6,
+            'count': len(files),
+            'folders': len(folders),
+        }
+    except Exception:
+        return {
+            'folder': os.path.realpath(DEMO_ROOT),
+            'ready': False,
+            'count': 0,
+            'folders': 0,
+        }
+
+
+def prepare_builtin_demo_async():
+    """Prepare demo media without blocking first paint or the WebView thread."""
+    global _demo_prepare_thread
+    status = builtin_demo_status()
+    if status['ready']:
+        return status
+    with _demo_prepare_lock:
+        if _demo_prepare_thread is None or not _demo_prepare_thread.is_alive():
+            _demo_prepare_thread = threading.Thread(
+                target=ensure_builtin_demo,
+                daemon=True,
+                name='photocurator-demo-prep',
+            )
+            _demo_prepare_thread.start()
+    status['preparing'] = True
+    return status
+
+
+def prepare_builtin_demo_wait(timeout=20.0):
+    status = prepare_builtin_demo_async()
+    deadline = time.monotonic() + max(0.1, float(timeout))
+    while not status.get('ready') and time.monotonic() < deadline:
+        time.sleep(0.08)
+        status = builtin_demo_status()
+    return status
 
 
 # DCIM folder-name hints -> camera brand label shown on the SD shortcut.
@@ -2119,6 +2316,19 @@ def _shared_list_images(folder, recursive=True, max_age=2.0):
 
     try:
         paths = list_images(folder, recursive=recursive)
+        if producer:
+            try:
+                scan_real = os.path.normcase(os.path.realpath(str(folder)))
+                demo_real = os.path.normcase(os.path.realpath(str(DATA_ROOT / '内置测试数据')))
+                if scan_real != demo_real:
+                    catalog_media_scan(
+                        INDEX_DB,
+                        folder,
+                        paths,
+                        full_scan=bool(recursive),
+                    )
+            except Exception:
+                logger.warning("catalog source/media snapshot update failed", exc_info=True)
     except Exception as exc:
         with _SCAN_SNAPSHOT_CV:
             _SCAN_SNAPSHOTS[key] = {'state': 'failed', 'at': time.time(), 'error': str(exc)}
@@ -3238,94 +3448,222 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   .folder-grid .photo-card{content-visibility:auto;contain-intrinsic-size:190px 240px}
   body.processing #settingsPanel input,
   body.processing #settingsPanel select{opacity:.58;pointer-events:none}
+
+  /* v1.5.1 workspace IA: global / source / content / inspector / status */
+  body{height:100vh;height:100dvh;display:grid;grid-template-rows:54px minmax(0,1fr) 36px;overflow:hidden}
+  .top{height:54px;min-height:54px;padding:7px 10px 7px 14px;flex-wrap:nowrap!important}
+  .top-source{min-width:0;max-width:min(44vw,520px);display:flex;align-items:center;gap:8px;padding:5px 10px;border:1px solid rgba(255,255,255,.2);border-radius:12px;background:rgba(255,255,255,.11);backdrop-filter:blur(18px)}
+  .top-source-copy{display:flex;flex-direction:column;min-width:0;line-height:1.15}.top-source-copy b,.top-source-copy small{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.top-source-copy b{font-size:12px}.top-source-copy small{font-size:10px;opacity:.72;margin-top:2px}
+  .source-dot{width:8px;height:8px;border-radius:50%;display:inline-block;flex:0 0 auto;background:#94a3b8;box-shadow:0 0 0 3px rgba(148,163,184,.13)}.source-dot.online{background:#22c55e;box-shadow:0 0 0 3px rgba(34,197,94,.16)}.source-dot.offline{background:#94a3b8}
+  .top-primary{height:36px;min-width:118px;padding:0 16px;border:1px solid rgba(255,255,255,.42);border-radius:11px;background:rgba(255,255,255,.92);color:#3858c9;font-weight:800;cursor:pointer;box-shadow:0 6px 20px rgba(32,48,120,.16)}
+  .top-primary:disabled{opacity:.45;cursor:not-allowed}.top-primary.stopping{background:#fee2e2;color:#b91c1c}
+  .viewport{height:auto!important;min-height:0;display:flex;overflow:hidden}
+  .sidebar{width:250px;flex:0 0 250px;padding:12px 10px;background:rgba(255,255,255,.68);backdrop-filter:blur(24px) saturate(145%);border-right:1px solid rgba(140,157,208,.18)}
+  .sidebar-nav{flex:0 0 auto}.source-browser{flex:1;min-height:0;overflow-y:auto;margin-top:12px;padding:0 2px 8px}.section-head{display:flex;align-items:center;justify-content:space-between;margin:0 2px 8px;font-size:12px}.section-head b,.section-subhead{color:var(--muted);font-weight:800;letter-spacing:.03em}.section-subhead{font-size:10px;margin:14px 4px 5px}.source-add{border:0;background:rgba(87,109,226,.10);color:#4f63c9;border-radius:8px;padding:5px 8px;font-weight:800;cursor:pointer}.source-path-input{margin-bottom:8px;font-size:11px!important}
+  .sources-list{display:flex;flex-direction:column;gap:6px}.source-card{width:100%;display:grid;grid-template-columns:10px minmax(0,1fr);gap:8px;text-align:left;padding:9px 10px;border:1px solid rgba(124,139,192,.18);border-radius:12px;background:rgba(255,255,255,.56);cursor:default}.source-card.connected{cursor:pointer}.source-card.connected:hover{border-color:rgba(91,111,218,.48);background:rgba(255,255,255,.78)}.source-card b,.source-card small{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.source-card b{font-size:12px}.source-card small{font-size:10px;color:var(--muted);margin-top:2px}.source-root-btn{margin-top:6px;border:0;border-radius:7px;padding:5px 7px;background:rgba(82,105,222,.09);color:#4257b8;font-size:10px;font-weight:700;cursor:pointer;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.source-root-btn:disabled{cursor:not-allowed;color:#8b94a8;background:rgba(148,163,184,.10)}.source-card.offline .source-root-btn{color:#64748b;background:rgba(148,163,184,.09);cursor:pointer}.offline-preview-fallback{width:100%;aspect-ratio:3/2;place-items:center;background:linear-gradient(145deg,#edf1f8,#e4e9f5);color:#8490a7;font-size:11px}.catalog-meta{margin-top:3px;font-size:9px;color:var(--muted)}
+  #shortcuts{display:flex;flex-direction:column}.shortcut{margin-top:5px;background:rgba(255,255,255,.52)}
+  .sidebar-bottom{display:grid;grid-template-columns:1fr auto;gap:7px;border-top:1px solid rgba(124,139,192,.16);padding-top:9px}.sidebar-bottom .toolbox-open,.sidebar-bottom .sidebar-collapse{height:36px;border:1px solid rgba(124,139,192,.18);border-radius:10px;background:rgba(255,255,255,.55);color:var(--text);cursor:pointer;font-weight:700}.sidebar-bottom .toolbox-open{display:flex;align-items:center;justify-content:center;gap:7px}.sidebar-bottom .sidebar-collapse{padding:0 10px}
+  .main{flex:1;min-width:0;padding:14px 16px 10px;overflow-y:auto;background:transparent}
+  .workspace-heading{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:10px}.workspace-heading>div:first-child{min-width:0}.workspace-heading b{font-size:18px}.workspace-heading span{display:block;color:var(--muted);font-size:11px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.workspace-actions{display:flex;align-items:center;gap:6px;flex:0 0 auto}.workspace-action{height:34px;padding:0 11px;border:1px solid rgba(124,139,192,.22);border-radius:10px;background:rgba(255,255,255,.66);color:var(--text);font-size:11px;font-weight:800;cursor:pointer}.workspace-action:hover{border-color:var(--accent)}.workspace-action.danger-soft{color:#b91c1c;background:rgba(254,226,226,.62)}.workspace-action.cta{color:#fff;background:#d94a62;border-color:#d94a62;box-shadow:0 6px 16px rgba(185,28,28,.16)}.workspace-action:disabled{opacity:.45;cursor:not-allowed}
+  .content-toolbar{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}.content-toolbar .filter-bar{flex:1;min-width:0;margin-bottom:10px}.content-toolbar .result-tools{margin:0 0 10px;flex:0 0 auto}.filter-bar{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none}.filter-bar::-webkit-scrollbar{display:none}.chip{white-space:nowrap}
+  .inspector{width:300px;flex:0 0 300px;min-width:0;background:rgba(255,255,255,.64);backdrop-filter:blur(24px) saturate(145%);border-left:1px solid rgba(140,157,208,.18);display:flex;flex-direction:column;transition:width .18s,flex-basis .18s,opacity .18s}.inspector-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 12px 10px;border-bottom:1px solid rgba(124,139,192,.14)}.inspector-head>div{display:flex;flex-direction:column}.inspector-head b{font-size:13px}.inspector-head span{font-size:10px;color:var(--muted);margin-top:1px}.inspector-head button{width:30px;height:30px;border:0;border-radius:9px;background:rgba(90,105,180,.08);cursor:pointer;color:var(--muted)}.inspector-scroll{flex:1;min-height:0;overflow-y:auto;padding:10px}.inspector details{border:1px solid rgba(124,139,192,.16);border-radius:12px;background:rgba(255,255,255,.44);padding:9px 10px;margin-bottom:8px}.inspector summary{font-size:12px;font-weight:800;cursor:pointer}.data-summary{display:grid;gap:6px;margin-top:9px}.data-summary>div{display:flex;align-items:center;justify-content:space-between;font-size:11px}.data-summary span{color:var(--muted)}.data-summary small{display:block;margin-top:4px;color:var(--muted);font-size:9px;word-break:break-all}.storage-actions{display:grid!important;grid-template-columns:1fr 1fr;gap:5px;margin-top:5px}.storage-actions button{min-height:30px;border:1px solid var(--border);border-radius:8px;background:rgba(255,255,255,.66);color:var(--text);font-size:10px;font-weight:700;cursor:pointer}.storage-actions button[data-clean="features"]{grid-column:1/-1;color:#9a5a00;background:rgba(254,243,199,.55)}
+  body.inspector-collapsed .inspector{width:0;flex-basis:0;opacity:0;border:0;overflow:hidden}body.inspector-collapsed #settingsQuick{background:rgba(91,111,218,.12);color:#4357ba}
+  .statusbar{height:36px;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:0 10px 0 14px;background:rgba(247,249,255,.82);backdrop-filter:blur(18px);border-top:1px solid rgba(124,139,192,.18);font-size:10px;color:var(--muted);z-index:30}.status-left{display:flex;align-items:center;gap:7px;min-width:0}.status-left b{color:var(--text)}.status-sep{width:1px;height:13px;background:var(--border)}.thumb-zoom{display:flex;align-items:center;gap:6px}.thumb-zoom button{width:25px;height:25px;border:1px solid var(--border);border-radius:7px;background:rgba(255,255,255,.72);cursor:pointer}.thumb-zoom input{width:110px}.thumb-zoom b{min-width:26px;text-align:right;color:var(--text)}
+  :root{--thumb-size:180px}.gallery{grid-template-columns:repeat(auto-fill,minmax(var(--thumb-size),1fr))}.folder-grid{grid-template-columns:repeat(auto-fill,minmax(var(--thumb-size),1fr))}.dedup-choices{grid-template-columns:repeat(auto-fit,minmax(var(--thumb-size),1fr))}
+  #gallery.view-large .folder-grid,#gallery.view-large .dedup-choices{grid-template-columns:repeat(auto-fill,minmax(max(260px,var(--thumb-size)),1fr))}
+  .dedup-group-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:9px;min-width:0}.dedup-group-title{display:flex;align-items:center;gap:7px;min-width:0}.dedup-group-meta{color:var(--muted);font-size:11px;white-space:nowrap}.dedup-group-actions{display:flex!important;align-items:center;justify-content:flex-end;gap:6px;margin:0!important;flex:0 0 auto}.dedup-group-actions .group-complete{min-height:32px;padding:5px 12px;border-radius:9px;background:color-mix(in srgb,var(--accent) 11%,white);border-color:color-mix(in srgb,var(--accent) 28%,var(--border));color:var(--accent);font-weight:800}.dedup-more{position:relative;margin:0!important}.dedup-more summary{list-style:none;width:32px;height:32px;display:grid;place-items:center;border:1px solid var(--border);border-radius:9px;background:rgba(255,255,255,.68);font-size:0}.dedup-more summary::-webkit-details-marker{display:none}.dedup-more summary::after{content:'•••';font-size:12px;letter-spacing:1px}.dedup-more .dedup-quick{position:absolute;right:0;top:36px;z-index:40;min-width:150px;padding:6px;border:1px solid var(--border);border-radius:10px;background:rgba(255,255,255,.96);box-shadow:0 14px 34px rgba(52,63,112,.18);display:grid;gap:4px}.dedup-more .dedup-quick button{border:0;border-radius:7px;padding:7px 8px;text-align:left;background:transparent;cursor:pointer;font-size:11px}.dedup-more .dedup-quick button:hover{background:var(--panel2)}
+  body.sidebar-collapsed .sidebar{width:66px!important;flex-basis:66px!important;padding-left:7px;padding-right:7px}body.sidebar-collapsed .source-browser{display:none}body.sidebar-collapsed .sidebar-bottom{grid-template-columns:1fr}body.sidebar-collapsed .sidebar-bottom .nav-label{display:none}body.sidebar-collapsed .sidebar-collapse{font-size:0}body.sidebar-collapsed .sidebar-collapse::after{content:'⇥';font-size:17px}
+  @media(max-width:1050px){.inspector{width:270px;flex-basis:270px}.sidebar{width:225px;flex-basis:225px}.top-source{max-width:34vw}.workspace-heading span{max-width:420px}}
+  @media(max-width:820px){body{grid-template-rows:54px minmax(0,1fr) 36px}.viewport{height:auto!important;flex-direction:row}.inspector{display:none}.sidebar{width:210px;flex-basis:210px}.top-source{display:none}.workspace-heading span{display:none}.main{padding:10px}.gallery,.folder-grid,.dedup-choices{grid-template-columns:repeat(auto-fill,minmax(var(--thumb-size),1fr))}}
+
+  /* v1.5.3 native-window workspace: one sidebar + one temporary drawer */
+  body{height:100vh;height:100dvh;display:grid!important;grid-template-rows:46px minmax(0,1fr) 34px!important;overflow:hidden!important;background:
+    radial-gradient(circle at 18% 8%,rgba(125,211,252,.16),transparent 34%),
+    radial-gradient(circle at 88% 12%,rgba(196,181,253,.18),transparent 34%),
+    linear-gradient(135deg,#f7fbff 0%,#fbf8ff 100%)!important}
+  .appbar{height:46px;display:flex;align-items:center;gap:10px;padding:0 10px;border-bottom:1px solid rgba(128,145,195,.16);background:rgba(242,247,255,.86);backdrop-filter:blur(22px) saturate(150%);z-index:60}
+  .workspace-tabs{display:flex;align-items:center;gap:4px;padding:3px;border:1px solid rgba(124,139,192,.16);border-radius:11px;background:rgba(255,255,255,.55)}
+  .workspace-tabs .step{min-width:auto;height:30px;padding:0 11px;border:0;border-radius:8px;background:transparent;color:#64748b;font-size:11px;font-weight:800;display:flex;align-items:center;gap:6px;cursor:pointer}
+  .workspace-tabs .step.active{background:#fff;color:#4861cf;box-shadow:0 3px 10px rgba(75,91,160,.11)}
+  .appbar-spacer{flex:1;min-width:12px}
+  .source-pill{min-width:190px;max-width:330px;height:34px;display:flex;align-items:center;gap:8px;padding:0 10px;border:1px solid rgba(124,139,192,.16);border-radius:11px;background:rgba(255,255,255,.58)}
+  .source-pill-copy{display:flex;flex-direction:column;min-width:0;line-height:1.08}.source-pill-copy b,.source-pill-copy small{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.source-pill-copy b{font-size:10px}.source-pill-copy small{font-size:9px;color:var(--muted);margin-top:2px}
+  .appbar-actions{display:flex;align-items:center;gap:6px}.appbar-btn{height:32px;padding:0 11px;border:1px solid rgba(124,139,192,.18);border-radius:10px;background:rgba(255,255,255,.68);color:#48536b;font-size:10px;font-weight:800;cursor:pointer}.appbar-btn:hover{border-color:#7b8fe4;background:#fff}.appbar-btn.primary{min-width:108px;background:linear-gradient(135deg,#5878ee,#6f63df);color:#fff;border-color:transparent;box-shadow:0 6px 16px rgba(76,93,210,.18)}.appbar-btn.primary:disabled{opacity:.38;box-shadow:none}.appbar-btn.icon-btn{width:32px;padding:0;font-size:14px}
+  .workspace-shell{min-height:0;display:flex;overflow:hidden!important}
+  .library-sidebar{width:224px;flex:0 0 224px;display:flex;flex-direction:column;min-height:0;padding:12px 10px 9px;border-right:1px solid rgba(124,139,192,.16);background:rgba(248,251,255,.72);backdrop-filter:blur(20px)}
+  .library-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}.library-head>div{display:flex;flex-direction:column}.library-head b{font-size:12px}.library-head small{font-size:9px;color:var(--muted);margin-top:1px}.library-head .source-add{height:30px;padding:0 9px}
+  .source-path-input{height:34px!important;margin-bottom:8px!important;border-radius:9px!important;font-size:10px!important}
+  .source-browser{flex:1!important;min-height:0;overflow-y:auto;margin:0!important;padding:0 1px 8px!important}.library-footer{padding-top:8px;border-top:1px solid rgba(124,139,192,.14)}.library-footer .sidebar-collapse{width:100%;height:32px;border:1px solid rgba(124,139,192,.16);border-radius:9px;background:rgba(255,255,255,.52);color:var(--muted);font-size:10px;font-weight:700;cursor:pointer}
+  .main{flex:1;min-width:0;min-height:0;padding:14px 15px 10px!important;overflow-y:auto!important;background:transparent!important}
+  .dashboard-view{display:block;width:100%;min-width:0;min-height:100%;}.dashboard-view[hidden]{display:none!important}.photo-view{display:block;width:100%;min-width:0;min-height:100%}.photo-view[hidden]{display:none!important}
+  .workspace-overview{width:100%!important;min-width:0!important;max-width:none!important;grid-column:1/-1!important}
+  .content-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}.content-title{min-width:0}.content-title b{font-size:18px}.content-title span{display:block;margin-top:2px;color:var(--muted);font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:760px}.workspace-actions{display:flex;align-items:center;gap:6px;flex:0 0 auto}
+  .content-toolbar{display:flex;align-items:center;justify-content:space-between;gap:8px}.filter-bar{flex-wrap:nowrap!important;overflow-x:auto}.result-tools{margin:0!important}
+  .gallery{min-height:calc(100% - 88px)}
+  .empty-start{min-height:420px;display:flex!important;flex-direction:column;align-items:center;justify-content:center;text-align:center}.empty-start .icon{font-size:42px}.empty-start .title{font-size:17px;font-weight:800;color:#39445a}.empty-start p{max-width:520px;margin:8px auto 16px;color:var(--muted);font-size:11px;line-height:1.6}.empty-add-source{height:36px;padding:0 14px;border:0;border-radius:10px;background:#5b72df;color:white;font-weight:800;cursor:pointer}
+
+  .workspace-overview{display:block!important;min-height:100%;padding:2px 0 10px}.overview-hero{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(260px,.75fr);gap:12px;margin-bottom:12px}.overview-card{border:1px solid rgba(124,139,192,.16);border-radius:16px;background:rgba(255,255,255,.62);backdrop-filter:blur(18px);box-shadow:0 8px 24px rgba(70,83,140,.06)}.overview-primary{padding:18px 20px;display:flex;align-items:center;justify-content:space-between;gap:18px;background:linear-gradient(135deg,rgba(225,241,255,.78),rgba(240,231,255,.78))}.overview-primary-copy{min-width:0}.overview-primary-copy .eyebrow{font-size:10px;font-weight:800;color:#6677c7;letter-spacing:.08em;text-transform:uppercase}.overview-primary-copy h2{margin:5px 0 6px;font-size:22px;color:#35405a}.overview-primary-copy p{margin:0;max-width:680px;font-size:11px;line-height:1.65;color:var(--muted)}.overview-primary-actions{display:flex;flex-direction:column;gap:7px;flex:0 0 auto}.overview-primary-actions button{min-width:126px;height:36px;border-radius:10px;border:1px solid rgba(91,113,220,.22);background:rgba(255,255,255,.72);color:#4b5fc3;font-size:10px;font-weight:800;cursor:pointer}.overview-primary-actions .primary{border:0;background:linear-gradient(135deg,#5a79ef,#7367e0);color:#fff;box-shadow:0 7px 18px rgba(79,94,207,.18)}
+  .overview-metrics{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;padding:12px}.metric{padding:12px;border-radius:11px;background:rgba(246,249,255,.78);border:1px solid rgba(124,139,192,.10)}.metric span{display:block;font-size:9px;color:var(--muted);margin-bottom:4px}.metric b{font-size:18px;color:#374151}.metric small{display:block;margin-top:3px;font-size:8px;color:#8a94a8}
+  .overview-grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:12px}.overview-section{padding:14px}.overview-section h3{margin:0 0 3px;font-size:12px;color:#3c465c}.overview-section>p{margin:0 0 10px;font-size:9px;color:var(--muted)}.overview-section.sources{grid-column:span 7}.overview-section.storage{grid-column:span 5}.overview-section.guide{grid-column:span 7}.overview-section.demo{grid-column:span 5}.overview-list{display:grid;gap:6px}.overview-source-row{display:grid;grid-template-columns:9px minmax(0,1fr) auto;align-items:center;gap:8px;padding:9px 10px;border-radius:10px;background:rgba(247,249,255,.78);border:1px solid rgba(124,139,192,.10)}.overview-source-row .copy{min-width:0}.overview-source-row b,.overview-source-row small{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.overview-source-row b{font-size:10px}.overview-source-row small{margin-top:2px;font-size:8px;color:var(--muted)}.overview-source-row button{height:28px;padding:0 9px;border:1px solid rgba(124,139,192,.15);border-radius:8px;background:#fff;color:#5062bb;font-size:9px;font-weight:800;cursor:pointer}.overview-source-row button:disabled{cursor:default;color:#98a1b3;background:#f3f5f8}
+  .overview-storage-list{display:grid;gap:6px}.overview-storage-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 10px;border-radius:9px;background:rgba(247,249,255,.72);font-size:9px}.overview-storage-row span{color:var(--muted)}.overview-storage-row b{font-size:10px}.workflow-guide{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}.guide-step{padding:10px;border-radius:10px;background:rgba(247,249,255,.72);border:1px solid rgba(124,139,192,.10)}.guide-step b{display:block;font-size:10px;margin-bottom:3px}.guide-step small{font-size:8px;line-height:1.5;color:var(--muted)}
+  .source-ready{display:grid!important;grid-template-columns:minmax(0,1.45fr) minmax(250px,.7fr);gap:12px;min-height:0}.source-ready-main,.source-ready-side{padding:16px}.source-ready-head{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:14px}.source-ready-head h2{margin:0;font-size:19px}.source-ready-head p{margin:4px 0 0;font-size:10px;color:var(--muted);word-break:break-all}.source-ready-badge{display:flex;align-items:center;gap:6px;white-space:nowrap;padding:6px 9px;border-radius:999px;background:rgba(34,197,94,.09);color:#27834a;font-size:9px;font-weight:800}.source-ready-facts{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px}.source-ready-fact{padding:11px;border-radius:10px;background:rgba(247,249,255,.76);border:1px solid rgba(124,139,192,.10)}.source-ready-fact span{display:block;font-size:8px;color:var(--muted);margin-bottom:4px}.source-ready-fact b{font-size:11px;color:#384257}.source-ready-actions{display:flex;gap:8px;flex-wrap:wrap}.source-ready-actions button{height:36px;padding:0 13px;border-radius:10px;border:1px solid rgba(124,139,192,.16);background:#fff;color:#4859ac;font-size:10px;font-weight:800;cursor:pointer}.source-ready-actions .primary{border:0;background:linear-gradient(135deg,#5b79ef,#7465df);color:#fff;box-shadow:0 7px 18px rgba(76,91,206,.18)}.source-ready-side h3{margin:0 0 10px;font-size:12px}.source-ready-check{display:flex;align-items:flex-start;gap:8px;padding:9px 0;border-bottom:1px solid rgba(124,139,192,.09)}.source-ready-check:last-child{border-bottom:0}.source-ready-check .dot{width:7px;height:7px;border-radius:50%;background:#78a1ef;margin-top:4px;flex:0 0 auto}.source-ready-check b{display:block;font-size:9px}.source-ready-check small{display:block;margin-top:2px;font-size:8px;line-height:1.45;color:var(--muted)}
+  .source-card{display:block!important;padding:0!important;overflow:hidden}.source-card>summary{list-style:none;display:grid;grid-template-columns:10px minmax(0,1fr) 16px;gap:8px;align-items:center;padding:9px 10px;cursor:pointer}.source-card>summary::-webkit-details-marker{display:none}.source-card>summary::after{content:'›';color:#9aa4b7;font-size:15px;transition:transform .15s}.source-card[open]>summary::after{transform:rotate(90deg)}.source-card .source-summary-copy{min-width:0}.source-card .source-summary-copy b,.source-card .source-summary-copy small{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.source-card .source-summary-copy b{font-size:11px}.source-card .source-summary-copy small{font-size:8px;color:var(--muted);margin-top:2px}.source-roots{display:grid;gap:5px;padding:0 9px 9px 27px}.source-card.current{border-color:rgba(86,108,222,.42);box-shadow:0 0 0 2px rgba(86,108,222,.06)}
+  @media(max-width:1050px){.overview-hero,.source-ready{grid-template-columns:1fr}.overview-grid{grid-template-columns:1fr}.overview-section.sources,.overview-section.storage,.overview-section.guide,.overview-section.demo{grid-column:auto}.overview-primary{align-items:flex-start}.overview-primary-actions{flex-direction:row}.workflow-guide{grid-template-columns:1fr 1fr 1fr}}
+  @media(max-width:760px){.overview-primary{flex-direction:column}.overview-primary-actions{width:100%;flex-direction:row}.overview-primary-actions button{flex:1}.overview-metrics{grid-template-columns:1fr 1fr}.workflow-guide{grid-template-columns:1fr}.source-ready-facts{grid-template-columns:1fr 1fr}}
+  .inspector-drawer{position:fixed!important;right:10px!important;top:56px!important;bottom:44px!important;width:320px!important;z-index:90!important;display:flex!important;flex-direction:column!important;background:rgba(250,252,255,.96)!important;border:1px solid rgba(124,139,192,.18)!important;border-radius:16px!important;box-shadow:0 20px 54px rgba(54,65,115,.20)!important;backdrop-filter:blur(24px) saturate(150%)!important;transform:translateX(calc(100% + 24px));opacity:0;pointer-events:none;transition:transform .18s ease,opacity .18s ease}
+  body.inspector-open .inspector-drawer{transform:translateX(0);opacity:1;pointer-events:auto}.inspector-head{padding:12px!important}.inspector-scroll{padding:10px!important}.drawer-scrim{position:fixed;inset:46px 0 34px 0;z-index:80;background:rgba(25,33,56,.10);backdrop-filter:blur(1px);opacity:0;pointer-events:none;transition:opacity .18s ease}body.inspector-open .drawer-scrim{opacity:1;pointer-events:auto}
+  .statusbar{height:34px!important;padding:0 10px 0 12px!important;z-index:70!important}
+  body.sidebar-collapsed .library-sidebar{width:58px!important;flex-basis:58px!important;padding-left:7px!important;padding-right:7px!important}body.sidebar-collapsed .library-head>div,body.sidebar-collapsed .library-head .source-add,body.sidebar-collapsed .source-path-input,body.sidebar-collapsed .source-browser{display:none!important}body.sidebar-collapsed .library-head{height:28px;margin:0}body.sidebar-collapsed .library-footer{margin-top:auto}body.sidebar-collapsed .sidebar-collapse{font-size:0}body.sidebar-collapsed .sidebar-collapse::after{content:'⇥';font-size:16px}
+  @media(max-width:1050px){.source-pill{max-width:220px;min-width:150px}.workspace-tabs .step{padding:0 9px}.library-sidebar{width:205px;flex-basis:205px}}
+  @media(max-width:900px){.source-pill{display:none}.content-title span{display:none}.library-sidebar{width:190px;flex-basis:190px}}
 </style></head><body>
-<div class="top pywebview-drag-region">
-  <div class="brand">
-    <span class="brand-mark">C</span>
-    <span class="brand-copy"><b>PhotoCurator</b><small>照片整理工作区 · v{{ app_version }}</small></span>
+<header class="appbar">
+  <nav class="workspace-tabs" aria-label="照片整理工作区">
+    <button class="step active" data-step="cull"><span class="nav-icon">◐</span><span class="nav-label">模糊废片</span></button>
+    <button class="step" data-step="dedup"><span class="nav-icon">▱</span><span class="nav-label">相似照片</span></button>
+    <button class="step" data-step="trash"><span class="nav-icon">♲</span><span class="nav-label">回收站</span></button>
+  </nav>
+
+  <div class="appbar-spacer"></div>
+
+  <div class="source-pill" id="topSource">
+    <span class="source-dot offline" id="topSourceDot"></span>
+    <span class="source-pill-copy"><b id="topSourceName">未选择数据源</b><small id="topSourcePath">添加照片来源后开始</small></span>
   </div>
-  <div class="top-right">
-    <button class="title-action" id="taskToggle" title="任务中心" aria-label="任务中心"><span>◉</span><span>任务</span></button>
-    <div class="window-controls">
-      <button id="winMin" title="最小化">—</button>
-      <button id="winMax" title="最大化/还原">□</button>
-      <button id="winClose" title="关闭到后台">×</button>
+
+  <div class="appbar-actions">
+    <button class="appbar-btn primary" id="startBtn">▶ 开始分析</button>
+    <button class="appbar-btn" id="settingsQuick">筛选</button>
+    <button class="appbar-btn" id="taskToggle">任务</button>
+    <button class="appbar-btn icon-btn" id="toolboxOpen" title="工具箱">⌘</button>
+  </div>
+</header>
+
+<div class="workspace-shell">
+  <aside class="library-sidebar" id="sidebar">
+    <div class="library-head">
+      <div><b>数据源</b><small>硬盘 / U盘 / 照片文件夹</small></div>
+      <button class="source-add" id="browseBtn">＋ 添加</button>
     </div>
-  </div>
-</div>
-<div class="viewport">
-  <div class="sidebar" id="sidebar">
-    <nav class="sidebar-nav" aria-label="核心照片整理">
-      <button class="step active" data-step="cull"><span class="nav-icon">◐</span><span class="nav-label">模糊废片</span></button>
-      <button class="step" data-step="dedup"><span class="nav-icon">▱</span><span class="nav-label">相似照片</span></button>
-      <button class="step" data-step="trash"><span class="nav-icon">♲</span><span class="nav-label">回收站</span></button>
-      <button class="toolbox-open" id="toolboxOpen"><span class="nav-icon">⌘</span><span class="nav-label">工具箱</span></button>
-    </nav>
-    <div class="sidebar-scroll">
-      <details class="source-panel" open>
-        <summary>📁 照片来源</summary>
-      <div class="folder-row">
-        <input type="text" id="folderInput" placeholder="请选择或粘贴照片文件夹路径">
-        <button class="btn" id="browseBtn">选择文件夹…</button>
-      </div>
+
+    <input type="text" id="folderInput" class="source-path-input" placeholder="选择或粘贴照片文件夹路径">
+
+    <div class="source-browser">
+      <div id="sourcesList" class="sources-list"></div>
+      <div class="section-subhead">示例与最近</div>
       <div id="shortcuts"></div>
-      </details>
+    </div>
 
-      <details class="settings-fold" id="settingsDetails">
-        <summary>⚙️ 筛选设置</summary>
-        <div id="settingsPanel" style="margin-top:10px"></div>
-      </details>
+    <div class="library-footer">
+      <button class="sidebar-collapse" id="sidebarCollapse" title="收起/展开数据源栏">⇤ 收起数据源</button>
+    </div>
+  </aside>
 
-      <details class="stats-fold" open>
-        <summary>📊 当前结果</summary>
-        <div class="panel-box" style="margin-top:8px">
+  <main class="main">
+    <section class="dashboard-view" id="dashboardView"></section>
+
+    <section class="photo-view" id="photoView" hidden>
+      <section class="content-head" id="contentHead">
+        <div class="content-title">
+          <b id="workspaceTitle">模糊废片</b>
+          <span id="workspaceHint">快速复核模糊与失焦照片，后台分析不会打断当前操作。</span>
+        </div>
+        <div class="workspace-actions">
+          <button class="workspace-action" id="exportBtn" style="display:none">⬇ 导出</button>
+          <button class="workspace-action" id="exportPbgBtn" style="display:none">📱 壁纸</button>
+          <button class="workspace-action danger-soft" id="moveBlurryBtn" style="display:none">🗑 移入回收站</button>
+          <button class="workspace-action" id="dedupApplyBtn" style="display:none!important" aria-hidden="true">旧版批量处理</button>
+        </div>
+      </section>
+
+      <div class="progress-wrap" id="progressWrap">
+        <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+        <div class="progress-line">
+          <div class="progress-text" id="progressText">…</div>
+          <button class="chip new-results" id="loadNewResults" style="display:none">加载新结果</button>
+        </div>
+      </div>
+
+      <div class="content-toolbar">
+        <div class="filter-bar" id="filterBar" style="display:none"></div>
+        <div class="result-tools" id="resultTools" style="display:none">
+          <div class="result-tools-left">
+            <button class="chip" id="expandAllBtn">全部展开</button>
+            <button class="chip" id="collapseAllBtn">全部收起</button>
+          </div>
+          <div class="result-tools-right">
+            <button class="chip" data-view="small">网格</button>
+            <button class="chip" data-view="list">列表</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="pager" id="pager" style="display:none!important"></div>
+      <div class="gallery" id="gallery"></div>
+    </section>
+  </main>
+</div>
+
+<aside class="inspector-drawer" id="inspector" aria-hidden="true">
+  <div class="inspector-head">
+    <div><b>筛选与数据</b><span>只在需要时打开，不占用照片工作区</span></div>
+    <button id="inspectorClose" title="关闭">×</button>
+  </div>
+  <div class="inspector-scroll">
+    <details class="settings-fold" id="settingsDetails" open>
+      <summary>筛选设置</summary>
+      <div id="settingsPanel" style="margin-top:10px"></div>
+    </details>
+
+    <details class="stats-fold" open>
+      <summary>当前结果</summary>
+      <div class="panel-box" style="margin-top:8px">
         <div class="stat-row" data-steps="cull dedup rank"><span>照片数量</span><span class="v" id="sImages">0</span></div>
         <div class="stat-row" data-steps="cull"><span>清晰</span><span class="v" id="sSharp">0</span></div>
-        <div class="stat-row" data-steps="cull"><span>轻微软（可保留）</span><span class="v" id="sSoft" style="color:var(--warn)">0</span></div>
+        <div class="stat-row" data-steps="cull"><span>轻微软</span><span class="v" id="sSoft" style="color:var(--warn)">0</span></div>
         <div class="stat-row" data-steps="cull"><span>模糊</span><span class="v" id="sBlurry">0</span></div>
         <div class="stat-row" data-steps="dedup"><span>相似分组</span><span class="v" id="sGroups">0</span></div>
         <div class="stat-row" data-steps="cull dedup rank trash"><span>当前显示</span><span class="v" id="sShowing">0</span></div>
         <div class="stat-row" data-steps="trash"><span>软件回收站</span><span class="v" id="sTrash">0</span></div>
         <div id="removedBox" style="display:none">已移除 <b id="removedN">0</b> 张 · <a id="restoreAll">全部恢复</a></div>
-        </div>
-      </details>
-    </div>
+      </div>
+    </details>
 
-    <!-- Pinned action footer: always visible regardless of scroll / window height -->
-    <div class="sidebar-actions">
-      <button class="btn-ghost" id="exportBtn" style="display:none">⬇ 导出优选照片…</button>
-      <button class="btn-ghost" id="exportPbgBtn" style="display:none">📱 导出手机壁纸…</button>
-      <button class="btn-ghost" id="moveBlurryBtn" style="display:none">🗑 将选中模糊照片移入软件回收站</button>
-      <button class="btn cta" id="dedupApplyBtn" style="display:none!important" aria-hidden="true">旧版批量处理</button>
-      <button class="btn" id="startBtn">▶ 开始分析</button>
-      <button class="btn-ghost sidebar-collapse" id="sidebarCollapse" title="收起/展开侧栏">⇤ 收起侧栏</button>
-    </div>
-  </div>
-  <div class="main">
-    <div class="workspace-heading">
-      <div><b id="workspaceTitle">模糊废片</b><span id="workspaceHint">快速复核已分析结果，后台扫描不会打断当前操作。</span></div>
-      <button class="chip" id="settingsQuick">筛选设置</button>
-    </div>
-    <div class="progress-wrap" id="progressWrap">
-      <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
-      <div class="progress-line"><div class="progress-text" id="progressText">…</div>
-        <button class="chip new-results" id="loadNewResults" style="display:none">加载新结果</button></div>
-    </div>
-    <div class="filter-bar" id="filterBar" style="display:none"></div>
-    <div class="result-tools" id="resultTools" style="display:none">
-      <div class="result-tools-left">
-        <button class="chip" id="expandAllBtn">全部展开</button>
-        <button class="chip" id="collapseAllBtn">全部收起</button>
+    <details class="data-fold" open>
+      <summary>数据与存储</summary>
+      <div class="data-summary" id="dataSummary">
+        <div><span>数据库</span><b id="dbUsage">—</b></div>
+        <div><span>图库离线预览</span><b id="catalogPreviewUsage">—</b></div>
+        <div><span>临时预览缓存</span><b id="previewUsage">—</b></div>
+        <div><span>相似特征</span><b id="featureUsage">—</b></div>
+        <div><span>日志</span><b id="logUsage">—</b></div>
+        <div class="storage-actions">
+          <button data-clean="previews">清理预览缓存</button>
+          <button data-clean="logs">清理旧日志</button>
+          <button data-clean="features">重建相似特征</button>
+        </div>
+        <small id="dataRootText">正在读取数据目录…</small>
       </div>
-      <div class="result-tools-right">
-        <button class="chip" data-view="small">网格</button>
-        <button class="chip" data-view="list">列表</button>
-      </div>
-    </div>
-    <div class="pager" id="pager" style="display:none!important"></div>
-    <div class="gallery" id="gallery"><div class="empty"><div class="icon">🎞️</div><div>选择照片文件夹后点击“开始分析”</div></div></div>
+    </details>
   </div>
-</div>
+</aside>
+<div class="drawer-scrim" id="drawerScrim"></div>
+
+<footer class="statusbar">
+  <div class="status-left">
+    <span class="source-dot offline" id="statusSourceDot"></span>
+    <span id="statusSourceText">数据源未连接</span>
+    <span class="status-sep"></span>
+    <span>显示 <b id="statusShowing">0</b> 张</span>
+  </div>
+  <div class="thumb-zoom" title="Ctrl + 鼠标滚轮也可以调整缩略图大小">
+    <span>缩略图</span>
+    <button id="thumbSmaller" aria-label="缩小缩略图">−</button>
+    <input id="thumbSizeRange" type="range" min="110" max="320" step="10" value="180">
+    <button id="thumbLarger" aria-label="放大缩略图">＋</button>
+    <b id="thumbSizeValue">180</b>
+  </div>
+</footer>
 
 <div class="lightbox" id="lightbox">
   <div class="lb-bar">
@@ -3396,6 +3734,22 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
 <div id="cn-build-badge" style="position:fixed;right:10px;bottom:8px;z-index:50;font-size:10px;color:var(--muted);opacity:.55;pointer-events:none">照片筛选 · 中文桌面版 v{{ app_version }}</div>
 
 <script>
+function reportUiFatal(reason){
+  const msg=String((reason&&reason.message)||reason||'未知前端错误');
+  document.documentElement.dataset.uiFatal='1';
+  console.error('PhotoCurator UI fatal:',reason);
+  let box=document.getElementById('uiFatalBanner');
+  if(!box){
+    box=document.createElement('div');
+    box.id='uiFatalBanner';
+    box.style.cssText='position:fixed;left:18px;right:18px;top:66px;z-index:9999;padding:12px 14px;border-radius:12px;background:#fff1f2;border:1px solid #fecdd3;color:#9f1239;font:600 12px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;box-shadow:0 12px 40px rgba(127,29,29,.18)';
+    document.body.appendChild(box);
+  }
+  box.textContent='界面运行异常，部分按钮可能不可用。请重启 PhotoCurator；若仍出现，请查看运行日志。错误：'+msg;
+}
+window.addEventListener('error',e=>reportUiFatal(e.error||e.message));
+window.addEventListener('unhandledrejection',e=>reportUiFatal(e.reason));
+
 function toast(msg,type){
   const w=document.getElementById('toastWrap');
   const el=document.createElement('div');el.className='toast '+(type||'good');el.textContent=msg;
@@ -3462,15 +3816,28 @@ document.addEventListener('keydown',e=>{
   else if(e.key==='p'||e.key==='P'){e.preventDefault();closeDeleteDialog('permanent');}
 });
 let folder=null, photos=[], lbList=[], lbIndex=0, currentStep='cull', folderStatus={};
+let sourceCatalog=[], selectedSource=null, catalogRootView=null;
+let latestStorageSummary=null, demoShortcutPath='', demoShortcutCount=0, demoShortcutReady=false;
 const cullLiveStore=new Map();
 const dedupLiveStore=new Map();
 let isRunning=false, runningStep=null, codespacesMode=false;
 let coreRunning=false, corePollTimer=null, coreSnapshots={cull:null,dedup:null};
 let lastRankSig='', lastStep=null, weightTimer=null, removedCount=0, pollFailures=0, largeResultWarned=false;
+
+// Result paging/filter state must exist before the first UI bootstrap call.
+// Keep boot-critical state together here so setupFilterBar() cannot touch
+// a later lexical declaration and abort the rest of the interaction bindings.
+let cullChunkToken=0, cullVisibleTotal=0;
+let dedupChunkToken=0;
+let dedupStatusFilter='pending', dedupVisibleTotal=0;
+let dedupStatusCounts={pending:0,reviewed:0,updated:0};
 // These controls are needed by setupFilterBar() during initial page boot.
 // Define them before the first setupFilterBar() call to avoid TDZ failures
 // that would stop Codespaces shortcut/sample initialization.
 const startBtn=document.getElementById('startBtn');
+startBtn.disabled=true;
+startBtn.setAttribute('aria-disabled','true');
+startBtn.title='请先选择照片文件夹';
 let cullReady=false;
 const CATS=[['aesthetic','综合观感'],['composition','构图'],['technical','技术质量'],['sharpness','清晰度'],['color','色彩']];
 const catColor=(i,n)=>`hsl(${Math.round(i*360/(n||CATS.length))},80%,62%)`;
@@ -3601,17 +3968,30 @@ function loadActivity(){
 }
 document.getElementById('toolLog').addEventListener('toggle',e=>{if(e.currentTarget.open)loadActivity();});
 
-/* Gallery thumbnail zoom: Ctrl + mouse wheel changes thumbnail density only. */
-let thumbSize=190;
-try{const saved=parseInt(localStorage.getItem('pc-thumb-size')||'190',10);if(Number.isFinite(saved))thumbSize=Math.min(340,Math.max(120,saved));}catch(_){}
-function applyThumbSize(v){thumbSize=Math.min(340,Math.max(120,Math.round(v/10)*10));document.documentElement.style.setProperty('--thumb-size',thumbSize+'px');try{localStorage.setItem('pc-thumb-size',String(thumbSize));}catch(_){}}
+/* Gallery thumbnail zoom: Ctrl + wheel changes photo-card size, never page zoom. */
+let thumbSize=180;
+try{
+  const saved=parseInt(localStorage.getItem('pc-thumb-size')||'180',10);
+  if(Number.isFinite(saved))thumbSize=Math.min(320,Math.max(110,saved));
+}catch(_){}
+function applyThumbSize(v){
+  thumbSize=Math.min(320,Math.max(110,Math.round(v/10)*10));
+  document.documentElement.style.setProperty('--thumb-size',thumbSize+'px');
+  const range=document.getElementById('thumbSizeRange');
+  const label=document.getElementById('thumbSizeValue');
+  if(range)range.value=String(thumbSize);
+  if(label)label.textContent=String(thumbSize);
+  try{localStorage.setItem('pc-thumb-size',String(thumbSize));}catch(_){}
+}
 applyThumbSize(thumbSize);
-document.querySelector('.main').addEventListener('wheel',e=>{if(!e.ctrlKey||document.getElementById('lightbox').classList.contains('open'))return;e.preventDefault();applyThumbSize(thumbSize+(e.deltaY<0?20:-20));},{passive:false});
-function nativeWindow(action){if(window.pywebview&&window.pywebview.api&&window.pywebview.api.window_action){window.pywebview.api.window_action(action).catch(()=>{});}}
-document.getElementById('winMin').onclick=()=>nativeWindow('minimize');
-document.getElementById('winMax').onclick=()=>nativeWindow('toggle_maximize');
-document.getElementById('winClose').onclick=()=>nativeWindow('close');
-setTimeout(()=>{if(!(window.pywebview&&window.pywebview.api))document.querySelector('.window-controls').style.display='none';},900);
+document.getElementById('thumbSizeRange').oninput=e=>applyThumbSize(Number(e.target.value));
+document.getElementById('thumbSmaller').onclick=()=>applyThumbSize(thumbSize-20);
+document.getElementById('thumbLarger').onclick=()=>applyThumbSize(thumbSize+20);
+document.querySelector('.main').addEventListener('wheel',e=>{
+  if(!e.ctrlKey||document.getElementById('lightbox').classList.contains('open'))return;
+  e.preventDefault();
+  applyThumbSize(thumbSize+(e.deltaY<0?20:-20));
+},{passive:false});
 
 const WORKSPACE_COPY={
   cull:['模糊废片','快速复核模糊与失焦照片，后台分析不会打断当前操作。'],
@@ -3632,10 +4012,24 @@ function setSidebarCollapsed(on){
 }
 try{setSidebarCollapsed(localStorage.getItem('pc-sidebar-collapsed')==='1');}catch(_){}
 sidebarCollapse.onclick=()=>setSidebarCollapsed(!document.body.classList.contains('sidebar-collapsed'));
+function setInspectorOpen(on){
+  document.body.classList.toggle('inspector-open',!!on);
+  document.getElementById('inspector').setAttribute('aria-hidden',on?'false':'true');
+}
+setInspectorOpen(false);
 document.getElementById('settingsQuick').onclick=()=>{
-  if(document.body.classList.contains('sidebar-collapsed'))setSidebarCollapsed(false);
-  const d=document.getElementById('settingsDetails');d.open=true;d.scrollIntoView({behavior:'smooth',block:'nearest'});
+  const next=!document.body.classList.contains('inspector-open');
+  setInspectorOpen(next);
+  if(next){
+    const d=document.getElementById('settingsDetails');d.open=true;
+    loadStorageSummary(true);
+  }
 };
+document.getElementById('inspectorClose').onclick=()=>setInspectorOpen(false);
+document.getElementById('drawerScrim').onclick=()=>setInspectorOpen(false);
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape'&&document.body.classList.contains('inspector-open'))setInspectorOpen(false);
+});
 const toolboxPanel=document.getElementById('toolboxPanel');
 document.getElementById('toolboxOpen').onclick=()=>toolboxPanel.classList.add('open');
 document.getElementById('toolboxClose').onclick=()=>toolboxPanel.classList.remove('open');
@@ -3858,11 +4252,16 @@ function activateStep(step){
   renderSettings();
   document.getElementById('exportBtn').style.display='none';
   document.getElementById('exportPbgBtn').style.display='none';
-  {const mb=document.getElementById('moveBlurryBtn');mb.style.display='none';mb.classList.add('btn-ghost');mb.classList.remove('btn','cta');startBtn.classList.remove('secondary');}
+  {const mb=document.getElementById('moveBlurryBtn');mb.style.display='none';mb.classList.remove('cta');}
   document.getElementById('dedupApplyBtn').style.display='none';
   document.getElementById('progressWrap').style.display='none';  // clear stale summary
   document.getElementById('resultTools').style.display='none';
-  document.getElementById('gallery').innerHTML=emptyHTML(currentStep);
+  if(!photos.length&&!isRunning&&!coreRunning&&!catalogRootView){
+    renderWorkspaceLanding();
+  }else{
+    showPhotoView();
+    document.getElementById('gallery').innerHTML=emptyHTML(currentStep);
+  }
   lastRankSig='';lastStep=null;
   gPage=0;lastGallerySig='';gItems=[];document.getElementById('pager').style.display='none';
   setupFilterBar();
@@ -3874,6 +4273,7 @@ document.querySelectorAll('.step').forEach(t=>t.onclick=()=>{
   if(currentStep==='trash'){loadTrash();return;}
   fetch('/api/progress/'+currentStep).then(r=>r.json()).then(d=>{
     if(d.src_folder && folder && !sameFolder(d.src_folder,folder)){
+      showPhotoView();
       document.getElementById('gallery').innerHTML=emptyHTML(currentStep);
       document.getElementById('progressWrap').style.display='none';
       return;
@@ -3897,6 +4297,11 @@ let cullFilter='all', cullType='all', rankFilter='all', lastFmtSig='';
 function setupFilterBar(){
   const bar=document.getElementById('filterBar');
   if(currentStep==='cull'){
+    if(!photos.length && !coreRunning && !isRunning){
+      bar.style.display='none';
+      bar.innerHTML='';
+      return;
+    }
     const opts=[['all','全部'],['sharp','清晰'],['soft','轻微软 ★'],['blurry','模糊']];
     // Per-format chips (NEF, CR2, ARW, ...) built from what's actually loaded.
     const rawFmts=[...new Set(photos.filter(p=>p.raw).map(p=>p.fmt||'RAW'))].sort();
@@ -3977,6 +4382,7 @@ function resetWorkspaceForFolder(){
   ['sImages','sSharp','sSoft','sBlurry','sGroups','sShowing','sTrash'].forEach(id=>{
     const el=document.getElementById(id);if(el)el.textContent='0';
   });
+  document.getElementById('statusShowing').textContent='0';
   document.getElementById('progressWrap').style.display='none';
   document.getElementById('filterBar').style.display='none';
   document.getElementById('resultTools').style.display='none';
@@ -3984,66 +4390,453 @@ function resetWorkspaceForFolder(){
   document.getElementById('exportPbgBtn').style.display='none';
   document.getElementById('moveBlurryBtn').style.display='none';
   document.getElementById('dedupApplyBtn').style.display='none';
-  document.getElementById('gallery').innerHTML=emptyHTML(currentStep);
+  renderWorkspaceLanding();
+}
+function updateStartAvailability(){
+  if(!startBtn)return;
+  if(isRunning||coreRunning){
+    startBtn.disabled=false;
+    return;
+  }
+  const ready=!!String(folder||'').trim();
+  startBtn.disabled=!ready;
+  startBtn.setAttribute('aria-disabled',ready?'false':'true');
+  startBtn.title=ready?'开始分析当前照片文件夹':'请先选择照片文件夹';
+}
+function sourceForPath(value){
+  const wanted=normalizedFolder(value);
+  for(const source of sourceCatalog||[]){
+    for(const root of source.roots||[]){
+      if(sameFolder(root.current_root,wanted)||sameFolder(root.original_root,wanted)){
+        return {...source,root};
+      }
+    }
+  }
+  return null;
+}
+function updateSourceUi(){
+  selectedSource=folder?sourceForPath(folder):null;
+  const offline=catalogRootView&&catalogRootView.source?catalogRootView.source:null;
+  const name=document.getElementById('topSourceName');
+  const path=document.getElementById('topSourcePath');
+  const topDot=document.getElementById('topSourceDot');
+  const statusDot=document.getElementById('statusSourceDot');
+  const statusText=document.getElementById('statusSourceText');
+  const active=selectedSource||offline;
+  const connected=!!(active&&active.connected);
+  if(folder){
+    name.textContent=selectedSource?selectedSource.display_name:'当前照片来源';
+    path.textContent=folder;
+    statusText.textContent=(selectedSource?(selectedSource.display_name+' · '):'')+(connected?'已连接':'路径已选择');
+  }else if(offline){
+    name.textContent=offline.display_name||'离线图库';
+    path.textContent=(catalogRootView.root&&catalogRootView.root.original_root)||'原始位置未连接';
+    statusText.textContent=(offline.display_name||'数据源')+' · 未连接 · 历史数据可查看';
+  }else{
+    name.textContent='未选择数据源';
+    path.textContent='添加硬盘、U盘或照片文件夹后开始';
+    statusText.textContent='数据源未连接';
+  }
+  [topDot,statusDot].forEach(dot=>{
+    dot.classList.toggle('online',connected);
+    dot.classList.toggle('offline',!connected);
+  });
+  if(!isRunning&&!coreRunning&&!photos.length&&!catalogRootView)renderWorkspaceLanding();
 }
 function selectFolderValue(value){
   const next=String(value||'').trim();
-  if(next===folder)return;
+  if(next===folder){updateStartAvailability();updateSourceUi();return;}
   folder=next||null;
+  catalogRootView=null;
   resetWorkspaceForFolder();
+  updateStartAvailability();
+  updateSourceUi();
+}
+
+function fmtDate(ts){
+  const n=Number(ts)||0;
+  if(!n)return '尚未扫描';
+  try{return new Date(n*1000).toLocaleString('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'});}catch(_){return '已有记录';}
+}
+function sourceTotals(){
+  let roots=0,indexed=0,online=0,offline=0;
+  for(const source of sourceCatalog||[]){
+    if(source.connected)online++;else offline++;
+    for(const root of source.roots||[]){
+      roots++;indexed+=Number(root.photo_count||0);
+    }
+  }
+  return {roots,indexed,online,offline,total:(sourceCatalog||[]).length};
+}
+function currentRootInfo(){
+  if(!folder)return null;
+  const match=sourceForPath(folder);
+  return match&&match.root?match:null;
+}
+function overviewSourceRows(){
+  const rows=[];
+  for(const source of sourceCatalog||[]){
+    for(const root of source.roots||[]){
+      rows.push({source,root});
+    }
+  }
+  rows.sort((a,b)=>{
+    const ac=a.source.connected?1:0,bc=b.source.connected?1:0;
+    if(ac!==bc)return bc-ac;
+    return Number(b.root.last_scan_at||0)-Number(a.root.last_scan_at||0);
+  });
+  return rows.slice(0,5);
+}
+function workspaceOverviewHTML(){
+  const t=sourceTotals();
+  const rows=overviewSourceRows();
+  const storage=latestStorageSummary;
+  const storageText=key=>storage?formatBytes(storage[key]||0):'按需查看';
+  const recent=rows.length?rows.map(({source,root})=>{
+    const current=root.current_root||root.original_root||'';
+    const canOpen=!!source.connected;
+    return '<div class="overview-source-row">'
+      +'<span class="source-dot '+(canOpen?'online':'offline')+'"></span>'
+      +'<div class="copy"><b>'+escHtml(root.display_name||source.display_name||'照片库')+'</b>'
+      +'<small>'+escHtml(source.display_name||'数据源')+' · '+Number(root.photo_count||0)+' 张 · '+(canOpen?'已连接':'未连接')+'</small></div>'
+      +'<button data-overview-root="'+escHtml(root.root_id||'')+'" data-overview-path="'+escHtml(current)+'" data-overview-connected="'+(canOpen?'1':'0')+'">'+(canOpen?'打开':'看历史')+'</button>'
+      +'</div>';
+  }).join(''):'<div class="source-empty">还没有建立过图库索引，先添加一个数据源。</div>';
+
+  return '<div class="workspace-overview">'
+    +'<div class="overview-hero">'
+      +'<section class="overview-card overview-primary"><div class="overview-primary-copy">'
+      +'<div class="eyebrow">PHOTO LIBRARY</div><h2>照片整理工作台</h2>'
+      +'<p>连接硬盘、U盘或照片文件夹后，PhotoCurator 会保留来源、扫描结果和人工复核记录。设备断开后，历史图库仍然可查。</p>'
+      +'</div><div class="overview-primary-actions">'
+      +'<button class="primary" data-overview-action="add">＋ 添加数据源</button>'
+      +(demoShortcutPath?'<button data-overview-action="demo">'+(demoShortcutReady?'打开演示图库':'准备演示图库')+'</button>':'')
+      +'</div></section>'
+      +'<section class="overview-card overview-metrics">'
+      +'<div class="metric"><span>数据源</span><b>'+t.total+'</b><small>'+t.online+' 已连接 · '+t.offline+' 未连接</small></div>'
+      +'<div class="metric"><span>已索引照片</span><b>'+t.indexed.toLocaleString('zh-CN')+'</b><small>'+t.roots+' 个图库根目录</small></div>'
+      +'<div class="metric"><span>图库数据库</span><b>'+storageText('database_bytes')+'</b><small>分析与人工复核记录</small></div>'
+      +'<div class="metric"><span>离线预览</span><b>'+storageText('persistent_preview_bytes')+'</b><small>拔盘后仍可浏览</small></div>'
+      +'</section></div>'
+    +'<div class="overview-grid">'
+      +'<section class="overview-card overview-section sources"><h3>最近图库</h3><p>在线数据源优先，离线数据源仍保留历史。</p><div class="overview-list">'+recent+'</div></section>'
+      +'<section class="overview-card overview-section storage"><h3>软件占用</h3><p>持久数据与可清理缓存分开显示。</p><div class="overview-storage-list">'
+      +'<div class="overview-storage-row"><span>数据库</span><b>'+storageText('database_bytes')+'</b></div>'
+      +'<div class="overview-storage-row"><span>离线预览</span><b>'+storageText('persistent_preview_bytes')+'</b></div>'
+      +'<div class="overview-storage-row"><span>临时缓存</span><b>'+storageText('preview_cache_bytes')+'</b></div>'
+      +'<div class="overview-storage-row"><span>相似特征</span><b>'+storageText('dedup_feature_bytes')+'</b></div>'
+      +'</div></section>'
+      +'<section class="overview-card overview-section guide"><h3>整理流程</h3><p>常用流程一直可见，高级参数只在“筛选”抽屉里出现。</p>'
+      +'<div class="workflow-guide">'
+      +'<div class="guide-step"><b>1 · 连接数据源</b><small>识别硬盘/U盘身份，建立可追溯图库。</small></div>'
+      +'<div class="guide-step"><b>2 · 开始分析</b><small>默认递归子文件夹，同时执行清晰度与相似分析。</small></div>'
+      +'<div class="guide-step"><b>3 · 人工复核</b><small>先筛选、再处理；删除默认进入软件回收站。</small></div>'
+      +'</div></section>'
+      +'<section class="overview-card overview-section demo"><h3>演示图库</h3><p>用于测试子目录、模糊识别和近似连拍。</p>'
+      +'<div class="overview-storage-list"><div class="overview-storage-row"><span>测试照片</span><b>'+(demoShortcutReady?(Number(demoShortcutCount||36)+' 张'):'首次点击生成')+'</b></div>'
+      +'<div class="overview-storage-row"><span>子文件夹</span><b>6 个</b></div>'
+      +'<div class="overview-storage-row"><span>内容</span><b>清晰 / 模糊 / 连拍</b></div></div></section>'
+      +'</div></div>';
+}
+function sourceReadyHTML(){
+  const match=currentRootInfo();
+  const source=match||selectedSource;
+  const root=match&&match.root?match.root:null;
+  const indexed=Number(root&&root.photo_count||0);
+  const lastScan=Number(root&&root.last_scan_at||0);
+  const connected=source?!!source.connected:true;
+  return '<div class="source-ready">'
+    +'<section class="overview-card source-ready-main"><div class="source-ready-head"><div>'
+    +'<h2>'+escHtml(root&&root.display_name||source&&source.display_name||'当前照片来源')+'</h2>'
+    +'<p>'+escHtml(folder||'')+'</p></div><span class="source-ready-badge"><span class="source-dot '+(connected?'online':'offline')+'"></span>'+(connected?'已连接':'路径已选择')+'</span></div>'
+    +'<div class="source-ready-facts">'
+    +'<div class="source-ready-fact"><span>已索引照片</span><b>'+indexed.toLocaleString('zh-CN')+' 张</b></div>'
+    +'<div class="source-ready-fact"><span>上次扫描</span><b>'+escHtml(fmtDate(lastScan))+'</b></div>'
+    +'<div class="source-ready-fact"><span>扫描范围</span><b>'+(recursiveScan?'当前文件夹 + 所有子文件夹':'仅当前文件夹')+'</b></div>'
+    +'</div><div class="source-ready-actions">'
+    +'<button class="primary" data-ready-action="start">▶ 开始分析</button>'
+    +'<button data-ready-action="settings">筛选设置</button>'
+    +'</div></section>'
+    +'<aside class="overview-card source-ready-side"><h3>本次分析</h3>'
+    +'<div class="source-ready-check"><span class="dot"></span><div><b>清晰度筛选</b><small>识别清晰、轻微软和明显模糊照片。</small></div></div>'
+    +'<div class="source-ready-check"><span class="dot"></span><div><b>相似照片分组</b><small>识别连拍与近似照片，先复核再处理。</small></div></div>'
+    +'<div class="source-ready-check"><span class="dot"></span><div><b>增量复用</b><small>已经扫描且没有变化的文件优先复用历史数据。</small></div></div>'
+    +'</aside></div>';
+}
+async function openDemoLibrary(button=null){
+  if(!demoShortcutPath)return;
+  if(demoShortcutReady){
+    selectFolderValue(demoShortcutPath);
+    document.getElementById('folderInput').value=demoShortcutPath;
+    return;
+  }
+  const old=button?button.innerHTML:'';
+  if(button){
+    button.disabled=true;
+    button.textContent='正在准备演示图库…';
+  }
+  try{
+    const r=await fetch('/api/demo-prepare?wait=1',{method:'POST'});
+    const d=await r.json();
+    if(!r.ok||!d.ready)throw new Error(d.error||'演示图库准备失败');
+    demoShortcutPath=d.folder||demoShortcutPath;
+    demoShortcutCount=Number(d.count||36);
+    demoShortcutReady=true;
+    selectFolderValue(demoShortcutPath);
+    document.getElementById('folderInput').value=demoShortcutPath;
+    loadShortcuts();
+  }catch(err){
+    if(button){button.innerHTML=old;button.disabled=false;}
+    toast('演示图库准备失败：'+(err.message||'未知错误'),'bad');
+  }
+}
+function bindWorkspaceLanding(){
+  const g=document.getElementById('dashboardView');
+  g.querySelectorAll('[data-overview-action="add"]').forEach(b=>b.onclick=()=>document.getElementById('browseBtn').click());
+  g.querySelectorAll('[data-overview-action="demo"]').forEach(b=>b.onclick=()=>openDemoLibrary(b));
+  g.querySelectorAll('[data-overview-root]').forEach(b=>b.onclick=()=>{
+    if(b.dataset.overviewConnected==='1'){
+      selectFolderValue(b.dataset.overviewPath);
+      document.getElementById('folderInput').value=folder||'';
+    }else if(b.dataset.overviewRoot){
+      loadCatalogRoot(b.dataset.overviewRoot);
+    }
+  });
+  const start=g.querySelector('[data-ready-action="start"]');
+  if(start)start.onclick=()=>document.getElementById('startBtn').click();
+  const settings=g.querySelector('[data-ready-action="settings"]');
+  if(settings)settings.onclick=()=>document.getElementById('settingsQuick').click();
+}
+function showDashboard(html){
+  const dashboard=document.getElementById('dashboardView');
+  const photoView=document.getElementById('photoView');
+  dashboard.innerHTML=html||'';
+  dashboard.hidden=false;
+  photoView.hidden=true;
+}
+function showPhotoView(){
+  document.getElementById('dashboardView').hidden=true;
+  document.getElementById('photoView').hidden=false;
+}
+function renderWorkspaceLanding(){
+  if(isRunning||coreRunning||photos.length||catalogRootView)return;
+  showDashboard(folder?sourceReadyHTML():workspaceOverviewHTML());
+  bindWorkspaceLanding();
 }
 
 /* shortcuts */
 function sdLabel(p){const parts=p.split(/[\\/]/).filter(Boolean);
   const tail=parts.slice(-2).join('/');
   const m=/^([A-Za-z]:)/.exec(p);return m?m[1]+' '+tail:tail;}
-function loadShortcuts(){fetch('/api/shortcuts').then(r=>r.json()).then(d=>{
-  let h='';
-  codespacesMode=!!d.codespaces;
-  const fi=document.getElementById('folderInput');
-  const bb=document.getElementById('browseBtn');
-
-  if(codespacesMode){
-    bb.disabled=true;bb.textContent='云端路径模式';
-    fi.placeholder='输入 Codespaces 中的云端文件夹路径';
-    h+=`<div style="background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:9px 10px;font-size:11px;line-height:1.55;margin-bottom:7px">☁️ <b>Codespaces 在线预览</b><br>当前只能访问云端工作区文件，不能直接读取你电脑的 C:/F: 等本地硬盘。</div>`;
-  }else{
-    bb.disabled=isRunning;bb.textContent='选择文件夹…';
-    fi.placeholder='请选择或粘贴照片文件夹路径';
+function formatBytes(n){
+  n=Math.max(0,Number(n)||0);
+  const units=['B','KB','MB','GB','TB'];let i=0;
+  while(n>=1024&&i<units.length-1){n/=1024;i++;}
+  return (i<2?n.toFixed(0):n.toFixed(1))+' '+units[i];
+}
+function formatSourceKind(kind){
+  return ({removable:'U盘 / 移动设备',fixed:'磁盘',network:'网络存储',volume:'存储设备'})[kind]||'存储设备';
+}
+function renderSources(){
+  const box=document.getElementById('sourcesList');
+  if(!sourceCatalog.length){
+    box.innerHTML='<div class="source-empty">还没有已建立索引的数据源</div>';
+    return;
   }
+  box.innerHTML=sourceCatalog.map(source=>{
+    const current=!!(selectedSource&&selectedSource.source_id===source.source_id);
+    const open=source.connected||current;
+    const state=source.connected?'已连接':'未连接 · 历史保留';
+    const roots=(source.roots||[]).map(root=>{
+      const path=root.current_root||root.original_root||'';
+      const title=(root.display_name||path||'照片库')+' · '+Number(root.photo_count||0)+' 张';
+      return '<button class="source-root-btn" data-source-root="'+escHtml(path)+'"'
+        +' data-root-id="'+escHtml(root.root_id)+'" data-source-id="'+escHtml(source.source_id)+'"'
+        +' data-connected="'+(source.connected?'1':'0')+'" title="'+escHtml(path)+'">'+escHtml(title)+'</button>';
+    }).join('');
+    return '<details class="source-card '+(source.connected?'connected':'offline')+(current?' current':'')+'" '+(open?'open':'')+'>'
+      +'<summary><span class="source-dot '+(source.connected?'online':'offline')+'"></span>'
+      +'<span class="source-summary-copy"><b>'+escHtml(source.display_name)+'</b>'
+      +'<small>'+escHtml(formatSourceKind(source.kind))+' · '+escHtml(state)
+      +(source.capacity_bytes?' · '+formatBytes(source.capacity_bytes):'')+'</small></span></summary>'
+      +'<div class="source-roots">'+(roots||'<div class="source-empty">暂无已索引目录</div>')+'</div></details>';
+  }).join('');
+  box.querySelectorAll('.source-root-btn').forEach(btn=>{
+    btn.onclick=e=>{
+      e.preventDefault();e.stopPropagation();
+      if(btn.dataset.connected==='1'){
+        selectFolderValue(btn.dataset.sourceRoot);
+        document.getElementById('folderInput').value=folder||'';
+      }else{
+        loadCatalogRoot(btn.dataset.rootId);
+      }
+    };
+  });
+}
 
-  if(d.demo_folder){
-    const p=d.demo_folder;
-    const n=d.demo_count||12, br=d.demo_breakdown||{};
-    h+=`<button class="shortcut" data-p="${escHtml(p)}" style="border-color:var(--accent);background:color-mix(in srgb,var(--accent) 7%,var(--panel));align-items:flex-start">
-      <span class="tag recent" style="margin-top:1px">内置测试</span>
-      <span style="display:flex;flex-direction:column;gap:2px;min-width:0">
-        <b style="font-size:12px;color:var(--text)">内置测试数据 · ${n} 张</b>
-        <span style="font-size:10px;color:var(--muted)">清晰 ${br.sharp||4} · 轻微软 ${br.soft||4} · 模糊 ${br.blurry||4} · 程序内永久保留</span>
-      </span>
-    </button>`;
-    if(codespacesMode&&!folder){selectFolderValue(p);fi.value=p;}
+async function loadCatalogRoot(rootId){
+  showPhotoView();
+  try{
+    const r=await fetch('/api/catalog-root/'+encodeURIComponent(rootId));
+    const d=await r.json();
+    if(!r.ok||d.error)throw new Error(d.error||('HTTP '+r.status));
+    catalogRootView=d;
+    folder=null;
+    updateStartAvailability();
+    updateSourceUi();
+    const fi=document.getElementById('folderInput');
+    fi.value=(d.root&&d.root.original_root)||'';
+    document.getElementById('progressWrap').style.display='none';
+    document.getElementById('filterBar').style.display='none';
+    document.getElementById('resultTools').style.display='none';
+    document.getElementById('workspaceTitle').textContent=(d.source&&d.source.display_name)||'离线图库';
+    document.getElementById('workspaceHint').textContent='数据源未连接 · 历史索引仍可查看，重新插入原设备后可继续增量分析。';
+    const items=d.items||[];
+    const g=document.getElementById('gallery');
+    g.className='gallery catalog-history';
+    g.innerHTML=items.length?items.map(item=>{
+      const missing=item.state==='missing';
+      const badge=missing?'<span class="lifecycle-badge trash">原文件缺失</span>':'';
+      const preview=item.thumb
+        ?'<img class="photo-img" src="'+escHtml(item.thumb)+'" loading="lazy" decoding="async" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'grid\'">'
+          +'<div class="offline-preview-fallback" style="display:none">离线预览未缓存</div>'
+        :'<div class="offline-preview-fallback">离线预览未缓存</div>';
+      return '<div class="photo-card catalog-card">'+badge+preview
+        +'<div class="photo-info"><div class="photo-name">'+escHtml(item.name)+'</div>'
+        +'<div class="source-path">'+escHtml(item.relative_path)+'</div>'
+        +'<div class="catalog-meta">'+(item.has_cull_cache?'已分析':'仅索引')+' · '+formatBytes(item.size)+'</div></div></div>';
+    }).join(''):'<div class="empty"><div class="icon">🗄️</div><div class="title">这个图库还没有持久化媒体索引</div><p>重新连接数据源并完成一次扫描后会建立历史目录。</p></div>';
+    document.getElementById('sShowing').textContent=String(items.length);
+    document.getElementById('sImages').textContent=String(d.total||items.length);
+  }catch(err){
+    toast('读取离线图库失败：'+(err.message||'未知错误'),'bad');
   }
+}
+let lastStorageSummaryAt=0;
+function loadStorageSummary(force=false){
+  const now=Date.now();
+  if(!force && lastStorageSummaryAt && now-lastStorageSummaryAt<300000)return;
+  lastStorageSummaryAt=now;
+  fetch('/api/storage-summary').then(r=>r.json()).then(d=>{
+    if(d.error)return;
+    document.getElementById('dbUsage').textContent=formatBytes(d.database_bytes);
+    document.getElementById('catalogPreviewUsage').textContent=formatBytes(d.persistent_preview_bytes);
+    document.getElementById('previewUsage').textContent=formatBytes(d.preview_cache_bytes);
+    document.getElementById('featureUsage').textContent=formatBytes(d.dedup_feature_bytes);
+    document.getElementById('logUsage').textContent=formatBytes(d.log_bytes);
+    document.getElementById('dataRootText').textContent='数据目录：'+(d.data_root||'—');
+    latestStorageSummary=d;
+    if(!folder&&!catalogRootView&&!isRunning&&!coreRunning&&!photos.length)renderWorkspaceLanding();
+  }).catch(()=>{lastStorageSummaryAt=0;});
+}
 
-  (d.sd||[]).forEach(o=>{const p=(typeof o==='string')?o:o.path;
-    const br=(o&&o.brand)?(' · '+o.brand):'';
-    h+=`<button class="shortcut" data-p="${escHtml(p)}"><span class="tag sd">SD${escHtml(br)}</span>${escHtml(sdLabel(p))}</button>`;});
-  (d.recent||[]).slice(0,4).forEach(p=>h+=`<button class="shortcut" data-p="${escHtml(p)}"><span class="tag recent">最近</span>${escHtml(sdLabel(p))}</button>`);
-  if(d.rawpy===false)h=`<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:8px;`
-    +`padding:8px 10px;font-size:11px;line-height:1.5;margin-bottom:6px">⚠️ <b>RAW 支持未启用</b> — `
-    +`未安装 rawpy，CR2/NEF/ARW/DNG 等 RAW 文件会被跳过。<br>`
-    +`请重新运行依赖安装后再试。</div>`+h;
-  if(d.heif===false)h=`<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:8px;`
-    +`padding:8px 10px;font-size:11px;line-height:1.5;margin-bottom:6px">⚠️ <b>HEIC 支持未启用</b> — `
-    +`未安装 pillow-heif，iPhone 的 HEIC/HEIF 文件会被跳过。<br>`
-    +`请重新运行依赖安装后再试。</div>`+h;
-  if(!(d.sd||[]).length&&!codespacesMode)h+=`<div style="font-size:11px;color:var(--muted);margin-top:6px">未检测到相机存储卡；插入后会自动出现在这里，也可以直接选择文件夹。</div>`;
-  document.getElementById('shortcuts').innerHTML=h;
-  document.querySelectorAll('.shortcut').forEach(b=>{b.disabled=isRunning;b.onclick=()=>{if(isRunning)return;selectFolderValue(b.dataset.p);fi.value=folder||'';};});
-}).catch(()=>{});
+async function clearStorageCategory(category){
+  const labels={previews:'预览缓存',logs:'旧日志',features:'相似照片特征缓存'};
+  const risky=category==='features';
+  const ok=await askBatchConfirm(
+    risky?'重建相似照片特征':'清理'+labels[category],
+    risky
+      ?'这只会删除可重建的相似照片特征缓存，不会删除图库数据库、人工复核记录或原始照片。下次相似分析会重新计算。'
+      :'只会清理可重建的临时软件文件，不会删除图库数据库、离线图库预览、人工复核记录或原始照片。',
+    risky?'清理并在下次重建':'立即清理'
+  );
+  if(!ok)return;
+  try{
+    const r=await fetch('/api/storage-clear',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({category})
+    });
+    const d=await r.json();
+    if(!r.ok||d.error)throw new Error(d.error||('HTTP '+r.status));
+    toast('已清理 '+labels[category]+' · 释放 '+formatBytes(d.freed_bytes),'good');
+    loadStorageSummary(true);
+  }catch(err){
+    toast('清理失败：'+(err.message||'未知错误'),'bad');
+  }
+}
+document.querySelectorAll('[data-clean]').forEach(btn=>btn.onclick=()=>clearStorageCategory(btn.dataset.clean));
+function loadShortcuts(){
+  fetch('/api/shortcuts').then(r=>r.json()).then(d=>{
+    let h='';
+    codespacesMode=!!d.codespaces;
+    sourceCatalog=Array.isArray(d.sources)?d.sources:[];
+    renderSources();
+    updateSourceUi();
+    const fi=document.getElementById('folderInput');
+    const bb=document.getElementById('browseBtn');
+
+    if(codespacesMode){
+      bb.disabled=true;bb.textContent='云端路径';
+      fi.placeholder='输入 Codespaces 中的云端文件夹路径';
+    }else{
+      bb.disabled=isRunning||coreRunning;bb.textContent='＋ 添加';
+      fi.placeholder='选择或粘贴照片文件夹路径';
+    }
+
+    demoShortcutPath=d.demo_folder||'';
+    demoShortcutCount=Number(d.demo_count||0);
+    demoShortcutReady=!!d.demo_ready;
+    if(d.demo_folder){
+      const p=d.demo_folder;
+      const ready=!!d.demo_ready;
+      const n=d.demo_count||36;
+      h+='<button class="shortcut demo-shortcut" data-p="'+escHtml(p)+'" data-demo="1" data-ready="'+(ready?'1':'0')+'">'
+        +'<span class="tag recent">示例</span>'
+        +'<span><b>'+(ready?('多目录演示图库 · '+n+' 张'):'准备演示图库')+'</b>'
+        +'<small>'+(ready?'6 个子文件夹 · 清晰/轻微软/模糊/近似连拍':'首次点击时后台生成，不阻塞软件启动')+'</small></span></button>';
+      if(codespacesMode&&!folder&&ready){selectFolderValue(p);fi.value=p;}
+    }
+
+    (d.sd||[]).forEach(o=>{
+      const p=(typeof o==='string')?o:o.path;
+      const br=(o&&o.brand)?(' · '+o.brand):'';
+      h+='<button class="shortcut" data-p="'+escHtml(p)+'"><span class="tag sd">相机卡'+escHtml(br)
+        +'</span><span>'+escHtml(sdLabel(p))+'</span></button>';
+    });
+    (d.recent||[]).filter(p=>!sourceCatalog.some(s=>(s.roots||[]).some(r=>sameFolder(r.current_root,p)||sameFolder(r.original_root,p))))
+      .slice(0,3).forEach(p=>{
+        h+='<button class="shortcut" data-p="'+escHtml(p)+'"><span class="tag recent">最近</span><span>'+escHtml(sdLabel(p))+'</span></button>';
+      });
+    document.getElementById('shortcuts').innerHTML=h;
+    document.querySelectorAll('.shortcut').forEach(b=>{
+      b.disabled=isRunning||coreRunning;
+      b.onclick=async()=>{
+        if(isRunning||coreRunning)return;
+        if(b.dataset.demo==='1'&&b.dataset.ready!=='1'){
+          await openDemoLibrary(b);
+          return;
+        }
+        selectFolderValue(b.dataset.p);fi.value=folder||'';
+      };
+    });
+    if(!folder&&!catalogRootView&&!isRunning&&!coreRunning&&!photos.length)renderWorkspaceLanding();
+  }).catch(()=>{});
+}
+async function refreshEnvironment(){
+  if(document.hidden||isRunning||coreRunning)return;
+  try{
+    const d=await fetch('/api/environment-refresh').then(r=>r.json());
+    if(Array.isArray(d.sources))sourceCatalog=d.sources;
+    renderSources();updateSourceUi();
+    const shortcuts=document.getElementById('shortcuts');
+    if(shortcuts&&Array.isArray(d.sd)&&d.sd.length){
+      const existing=new Set([...shortcuts.querySelectorAll('.shortcut')].map(x=>x.dataset.p));
+      d.sd.forEach(o=>{
+        const p=(typeof o==='string')?o:o.path;
+        if(!p||existing.has(p))return;
+        const br=(o&&o.brand)?(' · '+o.brand):'';
+        const b=document.createElement('button');
+        b.className='shortcut';b.dataset.p=p;
+        b.innerHTML='<span class="tag sd">相机卡'+escHtml(br)+'</span><span>'+escHtml(sdLabel(p))+'</span>';
+        b.onclick=()=>{selectFolderValue(p);document.getElementById('folderInput').value=folder||'';};
+        shortcuts.appendChild(b);
+      });
+    }
+  }catch(_){}
 }
 loadShortcuts();
-setInterval(()=>{if(!document.hidden&&!isRunning)loadShortcuts();},30000);  // pick up a card inserted later
+setTimeout(refreshEnvironment,5000);
+setInterval(refreshEnvironment,60000);
 document.getElementById('folderInput').onchange=e=>selectFolderValue(e.target.value);
 document.getElementById('folderInput').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();selectFolderValue(e.target.value);}};
 document.getElementById('browseBtn').onclick=async()=>{
@@ -4052,14 +4845,20 @@ document.getElementById('browseBtn').onclick=async()=>{
   try{
     let selected=null;
     let nativeError=null;
-    if(window.pywebview&&window.pywebview.api&&window.pywebview.api.pick_folder){
+    let nativeAttempted=false;
+    const nativeApi=(window.pywebview&&window.pywebview.api)||null;
+    if(nativeApi&&nativeApi.pick_folder){
+      nativeAttempted=true;
       try{
-        selected=await window.pywebview.api.pick_folder();
+        selected=await nativeApi.pick_folder();
       }catch(err){
         nativeError=err;
       }
     }
-    if(selected==null && (!window.pywebview||nativeError)){
+    // The pywebview object can exist briefly before its API bridge is ready.
+    // In that state, do not silently do nothing: use the HTTP/native-dialog
+    // fallback. A real user cancellation from the native picker is respected.
+    if(selected==null && (!nativeAttempted||nativeError)){
       const r=await fetch('/api/browse',{method:'POST'});
       if(!r.ok)throw new Error('HTTP '+r.status);
       const d=await r.json();
@@ -4072,7 +4871,8 @@ document.getElementById('browseBtn').onclick=async()=>{
   }catch(err){
     toast('无法打开文件夹选择器：'+(err.message||'未知错误'),'bad');
   }finally{
-    btn.disabled=false;btn.textContent=old;
+    btn.disabled=isRunning||coreRunning||codespacesMode;
+    btn.textContent=old;
   }
 };
 
@@ -4086,8 +4886,9 @@ function setStartBtn(running){
   const fi=document.getElementById('folderInput');
   const bb=document.getElementById('browseBtn');
   if(fi)fi.disabled=busy;
-  if(bb)bb.disabled=busy||codespacesMode;
-  document.querySelectorAll('.shortcut').forEach(x=>x.disabled=busy);
+  if(bb)bb.disabled=busy||coreRunning||codespacesMode;
+  document.querySelectorAll('.shortcut').forEach(x=>x.disabled=busy||coreRunning);
+  updateStartAvailability();
 }
 function snapshotPipelineConfig(){
   return {
@@ -4108,7 +4909,7 @@ async function startStep(step,config=null){
     gPage=0;lastGallerySig='';document.getElementById('pager').style.display='none';
     document.getElementById('exportBtn').style.display='none';
     document.getElementById('exportPbgBtn').style.display='none';
-    {const mb=document.getElementById('moveBlurryBtn');mb.style.display='none';mb.classList.add('btn-ghost');mb.classList.remove('btn','cta');startBtn.classList.remove('secondary');}
+    {const mb=document.getElementById('moveBlurryBtn');mb.style.display='none';mb.classList.remove('cta');}
   }
   setRemoved(0);
   setStartBtn(true);
@@ -4234,6 +5035,8 @@ async function coreRun(){
   const cfg=snapshotPipelineConfig();
   const coreSteps=['cull','dedup'];
   coreRunning=true;setStartBtn(true);
+  showPhotoView();
+  document.getElementById('gallery').innerHTML='<div class="empty"><div class="icon">◌</div><div class="title">正在分析照片</div><p>模糊筛选与相似照片分析正在后台并行启动，结果会持续进入当前工作区。</p></div>';
   document.getElementById('progressWrap').style.display='block';
   document.getElementById('progressText').textContent='正在启动模糊分析与相似分析…';
   try{
@@ -4264,6 +5067,7 @@ async function coreRun(){
     coreRunning=false;setStartBtn(false);
     document.getElementById('progressText').textContent='核心分析未完整启动，已回滚已启动任务';
     toast('启动失败：'+(err.message||'未知错误'),'bad');
+    if(!photos.length)renderWorkspaceLanding();
   }
 }
 function stateBusyFromUi(){return !!runningStep;}
@@ -4287,7 +5091,6 @@ function cullRowsForPayload(d){
   return Array.from(cullLiveStore.values());
 }
 
-let cullChunkToken=0,cullVisibleTotal=0;
 async function loadCullPage(reset=false){
   if(currentStep!=='cull')return;
   const token=++cullChunkToken;
@@ -4323,8 +5126,6 @@ function dedupRowsForPayload(d){
   rows.forEach(g=>{if(g&&g.group_id!=null)dedupLiveStore.set(String(g.group_id),g);});
   return Array.from(dedupLiveStore.values());
 }
-let dedupChunkToken=0;
-let dedupStatusFilter='pending',dedupVisibleTotal=0,dedupStatusCounts={pending:0,reviewed:0,updated:0};
 async function loadDedupPage(reset=false){
   if(currentStep!=='dedup')return;
   const offset=reset?0:dedupLiveStore.size;
@@ -4479,6 +5280,7 @@ function dedupMemberState(group,p){
   return ['待筛选','state-neutral',''];
 }
 function renderDedupGroups(groups){
+  showPhotoView();
   photos=groups||[];
   const g=document.getElementById('gallery');
   document.getElementById('sShowing').textContent=groups.length;
@@ -4507,15 +5309,17 @@ function renderDedupGroups(groups){
       const kept=members.filter(p=>p.selected&&!['pending_trash','pending_permanent_delete','trashed','permanently_deleted'].includes(p.lifecycle)).length;
       const [statusText,statusClass]=dedupGroupStatusLabel(group.status||'pending');
       html+='<div class="dedup-group" data-group="'+group.group_id+'">';
-      html+='<div class="dedup-group-head"><div><b>相似组 '+seq+' · '+members.length+' 张</b> <span class="group-status '+statusClass+'">'+statusText+'</span></div>'
-        +'<span>保留 '+kept+' · 删除 '+deleted+' · 待处理 '+Math.max(0,active-kept)+'</span></div>';
-      html+='<div class="dedup-group-actions" style="display:flex;align-items:center;gap:8px;margin-bottom:8px">'
+      html+='<div class="dedup-group-head">'
+        +'<div class="dedup-group-title"><b>相似组 '+seq+' · '+members.length+' 张</b>'
+        +'<span class="group-status '+statusClass+'">'+statusText+'</span>'
+        +'<span class="dedup-group-meta">保留 '+kept+' · 删除 '+deleted+' · 待处理 '+Math.max(0,active-kept)+'</span></div>'
+        +'<div class="dedup-group-actions">'
         +'<button class="chip group-complete" data-group="'+group.group_id+'">完成本组</button>'
-        +'<details class="dedup-more"><summary>更多操作</summary><div class="dedup-quick">'
+        +'<details class="dedup-more"><summary title="更多操作">更多操作</summary><div class="dedup-quick">'
         +'<button data-dmode="best1" data-group="'+group.group_id+'">保留最佳 1 张</button>'
         +'<button data-dmode="best2" data-group="'+group.group_id+'">保留最佳 2 张</button>'
         +'<button data-dmode="all" data-group="'+group.group_id+'">全部保留</button>'
-        +'</div></details></div>';
+        +'</div></details></div></div>';
       html+='<div class="dedup-choices">';
       members.forEach(p=>{
         const [label,badgeClass,cardState]=dedupMemberState(group,p);
@@ -4642,6 +5446,7 @@ function rankCard(p,idx){const path=escHtml(p.path);
       <button class="delete-btn" data-step="rank" data-path="${path}" title="移入软件回收站">🗑 删除</button></div>
       <div class="source-path">${escHtml(p.rel_dir||'当前文件夹')}</div></div></div>`;}
 function renderRank(items){
+  showPhotoView();
   photos=items;const g=document.getElementById('gallery');
   if(lastStep!==currentStep){g.innerHTML='';lastRankSig='';lastStep=currentStep;gPage=0;}
   const fbar=document.getElementById('filterBar');
@@ -4729,6 +5534,7 @@ function trashCard(p,idx){
   </div>`;
 }
 function renderTrash(items){
+  showPhotoView();
   photos=items||[];
   const g=document.getElementById('gallery');
   document.getElementById('sTrash').textContent=photos.length;
@@ -4893,6 +5699,7 @@ function syncCullCardNode(node,p,idx){
 }
 
 function renderCullStep(items){
+  showPhotoView();
   photos=items;
   const fSig=[...new Set(items.filter(p=>p.raw).map(p=>p.fmt||'RAW'))].sort().join(',');
   if(fSig!==lastFmtSig){lastFmtSig=fSig;setupFilterBar();}
@@ -4964,20 +5771,17 @@ function updateCullMoveButton(){
   const n=cullMoveCounts();
   const count=document.getElementById('cullMoveCount');if(count)count.textContent=n.selected+'/'+n.total;
   if(currentStep!=='cull'||!cullReady||!n.total){
-    mb.style.display='none';mb.disabled=false;mb.classList.remove('cta','btn');mb.classList.add('btn-ghost');
-    startBtn.classList.remove('secondary');return;
+    mb.style.display='none';mb.disabled=false;mb.classList.remove('cta');return;
   }
-  mb.style.display='block';
+  mb.style.display='inline-flex';
   if(n.selected>0){
     mb.disabled=false;
-    mb.textContent='🗑 '+n.selected+' 张移入软件回收站';
-    mb.classList.remove('btn-ghost');mb.classList.add('btn','cta');
-    startBtn.classList.add('secondary');
+    mb.textContent='🗑 '+n.selected+' 张移入回收站';
+    mb.classList.add('cta');
   }else{
     mb.disabled=true;
-    mb.textContent='未选择需要删除的模糊照片';
-    mb.classList.remove('btn','cta');mb.classList.add('btn-ghost');
-    startBtn.classList.remove('secondary');
+    mb.textContent='未选择模糊照片';
+    mb.classList.remove('cta');
   }
 }
 function applyMoveSelectionResponse(path,d){
@@ -5362,7 +6166,17 @@ document.getElementById('moveBlurryBtn').onclick=async function(){
   }finally{
     this.disabled=false;updateCullMoveButton();
   }
-}</script></body></html>'''
+}
+const showingNode=document.getElementById('sShowing');
+if(showingNode){
+  const syncShowing=()=>{document.getElementById('statusShowing').textContent=showingNode.textContent||'0';};
+  new MutationObserver(syncShowing).observe(showingNode,{childList:true,characterData:true,subtree:true});
+  syncShowing();
+}
+updateSourceUi();
+renderWorkspaceLanding();
+document.documentElement.dataset.uiReady='1';
+</script></body></html>'''
 
 
 # --------------------------------------------------------------------------- #
@@ -5380,35 +6194,114 @@ def index():
 
 @app.route('/api/shortcuts')
 def api_shortcuts():
-    # Built-in demo is part of the application experience, not a temporary
-    # Codespaces-only fixture. It is available on desktop and online preview.
-    demo_folder = ensure_builtin_demo()
-    demo_real = os.path.realpath(demo_folder) if demo_folder else None
+    # First-paint contract: this route must be database-only and fast.
+    demo = builtin_demo_status()
+    demo_real = os.path.normcase(os.path.realpath(demo.get('folder') or str(DEMO_ROOT)))
     recent = []
     for item in load_recents():
         try:
-            real = os.path.realpath(item)
-            # Do not repeat the permanent built-in test entry in "最近";
-            # also hide the obsolete Codespaces sample directory left by older
-            # builds so the sidebar stays compact.
-            if demo_real and os.path.normcase(real) == os.path.normcase(demo_real):
-                continue
-            if Path(real).name.lower() == '.codespaces_demo':
+            real = os.path.normcase(os.path.realpath(item))
+            if real == demo_real or Path(real).name.lower() == '.codespaces_demo':
                 continue
             recent.append(item)
         except Exception:
             recent.append(item)
 
+    try:
+        sources = catalog_list_sources(INDEX_DB, refresh=False)
+    except Exception:
+        sources = []
+        logger.warning("fast data source catalog list failed", exc_info=True)
+
     return jsonify({
-        'sd': [] if CODESPACES_PUBLIC_HOST else detect_sd_cards(),
+        'sd': [],
         'recent': recent,
+        'sources': sources,
         'rawpy': HAS_RAWPY,
         'heif': HAS_HEIF,
         'codespaces': bool(CODESPACES_PUBLIC_HOST),
-        'demo_folder': demo_folder,
-        'demo_count': 12 if demo_folder else 0,
-        'demo_breakdown': {'sharp': 4, 'soft': 4, 'blurry': 4} if demo_folder else {},
+        'demo_folder': demo.get('folder'),
+        'demo_ready': bool(demo.get('ready')),
+        'demo_preparing': bool(demo.get('preparing')),
+        'demo_count': int(demo.get('count') or 0),
+        'demo_folders': int(demo.get('folders') or 0),
     })
+
+
+@app.route('/api/environment-refresh')
+def api_environment_refresh():
+    # This is intentionally separate from first paint.
+    try:
+        sources = catalog_list_sources(INDEX_DB, refresh=True)
+    except Exception:
+        sources = []
+        logger.warning("data source connection refresh failed", exc_info=True)
+    sd = []
+    if not CODESPACES_PUBLIC_HOST:
+        try:
+            sd = detect_sd_cards()
+        except Exception:
+            logger.warning("camera-card detection failed", exc_info=True)
+    return jsonify({'sources': sources, 'sd': sd})
+
+
+@app.route('/api/demo-status')
+def api_demo_status():
+    return jsonify(builtin_demo_status())
+
+
+@app.route('/api/demo-prepare', methods=['POST'])
+def api_demo_prepare():
+    wait = str(request.args.get('wait') or '').strip() in {'1', 'true', 'yes'}
+    status = (
+        prepare_builtin_demo_wait(timeout=30.0)
+        if wait else prepare_builtin_demo_async()
+    )
+    return jsonify(status)
+
+
+@app.route('/api/sources')
+def api_sources():
+    try:
+        refresh = request.args.get('refresh', '1') not in {'0', 'false', 'no'}
+        return jsonify({'sources': catalog_list_sources(INDEX_DB, refresh=refresh)})
+    except Exception as exc:
+        logger.warning("data source catalog list failed", exc_info=True)
+        return jsonify({'sources': [], 'error': str(exc)}), 500
+
+
+@app.route('/api/storage-summary')
+def api_storage_summary():
+    try:
+        return jsonify(catalog_storage_summary(DATA_ROOT, INDEX_DB))
+    except Exception as exc:
+        return jsonify({'error': str(exc)}), 500
+
+
+@app.route('/api/storage-clear', methods=['POST'])
+def api_storage_clear():
+    body = request.get_json(silent=True) or {}
+    category = str(body.get('category') or '').strip().lower()
+    if category not in {'previews', 'features', 'logs'}:
+        return jsonify({'error': '不支持的清理类型'}), 400
+    if category in {'previews', 'features'}:
+        active = [
+            key for key in ('cull', 'dedup', 'rank')
+            if state.get(key, {}).get('running')
+        ]
+        if active:
+            return jsonify({
+                'error': '分析任务运行中，请等待分析结束后再清理可重建缓存',
+                'active': active,
+            }), 409
+    try:
+        result = clear_rebuildable_storage(DATA_ROOT, category)
+        _activity('清理软件数据', '', f"{category} · {result.get('freed_bytes', 0)} bytes")
+        result['storage'] = catalog_storage_summary(DATA_ROOT, INDEX_DB)
+        return jsonify(result)
+    except Exception as exc:
+        logger.warning("storage cleanup failed", exc_info=True)
+        return jsonify({'error': str(exc)}), 500
 
 
 @app.route('/api/browse', methods=['POST'])
@@ -5417,7 +6310,12 @@ def api_browse():
     if folder and Path(folder).is_dir():
         state['folder'] = folder
         save_recent(folder)
-        return jsonify({'folder': folder})
+        source = None
+        try:
+            source = catalog_register_source(INDEX_DB, folder)
+        except Exception:
+            logger.warning("data source registration failed", exc_info=True)
+        return jsonify({'folder': folder, 'source': source})
     return jsonify({'folder': None})
 
 
@@ -5434,6 +6332,59 @@ def vendor_file(name):
     resp = send_file(str(f), mimetype=mime)
     resp.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
     return resp
+
+
+@app.route('/api/catalog-root/<root_id>')
+def api_catalog_root(root_id):
+    try:
+        # Refresh device connection state before returning an offline/online view.
+        catalog_list_sources(INDEX_DB)
+        snap = catalog_root_snapshot(
+            INDEX_DB,
+            root_id,
+            limit=request.args.get('limit', 2000, type=int),
+            offset=request.args.get('offset', 0, type=int),
+        )
+        if not snap:
+            return jsonify({'error': '图库不存在'}), 404
+        for item in snap.get('items') or []:
+            item['thumb'] = '/api/catalog-thumb?media_id=' + quote(str(item['media_id']))
+        return jsonify(snap)
+    except Exception as exc:
+        logger.warning("catalog root snapshot failed", exc_info=True)
+        return jsonify({'error': str(exc)}), 500
+
+
+@app.route('/api/catalog-thumb')
+def api_catalog_thumb():
+    media_id = str(request.args.get('media_id') or '').strip()
+    if not media_id:
+        abort(404)
+    try:
+        record = catalog_media_record(INDEX_DB, media_id)
+    except Exception:
+        record = None
+    if not record:
+        abort(404)
+    cached = THUMB_DIR / f"catalog_{media_id}.jpg"
+    if cached.is_file():
+        return send_file(str(cached), mimetype='image/jpeg')
+
+    candidates = []
+    rel = str(record.get('relative_path') or '')
+    current_root = str(record.get('current_root') or '')
+    if current_root and rel:
+        candidates.append(os.path.join(current_root, rel))
+    candidates.extend([
+        str(record.get('current_path') or ''),
+        str(record.get('original_path') or ''),
+    ])
+    for candidate in candidates:
+        if candidate and Path(candidate).is_file():
+            made = make_thumb_file(candidate)
+            if made and Path(made).is_file():
+                return send_file(str(made), mimetype='image/jpeg')
+    abort(404)
 
 
 @app.route('/api/thumb')

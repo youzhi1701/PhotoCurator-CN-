@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build PhotoCurator's approved aurora + iOS-glass C icon."""
 from pathlib import Path
-from PIL import Image, ImageDraw, ImageFont, ImageFilter
+from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageChops
 
 HERE = Path(__file__).resolve().parent
 SIZE = 1024
@@ -102,8 +102,20 @@ overlay=Image.new("RGBA",img.size,(0,0,0,0)); od=ImageDraw.Draw(overlay)
 od.arc((95,95,930,930),190,350,fill=(255,255,255,190),width=8)
 img=Image.alpha_composite(img,overlay)
 
+# Transparent rounded outer silhouette. Windows taskbar/shortcut icons now
+# keep the aurora glass tile but do not render an opaque square around it.
+outer = Image.new("L", (SIZE, SIZE), 0)
+od = ImageDraw.Draw(outer)
+od.rounded_rectangle((38, 38, SIZE - 38, SIZE - 38), radius=220, fill=255)
+soft = outer.filter(ImageFilter.GaussianBlur(1.2))
+img.putalpha(ImageChops.multiply(img.getchannel("A"), soft))
+
 png = HERE / "PhotoCurator.png"
 ico = HERE / "PhotoCurator.ico"
 img.resize((512,512), Image.Resampling.LANCZOS).save(png, optimize=True)
-img.save(ico, format="ICO", sizes=[(16,16),(20,20),(24,24),(32,32),(40,40),(48,48),(64,64),(128,128),(256,256)])
+img.save(
+    ico,
+    format="ICO",
+    sizes=[(16,16),(20,20),(24,24),(32,32),(40,40),(48,48),(64,64),(128,128),(256,256)],
+)
 print(ico)

@@ -22,6 +22,7 @@ jobs:
           python -m py_compile \
             desktop_app.py \
             runtime_paths.py \
+            catalog.py \
             photo_curator.py \
             background_tasks.py \
             photo_dedup_batch.py \
@@ -31,7 +32,8 @@ jobs:
             raw_loader.py \
             "基础冒烟测试.py" \
             "Codespaces冒烟测试.py" \
-            windows_smoke_test.py
+            windows_smoke_test.py \
+            ui_smoke_test.py
 
       - name: Parse GitHub Actions YAML
         run: |
@@ -70,7 +72,7 @@ jobs:
           if dv != cv:
               raise SystemExit(f"Version mismatch: desktop={dv}, core={cv}")
           if f"v{dv}" not in readme:
-              raise SystemExit(f"README missing current build v{dv}")
+              raise SystemExit(f"README missing current development build v{dv}")
 
           installer = Path("packaging/PhotoCurator.iss").read_text(encoding="utf-8")
           version_info = Path("packaging/version_info.txt").read_text(encoding="utf-8")
@@ -79,15 +81,20 @@ jobs:
 
           if not re.fullmatch(r"\d+\.\d+\.\d+", dv):
               raise SystemExit(f"APP_VERSION must be numeric semver x.y.z: {dv}")
-          if manifest.get("version") != dv:
-              raise SystemExit("Release manifest version does not match APP_VERSION")
-          expected_installer = f"PhotoCurator-Setup-v{dv}.exe"
+
+          # Development/candidate version is allowed to be ahead of the latest
+          # stable release. Stable release metadata remains authoritative for
+          # README direct-download links until the candidate is formally released.
+          rv = str(manifest.get("version") or "")
+          if not re.fullmatch(r"\d+\.\d+\.\d+", rv):
+              raise SystemExit(f"Release manifest version must be semver: {rv!r}")
+          expected_installer = f"PhotoCurator-Setup-v{rv}.exe"
           if manifest.get("installer") != expected_installer:
-              raise SystemExit("Release manifest installer name does not match version")
+              raise SystemExit("Release manifest installer name does not match stable release version")
           latest_marker = "<!-- LATEST_RELEASE_START -->"
           expected_download = (
               f"https://github.com/youzhi1701/PhotoCurator-CN-/releases/download/"
-              f"v{dv}/{expected_installer}"
+              f"v{rv}/{expected_installer}"
           )
           marker_pos = readme.find(latest_marker)
           if marker_pos < 0 or marker_pos > 1200:
@@ -161,6 +168,18 @@ jobs:
           install_delete = installer.split("[InstallDelete]", 1)[1].split("[Files]", 1)[0]
           if 'Type: filesandordirs; Name: "{localappdata}\\PhotoCurator\\data' in install_delete:
               raise SystemExit("Cover upgrade must never delete the per-user runtime data directory")
+          if 'AppMutex=' in installer:
+              raise SystemExit("Installer must not block upgrades with AppMutex; it should auto-close the running app")
+          auto_close_required = [
+              'function PrepareToInstall(var NeedsRestart: Boolean): String;',
+              "CheckForMutexes(PhotoCuratorMutex)",
+              "taskkill.exe",
+              '/F /T /IM "{#MyAppExeName}"',
+              "CloseApplications=no",
+          ]
+          missing_auto_close = [x for x in auto_close_required if x not in installer]
+          if missing_auto_close:
+              raise SystemExit("Installer auto-close upgrade contract regression: " + repr(missing_auto_close))
           if 'INSTALL_ROOT = (' not in desktop or 'Path(sys.executable).resolve().parent.parent' not in desktop:
               raise SystemExit("Frozen desktop root no longer matches {app}/app executable layout")
           if 'DATA_ROOT = resolve_data_root(frozen=IS_FROZEN)' not in desktop:
@@ -207,6 +226,47 @@ jobs:
 
       - name: Check embedded UI JavaScript
         run: node --check /tmp/photocurator-ui.js
+
+      - name: Check UI bootstrap declaration order
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          source = Path("photo_curator.py").read_text(encoding="utf-8")
+          first_boot = source.find("setupFilterBar();")
+          if first_boot < 0:
+              raise SystemExit("Initial setupFilterBar() bootstrap call not found")
+
+          required_before_boot = [
+              "const startBtn=document.getElementById('startBtn');",
+              "let cullChunkToken=0, cullVisibleTotal=0;",
+              "let dedupChunkToken=0;",
+              "let dedupStatusFilter='pending', dedupVisibleTotal=0;",
+              "let dedupStatusCounts={pending:0,reviewed:0,updated:0};",
+          ]
+          late = [
+              token for token in required_before_boot
+              if source.find(token) < 0 or source.find(token) > first_boot
+          ]
+          if late:
+              raise SystemExit(
+                  "UI bootstrap state is declared after first render call; "
+                  "this can abort all later click bindings: " + repr(late)
+              )
+
+          required_bindings = [
+              "document.getElementById('browseBtn').onclick=async()=>",
+              "document.getElementById('folderInput').onchange=",
+              "startBtn.onclick=()=>",
+              "document.getElementById('settingsQuick').onclick=()=>",
+              "document.getElementById('toolboxOpen').onclick=()=>",
+          ]
+          missing = [token for token in required_bindings if token not in source]
+          if missing:
+              raise SystemExit("Critical desktop interaction binding missing: " + repr(missing))
+
+          print("UI bootstrap order + critical interaction bindings OK")
+          PY
 
       - name: Check v1.5.0 runtime architecture
         run: |
@@ -344,7 +404,11 @@ jobs:
               "collapsedFolders",
               "data-view=\"list\"",
               "data-view=\"small\"",
-              "Ctrl + mouse wheel changes thumbnail density only",
+              "Gallery thumbnail zoom: Ctrl + wheel changes photo-card size, never page zoom.",
+              "catalog_media_scan(",
+              "@app.route('/api/sources')",
+              "id=\"sourcesList\"",
+              "id=\"thumbSizeRange\"",
           ]
           missing = [x for x in required if x not in source]
           if missing:
@@ -399,6 +463,89 @@ jobs:
               raise SystemExit("Analysis admission order must be gate -> check -> reserve -> start")
 
           print("Core workflow / large-library guards OK")
+          PY
+
+      - name: Check native Windows shell contract
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          desktop = Path("desktop_app.py").read_text(encoding="utf-8")
+          ui = Path("photo_curator.py").read_text(encoding="utf-8")
+          core = ui
+
+          required = (
+              'APP_TITLE = "PhotoCurator"',
+              "frameless=False",
+              "maximized=True",
+              "resizable=True",
+              "min_size=(860, 600)",
+              "apply_native_titlebar_theme",
+              "DWMWA_CAPTION_COLOR",
+              "webview.start(after_webview_start",
+          )
+          missing = [item for item in required if item not in desktop]
+          if missing:
+              raise SystemExit("Native Windows shell contract missing: " + repr(missing))
+
+          forbidden_desktop = (
+              "window.events.closing +=",
+              "window.events.shown +=",
+              "window.events.loaded +=",
+          )
+          bad = [item for item in forbidden_desktop if item in desktop]
+          if bad:
+              raise SystemExit(
+                  "Native window must not re-enter pywebview lifecycle events: "
+                  + repr(bad)
+              )
+
+          forbidden_ui = (
+              'id="winMin"',
+              'id="winMax"',
+              'id="winClose"',
+              "function nativeWindow(action)",
+              "pywebview-drag-region",
+          )
+          bad_ui = [item for item in forbidden_ui if item in ui]
+          if bad_ui:
+              raise SystemExit("Custom desktop chrome leaked back into UI: " + repr(bad_ui))
+
+          required_ui = (
+              'class="workspace-tabs"',
+              'class="library-sidebar"',
+              'class="inspector-drawer"',
+              'id="dashboardView"',
+              'id="photoView"',
+              "function showDashboard(",
+              "function showPhotoView(",
+              "setInspectorOpen(false)",
+          )
+          missing_ui = [item for item in required_ui if item not in ui]
+          if missing_ui:
+              raise SystemExit("v1.5.4 workspace contract missing: " + repr(missing_ui))
+
+          shortcuts = core.split("@app.route('/api/shortcuts')", 1)[1].split(
+              "@app.route('/api/sources')", 1
+          )[0]
+          forbidden_first_paint = (
+              "ensure_builtin_demo()",
+              "detect_sd_cards()",
+              "catalog_storage_summary(",
+              "catalog_list_sources(INDEX_DB)",
+          )
+          bad_startup = [x for x in forbidden_first_paint if x in shortcuts]
+          if bad_startup:
+              raise SystemExit(
+                  "First-paint shortcuts route performs blocking work: "
+                  + repr(bad_startup)
+              )
+          if "catalog_list_sources(INDEX_DB, refresh=False)" not in shortcuts:
+              raise SystemExit("First-paint source list must not probe physical drives")
+          if "setTimeout(refreshEnvironment,5000)" not in core:
+              raise SystemExit("Physical-drive refresh must be deferred after first paint")
+
+          print("Native Windows shell + dashboard/photo split + first-paint contract OK")
           PY
 
       - name: Check UI boot and state separation
@@ -512,6 +659,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install -r requirements-optional.txt
+          pip install "selenium>=4.25,<5"
 
       - name: Verify optional photo formats
         run: |
@@ -536,13 +684,15 @@ jobs:
 
       - name: Compile Python sources
         run: |
-          python -m py_compile desktop_app.py runtime_paths.py photo_curator.py background_tasks.py photo_dedup_batch.py photo_file_organizer.py photo_ranking_engine.py photo_ranking_v3.py raw_loader.py "基础冒烟测试.py" "Codespaces冒烟测试.py" windows_smoke_test.py
+          python -m py_compile desktop_app.py runtime_paths.py catalog.py photo_curator.py background_tasks.py photo_dedup_batch.py photo_file_organizer.py photo_ranking_engine.py photo_ranking_v3.py raw_loader.py "基础冒烟测试.py" "Codespaces冒烟测试.py" windows_smoke_test.py ui_smoke_test.py
 
       - name: Runtime data path and migration smoke test
         shell: powershell
         run: |
           @'
+          import json
           import os
+          import sqlite3
           import tempfile
           from pathlib import Path
           from runtime_paths import default_user_data_root, migrate_legacy_config
@@ -551,27 +701,97 @@ jobs:
           if default_user_data_root() != expected:
               raise SystemExit(f"wrong Windows data root: {default_user_data_root()} != {expected}")
 
+          schema = """
+          CREATE TABLE cull_cache (
+            path TEXT PRIMARY KEY, size INTEGER NOT NULL, mtime_ns INTEGER NOT NULL,
+            region_s REAL NOT NULL, quality REAL NOT NULL, updated_at REAL NOT NULL
+          )
+          """
+
           with tempfile.TemporaryDirectory() as td:
               root = Path(td)
               legacy = root / "install" / "data"
               target = root / "user" / "data"
-              cfg = legacy / "config"
-              cfg.mkdir(parents=True)
-              (cfg / "library_index.sqlite3").write_bytes(b"db")
+              lcfg = legacy / "config"
+              tcfg = target / "config"
+              lcfg.mkdir(parents=True)
+              tcfg.mkdir(parents=True)
+
+              legacy_db = lcfg / "library_index.sqlite3"
+              target_db = tcfg / "library_index.sqlite3"
+
+              db = sqlite3.connect(legacy_db)
+              try:
+                  db.execute(schema)
+                  db.execute(
+                      "INSERT INTO cull_cache VALUES(?,?,?,?,?,?)",
+                      ("X:/photo.jpg", 100, 10, 222.0, 88.0, 200.0),
+                  )
+                  db.commit()
+              finally:
+                  db.close()
+
+              db = sqlite3.connect(target_db)
+              try:
+                  db.execute(schema)
+                  db.execute(
+                      "INSERT INTO cull_cache VALUES(?,?,?,?,?,?)",
+                      ("X:/photo.jpg", 100, 10, 111.0, 55.0, 100.0),
+                  )
+                  db.commit()
+              finally:
+                  db.close()
+
+              (lcfg / "recents.json").write_text(
+                  json.dumps(["X:/archive"]), encoding="utf-8"
+              )
+              (tcfg / "recents.json").write_text(
+                  json.dumps(["D:/current"]), encoding="utf-8"
+              )
               (legacy / "cache").mkdir(parents=True)
               (legacy / "cache" / "rebuildable.bin").write_bytes(b"cache")
+
               if not migrate_legacy_config(legacy, target):
                   raise SystemExit("legacy config migration did not run")
-              if (target / "config" / "library_index.sqlite3").read_bytes() != b"db":
-                  raise SystemExit("legacy config migration lost durable state")
+
+              db = sqlite3.connect(target_db)
+              try:
+                  row = db.execute(
+                      "SELECT region_s,quality,updated_at FROM cull_cache "
+                      "WHERE path='X:/photo.jpg'"
+                  ).fetchone()
+              finally:
+                  db.close()
+              if row != (222.0, 88.0, 200.0):
+                  raise SystemExit(f"newer legacy catalog row was not merged: {row!r}")
+
+              recents = json.loads((tcfg / "recents.json").read_text(encoding="utf-8"))
+              if recents[:2] != ["D:/current", "X:/archive"]:
+                  raise SystemExit(f"recents were not merged safely: {recents!r}")
+
+              backups = list((target / "backups").glob("library_index-before-migration-*.sqlite3"))
+              if not backups:
+                  raise SystemExit("target catalog was not backed up before merge")
+
               if (target / "cache").exists():
                   raise SystemExit("rebuildable cache should not be migrated")
-          print("Runtime data path/migration OK")
+
+              # Windows must be able to rename the old DB immediately after
+              # migration. This catches leaked ATTACH/connection handles.
+              released = legacy_db.with_suffix(".released.sqlite3")
+              legacy_db.rename(released)
+              released.rename(legacy_db)
+
+          print("Runtime data path/migration merge + handle release OK")
           '@ | python -
 
       - name: Unicode path and background lifecycle smoke test
         run: |
           python "基础冒烟测试.py"
+
+      - name: Real desktop UI interaction smoke test
+        run: |
+          python ui_smoke_test.py
 
       - name: Codespaces forwarding security smoke test
         run: |
