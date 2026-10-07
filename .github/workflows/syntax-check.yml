@@ -602,7 +602,9 @@ jobs:
         shell: powershell
         run: |
           @'
+          import json
           import os
+          import sqlite3
           import tempfile
           from pathlib import Path
           from runtime_paths import default_user_data_root, migrate_legacy_config
@@ -611,22 +613,70 @@ jobs:
           if default_user_data_root() != expected:
               raise SystemExit(f"wrong Windows data root: {default_user_data_root()} != {expected}")
 
+          schema = """
+          CREATE TABLE cull_cache (
+            path TEXT PRIMARY KEY, size INTEGER NOT NULL, mtime_ns INTEGER NOT NULL,
+            region_s REAL NOT NULL, quality REAL NOT NULL, updated_at REAL NOT NULL
+          )
+          """
+
           with tempfile.TemporaryDirectory() as td:
               root = Path(td)
               legacy = root / "install" / "data"
               target = root / "user" / "data"
-              cfg = legacy / "config"
-              cfg.mkdir(parents=True)
-              (cfg / "library_index.sqlite3").write_bytes(b"db")
+              lcfg = legacy / "config"
+              tcfg = target / "config"
+              lcfg.mkdir(parents=True)
+              tcfg.mkdir(parents=True)
+
+              with sqlite3.connect(lcfg / "library_index.sqlite3") as db:
+                  db.execute(schema)
+                  db.execute(
+                      "INSERT INTO cull_cache VALUES(?,?,?,?,?,?)",
+                      ("X:/photo.jpg", 100, 10, 222.0, 88.0, 200.0),
+                  )
+                  db.commit()
+
+              with sqlite3.connect(tcfg / "library_index.sqlite3") as db:
+                  db.execute(schema)
+                  db.execute(
+                      "INSERT INTO cull_cache VALUES(?,?,?,?,?,?)",
+                      ("X:/photo.jpg", 100, 10, 111.0, 55.0, 100.0),
+                  )
+                  db.commit()
+
+              (lcfg / "recents.json").write_text(
+                  json.dumps(["X:/archive"]), encoding="utf-8"
+              )
+              (tcfg / "recents.json").write_text(
+                  json.dumps(["D:/current"]), encoding="utf-8"
+              )
               (legacy / "cache").mkdir(parents=True)
               (legacy / "cache" / "rebuildable.bin").write_bytes(b"cache")
+
               if not migrate_legacy_config(legacy, target):
                   raise SystemExit("legacy config migration did not run")
-              if (target / "config" / "library_index.sqlite3").read_bytes() != b"db":
-                  raise SystemExit("legacy config migration lost durable state")
+
+              with sqlite3.connect(tcfg / "library_index.sqlite3") as db:
+                  row = db.execute(
+                      "SELECT region_s,quality,updated_at FROM cull_cache "
+                      "WHERE path='X:/photo.jpg'"
+                  ).fetchone()
+              if row != (222.0, 88.0, 200.0):
+                  raise SystemExit(f"newer legacy catalog row was not merged: {row!r}")
+
+              recents = json.loads((tcfg / "recents.json").read_text(encoding="utf-8"))
+              if recents[:2] != ["D:/current", "X:/archive"]:
+                  raise SystemExit(f"recents were not merged safely: {recents!r}")
+
+              backups = list((target / "backups").glob("library_index-before-migration-*.sqlite3"))
+              if not backups:
+                  raise SystemExit("target catalog was not backed up before merge")
+
               if (target / "cache").exists():
                   raise SystemExit("rebuildable cache should not be migrated")
-          print("Runtime data path/migration OK")
+
+          print("Runtime data path/migration merge OK")
           '@ | python -
 
       - name: Unicode path and background lifecycle smoke test
