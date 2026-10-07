@@ -678,7 +678,7 @@ def _prune_index_db():
 threading.Thread(target=_prune_index_db, daemon=True,
                  name='photocurator-index-prune').start()
 
-APP_VERSION = "1.5.9"
+APP_VERSION = "1.6.0"
 IS_CODESPACES = os.environ.get('CODESPACES', '').strip().lower() == 'true'
 CODESPACE_NAME = os.environ.get('CODESPACE_NAME', '').strip()
 _CODESPACES_DOMAIN_RAW = os.environ.get(
@@ -783,7 +783,26 @@ def _security_headers(resp):
         "worker-src 'self' blob:; child-src 'self' blob:")
     return resp
 
-IMG_EXTS = {'.jpg', '.jpeg', '.png', '.tif', '.tiff', '.bmp', '.webp'}
+# Image discovery is capability-driven rather than a hand-maintained short
+# whitelist.  Pillow registers every format its current build can actually
+# decode (JPEG/PNG/TIFF/WebP/GIF/ICO/JPEG2000/QOI/etc. when available), then
+# PhotoCurator adds RAW + HEIF families only when their optional decoders are
+# installed.  This keeps scanning broad without claiming formats the runtime
+# cannot open.
+try:
+    Image.init()
+    PILLOW_IMG_EXTS = {
+        str(ext).lower()
+        for ext, fmt in Image.registered_extensions().items()
+        if fmt in Image.OPEN
+    }
+except Exception:
+    PILLOW_IMG_EXTS = set()
+
+CORE_IMG_EXTS = {
+    '.jpg', '.jpeg', '.png', '.tif', '.tiff', '.bmp', '.webp',
+}
+IMG_EXTS = set(CORE_IMG_EXTS) | PILLOW_IMG_EXTS
 
 RESULT_ROOT_DIR = 'PhotoCurator_Result（照片筛选结果）'
 SOFTWARE_TRASH_DIR = 'PhotoCurator_RecycleBin（软件回收站）'
