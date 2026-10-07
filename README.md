@@ -8,17 +8,17 @@
 [**点击下载 PhotoCurator-Setup-v1.5.0.exe**](https://github.com/youzhi1701/PhotoCurator-CN-/releases/download/v1.5.0/PhotoCurator-Setup-v1.5.0.exe)
 
 > Windows 10 / 11 x64 · 正式安装版 EXE  
-> 当前源码 / 实机修复版本为 **v1.5.5**；只有新的 EXE 真正生成并发布后，这里的下载链接才会切到 v1.5.5。
+> 当前源码 / 实机修复版本为 **v1.5.6**；只有新的 EXE 真正生成并发布后，这里的下载链接才会切到 v1.5.6。
 <!-- LATEST_RELEASE_END -->
 
-> 面向大图库的 Windows 照片清理工具。v1.5.5 在 v1.5.4 架构基础上移除跨线程 WinForms Handle / DWM 操作，优先保证 Windows 原生窗口消息循环持续响应，同时保留首屏零阻塞、数据源/离线图库和 Dashboard/照片视图分层。
+> 面向大图库的 Windows 照片清理工具。v1.5.6 依据同一台 Windows 实机回归结果，撤回 v1.5.4 起不稳定的原生 WinForms frame 路径，恢复 v1.5.0 已验证稳定的 frameless WebView2 生命周期；业务层继续保留首屏零阻塞、数据源/离线图库和 Dashboard/照片视图分层。
 
 | 项目 | 信息 |
 | --- | --- |
-| 当前版本 | **v1.5.5** |
+| 当前版本 | **v1.5.6** |
 | 项目类型 | Windows 照片筛选桌面应用 |
 | 上游基线 | Photo Curator v7.0 |
-| 当前状态 | **v1.5.5 源码实机修复版 / Windows 安装包待构建** |
+| 当前状态 | **v1.5.6 源码实机修复版 / Windows 安装包待构建** |
 
 ## 产品定位
 
@@ -31,7 +31,7 @@ PhotoCurator 的两个核心任务：
 
 支持 JPEG、PNG、WebP、TIFF、BMP、HEIC/HEIF/HIF，以及 CR2、CR3、NEF、ARW、DNG、RAF、ORF、RW2、PEF 等常见 RAW 格式。
 
-## v1.5.5 运行架构
+## v1.5.6 运行架构
 
 ### 前台优先
 
@@ -194,15 +194,15 @@ GitHub Actions：
 
 开发阶段每次推送到 `main` 都会构建 Windows 安装包用于验证，但**不会自动覆盖正式 Release**。
 
-发布版本由 `packaging/release_manifest.json` 驱动。当前版本为 **1.5.5**，因此当前正式标签应为：
+发布版本由 `packaging/release_manifest.json` 驱动。当前版本为 **1.5.6**，因此当前正式标签应为：
 
-`v1.5.5`
+`v1.5.6`
 
 发布工作流接受 `v*` 标签，但会在构建开始时强制检查：**Git 标签必须与 manifest 中的版本完全一致**。标签不一致会直接失败，避免误把旧代码发布成新版本或把新代码挂到旧标签。
 
 当前安装包：
 
-`PhotoCurator-Setup-v1.5.5.exe`
+`PhotoCurator-Setup-v1.5.6.exe`
 
 CI 同时校验以下版本必须一致：
 - `desktop_app.py` / `photo_curator.py` 的应用版本
@@ -227,7 +227,7 @@ PhotoCurator 使用固定 AppId 原位覆盖升级。正式安装与运行数据
 
 正式 EXE 位于安装目录的 `app/PhotoCurator.exe`，运行数据固定写入 `%LOCALAPPDATA%/PhotoCurator/data`。即使以后把程序安装到其它磁盘或受保护目录，也不会改变用户数据位置。覆盖升级只清理并替换程序 `app/`，不会把运行数据混进程序替换目录。
 
-从旧版 `{app}/data` 升级时，v1.5.5 首次启动会自动迁移并合并历史 `config` 持久化状态（SQLite 索引、人工筛选决策、相似组状态、后台任务、最近目录和相似特征存储）。缓存、日志和内置测试数据属于可重建数据，不作为迁移阻塞条件；若迁移异常，桌面壳会继续使用旧数据目录并写入迁移告警，避免出现“升级后像丢数据”的空白状态。
+从旧版 `{app}/data` 升级时，v1.5.6 首次启动会自动迁移并合并历史 `config` 持久化状态（SQLite 索引、人工筛选决策、相似组状态、后台任务、最近目录和相似特征存储）。缓存、日志和内置测试数据属于可重建数据，不作为迁移阻塞条件；若迁移异常，桌面壳会继续使用旧数据目录并写入迁移告警，避免出现“升级后像丢数据”的空白状态。
 
 升级原则：
 - 只替换程序文件
@@ -297,7 +297,7 @@ PhotoCurator-CN-/
 
 许可证保持原项目 **MIT License**。
 
-## v1.5.5 发布门槛
+## v1.5.6 发布门槛
 
 正式发布前必须同时满足：
 - Python / 嵌入式 JavaScript / HTML / CSS 自动检查通过
