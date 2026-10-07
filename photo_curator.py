@@ -3520,7 +3520,8 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
         <summary>数据与存储</summary>
         <div class="data-summary" id="dataSummary">
           <div><span>数据库</span><b id="dbUsage">—</b></div>
-          <div><span>预览缓存</span><b id="previewUsage">—</b></div>
+          <div><span>图库离线预览</span><b id="catalogPreviewUsage">—</b></div>
+          <div><span>临时预览缓存</span><b id="previewUsage">—</b></div>
           <div><span>相似特征</span><b id="featureUsage">—</b></div>
           <div><span>日志</span><b id="logUsage">—</b></div>
           <div class="storage-actions">
@@ -4424,6 +4425,7 @@ function loadStorageSummary(force=false){
   fetch('/api/storage-summary').then(r=>r.json()).then(d=>{
     if(d.error)return;
     document.getElementById('dbUsage').textContent=formatBytes(d.database_bytes);
+    document.getElementById('catalogPreviewUsage').textContent=formatBytes(d.persistent_preview_bytes);
     document.getElementById('previewUsage').textContent=formatBytes(d.preview_cache_bytes);
     document.getElementById('featureUsage').textContent=formatBytes(d.dedup_feature_bytes);
     document.getElementById('logUsage').textContent=formatBytes(d.log_bytes);
@@ -4438,7 +4440,7 @@ async function clearStorageCategory(category){
     risky?'重建相似照片特征':'清理'+labels[category],
     risky
       ?'这只会删除可重建的相似照片特征缓存，不会删除图库数据库、人工复核记录或原始照片。下次相似分析会重新计算。'
-      :'只会清理可重建的软件文件，不会删除图库数据库、人工复核记录或原始照片。',
+      :'只会清理可重建的临时软件文件，不会删除图库数据库、离线图库预览、人工复核记录或原始照片。',
     risky?'清理并在下次重建':'立即清理'
   );
   if(!ok)return;
