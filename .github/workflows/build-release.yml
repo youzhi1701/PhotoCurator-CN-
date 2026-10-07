@@ -15,7 +15,11 @@ concurrency:
 
 jobs:
   build-windows-installer:
+    # Only consume a Windows runner for an explicit release, a tag build, or a manual run.
+    # Ordinary pushes to main no longer rebuild the installer.
+    if: "${{ github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v') || (github.ref == 'refs/heads/main' && startsWith(github.event.head_commit.message, 'release: publish v')) }}"
     runs-on: windows-latest
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v7
 
