@@ -653,10 +653,12 @@ def self_test():
             if response.status != 200:
                 raise RuntimeError("packaged vendor resources are unavailable")
 
-        with urllib.request.urlopen(URL + "/api/shortcuts", timeout=5.0) as response:
+        with urllib.request.urlopen(URL + "/api/shortcuts", timeout=15.0) as response:
             payload = json.loads(response.read().decode("utf-8"))
-            if payload.get("demo_count") != 12:
+            if payload.get("demo_count") != 36:
                 raise RuntimeError(f"packaged writable data test failed: {payload}")
+            if not isinstance(payload.get("sources"), list):
+                raise RuntimeError("packaged data-source catalog API is unavailable")
 
         return 0
     finally:
