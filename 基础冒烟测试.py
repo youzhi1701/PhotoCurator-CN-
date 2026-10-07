@@ -5,6 +5,7 @@
 import os
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 import numpy as np
@@ -16,6 +17,18 @@ from raw_loader import imread_bgr, imread_gray, open_image_pil
 def assert_true(value, message):
     if not value:
         raise AssertionError(message)
+
+
+def wait_task(photo_curator, task_id, timeout=15.0):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        row = photo_curator.TASK_MANAGER.get(task_id)
+        if row and row.get("state") == "done":
+            return row
+        if row and row.get("state") == "failed":
+            raise AssertionError(f"后台任务失败：{row.get('error')}")
+        time.sleep(0.05)
+    raise AssertionError(f"后台任务超时：{task_id}")
 
 
 def main():
@@ -225,8 +238,9 @@ def main():
         assert_true(refuse_zero.status_code == 409,
                     "相似组不应允许取消最后一张保留照片")
 
-        # Applying a reviewed dedup group should move only unselected members,
-        # keep all selected originals, and clear resolved review cards.
+        # A reviewed dedup group now queues only non-kept members into the
+        # PhotoCurator software recycle bin; the HTTP response is intentionally
+        # immediate so the foreground can continue reviewing.
         apply_dir = root / "去重处理测试"
         apply_dir.mkdir(parents=True, exist_ok=True)
         keep_a = apply_dir / "保留A.jpg"
@@ -235,42 +249,41 @@ def main():
         for p in (keep_a, keep_b, drop_c):
             Image.new("RGB", (50, 40), "white").save(p)
         photo_curator.state["folder"] = str(root)
-        photo_curator.state["scan"].update({
-            "output_mode": "source",
-            "custom_output": "",
-        })
         photo_curator.state["dedup"].update({
             "complete": True,
             "applied": False,
             "running": False,
             "groups_data": [{
                 "group_id": 7,
+                "group_key": "smoke-group-7",
                 "count": 3,
+                "status": "reviewed",
                 "selected_paths": [str(keep_a), str(keep_b)],
                 "folder_rel": "去重处理测试",
                 "members": [
-                    {"path": str(keep_a), "selected": True},
-                    {"path": str(keep_b), "selected": True},
-                    {"path": str(drop_c), "selected": False},
+                    {"path": str(keep_a), "selected": True, "lifecycle": "normal"},
+                    {"path": str(keep_b), "selected": True, "lifecycle": "normal"},
+                    {"path": str(drop_c), "selected": False, "lifecycle": "normal"},
                 ],
             }],
         })
         photo_curator.state["dedup"]["photos"] = photo_curator.state["dedup"]["groups_data"]
         applied = client.post(
-            "/api/dedup-apply",
-            json={},
+            "/api/dedup-apply", json={},
             headers={"Host": f"127.0.0.1:{photo_curator.PORT}"},
         )
-        assert_true(applied.status_code == 200,
-                    f"相似照片确认处理失败：HTTP {applied.status_code}")
+        assert_true(applied.status_code == 202,
+                    f"相似照片后台提交失败：HTTP {applied.status_code}")
         payload = applied.get_json()
-        assert_true(payload.get("moved") == 1 and not payload.get("photos"),
-                    f"相似照片处理结果错误：{payload}")
+        assert_true(payload.get("queued") == 1 and payload.get("task_ids"),
+                    f"相似照片后台任务数量错误：{payload}")
+        for task_id in payload["task_ids"]:
+            wait_task(photo_curator, task_id)
         assert_true(keep_a.exists() and keep_b.exists() and not drop_c.exists(),
-                    "相似照片多选保留后错误移动了保留项，或未移动待处理项")
-        moved_c = apply_dir / "PhotoCurator_Result（照片筛选结果）" / "Duplicates（重复照片）" / drop_c.name
-        assert_true(moved_c.exists(),
-                    f"待处理相似照片没有进入默认结果目录：{moved_c}")
+                    "相似照片后台处理错误移动了保留项，或未处理待删除项")
+        trash_rows = photo_curator._trash_rows(root)
+        assert_true(any(Path(x["original_path"]) == drop_c for x in trash_rows),
+                    f"待删除相似照片没有进入软件回收站：{trash_rows}")
 
         # Custom output is an explicit user-selected root and must remain
         # accessible to thumbnails / previews after a reviewed file is moved.
@@ -291,35 +304,29 @@ def main():
                     "安全路径校验错误地允许了所选目录外文件")
 
         # PhotoCurator uses its own recycle bin, not the Windows recycle bin.
-        # Deleting is reversible until the user explicitly purges it during the
-        # final review, and the recycle-bin directory must never re-enter scans.
+        # All destructive operations are asynchronous and expose task state.
         photo_curator.state["folder"] = str(root)
-        photo_curator.state["scan"].update({
-            "output_mode": "source",
-            "custom_output": "",
-        })
         trash_src = root / "软件回收站复核测试.jpg"
         Image.new("RGB", (52, 38), "white").save(trash_src)
         photo_curator.state["cull"].update({
-            "running": False,
-            "complete": True,
-            "src_folder": str(root),
+            "running": False, "complete": True, "src_folder": str(root),
             "recursive": True,
-            "photos": [{"path": str(trash_src), "tier": "sharp", "move_selected": False}],
-            "sharp_paths": [str(trash_src)],
-            "sharp": 1, "soft": 0, "blurry": 0,
+            "photos": [{"path": str(trash_src), "tier": "sharp", "move_selected": False,
+                        "lifecycle": "normal"}],
+            "sharp_paths": [str(trash_src)], "sharp": 1, "soft": 0, "blurry": 0,
         })
         deleted_to_trash = client.post(
             "/api/delete-photo",
-            json={"step": "cull", "path": str(trash_src)},
+            json={"step": "cull", "path": str(trash_src), "mode": "trash"},
             headers={"Host": f"127.0.0.1:{photo_curator.PORT}"},
         )
-        assert_true(deleted_to_trash.status_code == 200,
-                    f"移入软件回收站失败：HTTP {deleted_to_trash.status_code}")
-        trash_payload = deleted_to_trash.get_json()
-        trash_id = trash_payload.get("trash_id")
+        assert_true(deleted_to_trash.status_code == 202,
+                    f"移入软件回收站未异步受理：HTTP {deleted_to_trash.status_code}")
+        delete_payload = deleted_to_trash.get_json()
+        task = wait_task(photo_curator, delete_payload["task_id"])
+        trash_id = (task.get("result") or {}).get("trash_id")
         assert_true(trash_id and not trash_src.exists(),
-                    f"源照片没有进入软件回收站：{trash_payload}")
+                    f"源照片没有进入软件回收站：{task}")
         trash_rows = photo_curator._trash_rows(root)
         trash_row = next((x for x in trash_rows if x["id"] == trash_id), None)
         assert_true(trash_row is not None and Path(trash_row["path"]).is_file(),
@@ -338,38 +345,56 @@ def main():
                     "软件回收站复核接口没有返回已删除照片")
 
         restored = client.post(
-            "/api/trash-restore",
-            json={"id": trash_id},
+            "/api/trash-restore", json={"id": trash_id},
             headers={"Host": f"127.0.0.1:{photo_curator.PORT}"},
         )
-        assert_true(restored.status_code == 200 and trash_src.exists(),
-                    f"软件回收站恢复失败：{restored.get_json()}")
+        assert_true(restored.status_code == 202,
+                    f"软件回收站恢复未异步受理：{restored.get_json()}")
+        wait_task(photo_curator, restored.get_json()["task_id"])
+        assert_true(trash_src.exists(), "软件回收站恢复后原路径不存在")
         assert_true(all(x["id"] != trash_id for x in photo_curator._trash_rows(root)),
                     "恢复后软件回收站记录没有清除")
 
         purge_src = root / "软件回收站永久删除测试.jpg"
         Image.new("RGB", (53, 39), "white").save(purge_src)
         photo_curator.state["cull"].update({
-            "photos": [{"path": str(purge_src), "tier": "sharp", "move_selected": False}],
-            "sharp_paths": [str(purge_src)],
-            "sharp": 1, "soft": 0, "blurry": 0,
+            "photos": [{"path": str(purge_src), "tier": "sharp",
+                        "move_selected": False, "lifecycle": "normal"}],
+            "sharp_paths": [str(purge_src)], "sharp": 1, "soft": 0, "blurry": 0,
         })
         deleted_again = client.post(
             "/api/delete-photo",
-            json={"step": "cull", "path": str(purge_src)},
+            json={"step": "cull", "path": str(purge_src), "mode": "trash"},
             headers={"Host": f"127.0.0.1:{photo_curator.PORT}"},
         )
-        purge_id = deleted_again.get_json().get("trash_id")
+        delete_task = wait_task(photo_curator, deleted_again.get_json()["task_id"])
+        purge_id = delete_task["result"]["trash_id"]
         purge_row = next(x for x in photo_curator._trash_rows(root) if x["id"] == purge_id)
         purged = client.post(
-            "/api/trash-purge",
-            json={"id": purge_id},
+            "/api/trash-purge", json={"id": purge_id},
             headers={"Host": f"127.0.0.1:{photo_curator.PORT}"},
         )
-        assert_true(purged.status_code == 200
-                    and not Path(purge_row["path"]).exists()
-                    and not purge_src.exists(),
-                    f"软件回收站永久删除失败：{purged.get_json()}")
+        assert_true(purged.status_code == 202,
+                    f"软件回收站永久删除未异步受理：{purged.get_json()}")
+        wait_task(photo_curator, purged.get_json()["task_id"])
+        assert_true(not Path(purge_row["path"]).exists() and not purge_src.exists(),
+                    "软件回收站永久删除后文件仍存在")
+
+        # Direct permanent deletion is a distinct queued mode used by the P
+        # shortcut in the confirmation dialog.
+        direct_src = root / "直接彻底删除测试.jpg"
+        Image.new("RGB", (40, 30), "white").save(direct_src)
+        photo_curator.state["cull"]["photos"] = [
+            {"path": str(direct_src), "tier": "sharp", "lifecycle": "normal"}
+        ]
+        permanent = client.post(
+            "/api/delete-photo",
+            json={"step": "cull", "path": str(direct_src), "mode": "permanent"},
+            headers={"Host": f"127.0.0.1:{photo_curator.PORT}"},
+        )
+        assert_true(permanent.status_code == 202, "直接彻底删除没有进入后台队列")
+        wait_task(photo_curator, permanent.get_json()["task_id"])
+        assert_true(not direct_src.exists(), "后台永久删除任务完成后文件仍存在")
 
         # Incremental index: unchanged files must reuse cached analysis, while
         # a changed file version must invalidate the old cache entry.
@@ -403,9 +428,9 @@ def main():
         assert_true(thumb_before != thumb_after,
                     "缩略图缓存必须随同秒文件变化失效，不能继续显示旧图")
 
-        # Cross-stage consistency: when the currently selected duplicate keeper
-        # is later marked blurry, promote the best still-kept Cull survivor.
-        # Applying duplicate cleanup must not move the blurry photo as a duplicate.
+        # Cross-stage consistency: when a former keeper is no longer eligible,
+        # the reviewed duplicate batch must queue only active non-kept members
+        # and leave the user's retained photo untouched.
         sync_dir = root / "跨阶段联动测试"
         sync_dir.mkdir(parents=True, exist_ok=True)
         blurry_a = sync_dir / "A_后改模糊.jpg"
@@ -416,9 +441,7 @@ def main():
 
         photo_curator.state["folder"] = str(root)
         photo_curator.state["cull"].update({
-            "complete": True,
-            "running": False,
-            "src_folder": str(root),
+            "complete": True, "running": False, "src_folder": str(root),
             "recursive": True,
             "sharp_paths": [str(keep_b), str(drop_c)],
             "photos": [
@@ -429,21 +452,17 @@ def main():
             "sharp": 2, "soft": 0, "blurry": 1,
         })
         photo_curator.state["dedup"].update({
-            "complete": True,
-            "running": False,
-            "applied": False,
-            "src_folder": str(root),
-            "recursive": True,
+            "complete": True, "running": False, "applied": False,
+            "src_folder": str(root), "recursive": True,
             "groups_data": [{
-                "group_id": 11,
-                "count": 3,
-                "ready": True,
+                "group_id": 11, "group_key": "smoke-group-11",
+                "count": 3, "ready": True, "status": "reviewed",
                 "selected_paths": [str(blurry_a)],
                 "folder_rel": "跨阶段联动测试",
                 "members": [
-                    {"path": str(blurry_a), "selected": True},
-                    {"path": str(keep_b), "selected": False},
-                    {"path": str(drop_c), "selected": False},
+                    {"path": str(blurry_a), "selected": True, "lifecycle": "normal"},
+                    {"path": str(keep_b), "selected": False, "lifecycle": "normal"},
+                    {"path": str(drop_c), "selected": False, "lifecycle": "normal"},
                 ],
             }],
             "singleton_paths": [],
@@ -456,17 +475,18 @@ def main():
                     f"模糊化原保留项后没有自动晋升可用照片：{selected_now}")
 
         applied_sync = client.post(
-            "/api/dedup-apply",
-            json={},
+            "/api/dedup-apply", json={},
             headers={"Host": f"127.0.0.1:{photo_curator.PORT}"},
         )
-        assert_true(applied_sync.status_code == 200,
-                    f"跨阶段相似处理失败：HTTP {applied_sync.status_code}")
+        assert_true(applied_sync.status_code == 202,
+                    f"跨阶段相似处理未异步受理：HTTP {applied_sync.status_code}")
         payload = applied_sync.get_json()
-        assert_true(payload.get("moved") == 1 and payload.get("ok") is True,
-                    f"跨阶段相似处理结果错误：{payload}")
+        assert_true(payload.get("queued") == 1,
+                    f"跨阶段相似处理任务数错误：{payload}")
+        for task_id in payload.get("task_ids", []):
+            wait_task(photo_curator, task_id)
         assert_true(blurry_a.exists() and keep_b.exists() and not drop_c.exists(),
-                    "相似处理错误移动了模糊照片或当前保留项")
+                    "相似处理错误删除了模糊照片或当前保留项")
 
         # Similarity metadata keeps the full source relationship so a photo
         # rescued from Blurry later can immediately re-enter the eligible set.
