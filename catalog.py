@@ -977,6 +977,78 @@ def media_id_for_path(db_path, path):
     return str(row["media_id"]) if row else None
 
 
+def clear_offline_previews(data_root, db_path, root_id=None):
+    """Explicitly clear durable offline previews; never called by cache cleanup."""
+    preview_dir = Path(data_root) / "offline_previews"
+    if not preview_dir.is_dir():
+        return {"removed": 0, "freed_bytes": 0}
+    allowed = None
+    if root_id:
+        with _connect(db_path) as db:
+            allowed = {
+                str(row["media_id"])
+                for row in db.execute(
+                    "SELECT media_id FROM media_catalog WHERE root_id=?",
+                    (str(root_id),),
+                ).fetchall()
+            }
+    removed = 0
+    freed = 0
+    for p in preview_dir.glob("*.jpg"):
+        if allowed is not None and p.stem not in allowed:
+            continue
+        try:
+            freed += int(p.stat().st_size)
+            p.unlink()
+            removed += 1
+        except OSError:
+            continue
+    return {"removed": removed, "freed_bytes": freed}
+
+
+def remove_library_root(db_path, root_id):
+    """Remove one PhotoCurator index only; never touch source photo files."""
+    init_catalog_schema(db_path)
+    with _connect(db_path) as db:
+        root = db.execute(
+            "SELECT root_id,source_id,display_name FROM library_root WHERE root_id=?",
+            (str(root_id),),
+        ).fetchone()
+        if not root:
+            return None
+        media_ids = [
+            str(row["media_id"])
+            for row in db.execute(
+                "SELECT media_id FROM media_catalog WHERE root_id=?",
+                (str(root_id),),
+            ).fetchall()
+        ]
+        count = len(media_ids)
+        db.execute("DELETE FROM scan_session WHERE root_id=?", (str(root_id),))
+        db.execute("DELETE FROM media_catalog WHERE root_id=?", (str(root_id),))
+        db.execute("DELETE FROM library_root WHERE root_id=?", (str(root_id),))
+        remaining = int(db.execute(
+            "SELECT COUNT(*) FROM library_root WHERE source_id=?",
+            (str(root["source_id"]),),
+        ).fetchone()[0])
+        source_removed = False
+        if remaining == 0:
+            db.execute(
+                "DELETE FROM data_source WHERE source_id=?",
+                (str(root["source_id"]),),
+            )
+            source_removed = True
+        db.commit()
+    return {
+        "root_id": str(root_id),
+        "source_id": str(root["source_id"]),
+        "display_name": str(root["display_name"] or ""),
+        "media_ids": media_ids,
+        "media_count": count,
+        "source_removed": source_removed,
+    }
+
+
 def storage_summary(data_root, db_path):
     data_root = Path(data_root)
 
