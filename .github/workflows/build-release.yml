@@ -17,9 +17,9 @@ jobs:
   build-windows-installer:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
 
@@ -122,30 +122,14 @@ jobs:
           make_latest: true
           prerelease: false
           draft: false
+          generate_release_notes: true
           files: release/${{ steps.release_meta.outputs.installer }}
           body: |
             ## PhotoCurator 中文桌面版 v${{ steps.release_meta.outputs.version }}
 
-            正式封装发布版本。推荐普通 Windows 用户直接下载安装包：
+            推荐普通 Windows 用户直接下载：
             **${{ steps.release_meta.outputs.installer }}**
 
-            ### 本版重点
-            - 主流程收敛为：模糊废片、相似照片、软件回收站
-            - 模糊分析与相似分析并行，目录枚举共享，不再串行跑两遍
-            - 前台保持即时可操作，删除/恢复/永久删除进入持久化后台任务队列
-            - 相似组持久化“待筛选 / 已筛选 / 有新增”生命周期，跨文件夹新增成员不会覆盖历史决策
-            - 大图库采用有限前台窗口、分块载入和稳定视图，后台结果不再逐张打断操作
-            - 评分 / 精选推荐与完整运行日志移入工具箱
-            - Windows 系统托盘支持关闭到后台、恢复窗口和明确退出
-            - 统一浅色极光 + iOS 毛玻璃界面与正式多尺寸 C 图标
-            - 软件回收站增加图库内恢复清单，重装后仍保留恢复元数据
-            - 支持覆盖升级，保留配置、索引、缓存、日志、任务状态、照片及软件回收站
-
-            ### 安全说明
-            普通“删除”不会直接永久删除照片，而是先进入
-            `PhotoCurator_RecycleBin（软件回收站）`。
-            只有在“回收站复核”中再次确认永久删除后，文件才会真正从磁盘移除。
-
-            ### 安装
-            下载并运行 `${{ steps.release_meta.outputs.installer }}` 即可。
-            已安装旧版可直接覆盖安装。
+            普通“删除”默认先进入 PhotoCurator 软件回收站；覆盖安装只替换程序目录，
+            保留配置、索引、缓存、任务状态和用户照片。下方变更列表由 GitHub
+            根据本次标签与上一正式版本之间的提交自动生成。
