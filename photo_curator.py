@@ -142,6 +142,20 @@ def _db_init():
         )""")
         db.execute("""CREATE INDEX IF NOT EXISTS idx_media_state_state
                       ON media_state(state, updated_at)""")
+        db.execute("""CREATE TABLE IF NOT EXISTS similarity_group_member (
+            group_key TEXT NOT NULL,
+            original_path TEXT NOT NULL,
+            current_path TEXT NOT NULL,
+            name TEXT NOT NULL,
+            rel_dir TEXT NOT NULL DEFAULT '',
+            score REAL NOT NULL DEFAULT 0,
+            selected INTEGER NOT NULL DEFAULT 0,
+            lifecycle TEXT NOT NULL DEFAULT 'normal',
+            updated_at REAL NOT NULL,
+            PRIMARY KEY(group_key, original_path)
+        )""")
+        db.execute("""CREATE INDEX IF NOT EXISTS idx_similarity_member_original
+                      ON similarity_group_member(original_path)""")
         db.execute("""CREATE TABLE IF NOT EXISTS similarity_group_state (
             group_key TEXT PRIMARY KEY,
             folder_root TEXT NOT NULL,
@@ -199,13 +213,108 @@ def _media_state_get(original_path):
     return None
 
 
-def _similarity_group_key(folder_root, compare_scope, first_member_path):
+def _similarity_group_key(folder_root, compare_scope, member_paths):
+    """Resolve a stable group identity by member overlap before creating one."""
+    originals = [os.path.realpath(str(p)) for p in member_paths if p]
+    if originals:
+        try:
+            marks = ','.join('?' for _ in originals)
+            with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=15) as db:
+                rows = db.execute(
+                    f"""SELECT group_key,COUNT(*) AS hits
+                        FROM similarity_group_member
+                        WHERE original_path IN ({marks})
+                        GROUP BY group_key ORDER BY hits DESC,group_key LIMIT 1""",
+                    originals
+                ).fetchall()
+            if rows:
+                return str(rows[0][0])
+        except Exception:
+            logger.debug("similarity group overlap lookup failed", exc_info=True)
+    anchor = min((os.path.normcase(p) for p in originals), default='')
     seed = '|'.join([
         os.path.normcase(os.path.realpath(str(folder_root))),
         str(compare_scope or 'folder'),
-        os.path.normcase(os.path.realpath(str(first_member_path))),
+        anchor,
     ])
     return hashlib.sha1(seed.encode('utf-8')).hexdigest()[:20]
+
+
+def _persist_similarity_group_members(group_key, member_rows):
+    now = time.time()
+    rows = []
+    for m in member_rows:
+        original = os.path.realpath(str(m.get('original_path') or m.get('path') or ''))
+        if not original:
+            continue
+        current = os.path.realpath(str(m.get('path') or original))
+        rows.append((
+            str(group_key), original, current,
+            str(m.get('name') or Path(original).name),
+            str(m.get('rel_dir') or ''), float(m.get('score') or 0),
+            1 if m.get('selected') else 0, str(m.get('lifecycle') or 'normal'), now
+        ))
+    if not rows:
+        return
+    try:
+        with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=15) as db:
+            db.executemany(
+                """INSERT INTO similarity_group_member
+                   (group_key,original_path,current_path,name,rel_dir,score,selected,lifecycle,updated_at)
+                   VALUES(?,?,?,?,?,?,?,?,?)
+                   ON CONFLICT(group_key,original_path) DO UPDATE SET
+                     current_path=excluded.current_path,
+                     name=excluded.name,
+                     rel_dir=excluded.rel_dir,
+                     score=excluded.score,
+                     selected=excluded.selected,
+                     lifecycle=CASE
+                       WHEN similarity_group_member.lifecycle IN ('trashed','pending_trash','pending_permanent_delete','permanently_deleted')
+                       THEN similarity_group_member.lifecycle
+                       ELSE excluded.lifecycle END,
+                     updated_at=excluded.updated_at""",
+                rows
+            )
+            db.commit()
+    except Exception:
+        logger.debug("similarity group members save failed", exc_info=True)
+
+
+def _merge_historical_group_members(group_key, live_rows):
+    """Reattach trashed/deleted members so a reviewed group remains auditable."""
+    by_original = {
+        os.path.normcase(os.path.realpath(str(m.get('original_path') or m.get('path') or ''))): m
+        for m in live_rows if m.get('path') or m.get('original_path')
+    }
+    try:
+        with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=15) as db:
+            rows = db.execute(
+                """SELECT original_path,current_path,name,rel_dir,score,selected,lifecycle
+                   FROM similarity_group_member WHERE group_key=? ORDER BY original_path""",
+                (str(group_key),)
+            ).fetchall()
+        for original,current,name,rel_dir,score,selected,lifecycle in rows:
+            key = os.path.normcase(os.path.realpath(str(original)))
+            if key in by_original:
+                m=by_original[key]
+                if lifecycle in ('pending_trash','pending_permanent_delete','trashed','permanently_deleted'):
+                    m['lifecycle']=lifecycle
+                    m['original_path']=str(original)
+                    m['path']=str(current)
+                    m['thumb']=thumb_url(str(current)) if Path(str(current)).is_file() else ''
+                    m['selected']=False
+                continue
+            if lifecycle not in ('pending_trash','pending_permanent_delete','trashed','permanently_deleted'):
+                continue
+            by_original[key]={
+                'name': str(name), 'original_path': str(original), 'path': str(current),
+                'thumb': thumb_url(str(current)) if Path(str(current)).is_file() else '',
+                'score': float(score or 0), 'selected': False,
+                'rel_dir': str(rel_dir or ''), 'lifecycle': str(lifecycle),
+            }
+    except Exception:
+        logger.debug("similarity historical member merge failed", exc_info=True)
+    return list(by_original.values())
 
 
 def _similarity_group_state(group_key, folder_root, member_paths):
@@ -1204,6 +1313,17 @@ def _apply_media_lifecycle(original_path, current_path, lifecycle, source_step='
     current = os.path.realpath(str(current_path or original_path))
     _media_state_set(original, current, lifecycle, source_step,
                      detail=str(trash_id or ''))
+    try:
+        with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=15) as db:
+            db.execute(
+                """UPDATE similarity_group_member
+                   SET current_path=?,lifecycle=?,selected=0,updated_at=?
+                   WHERE original_path=?""",
+                (current, lifecycle, time.time(), original)
+            )
+            db.commit()
+    except Exception:
+        logger.debug("similarity member lifecycle sync failed", exc_info=True)
     with _STATE_LOCK:
         cull = state['cull']
         for p in cull.get('photos', []):
@@ -2079,11 +2199,14 @@ def run_dedup(folder, threshold, ftype='all', pair='both',
                 rels = sorted({m['rel_dir'] for m in member_rows})
                 if len(member_rows) > 1:
                     group_key = _similarity_group_key(
-                        folder, compare_scope, member_rows[0]['path']
+                        folder, compare_scope, [m['path'] for m in member_rows]
                     )
+                    member_rows = _merge_historical_group_members(group_key, member_rows)
                     persisted = _similarity_group_state(
-                        group_key, folder, [m['path'] for m in member_rows]
+                        group_key, folder,
+                        [m.get('original_path') or m.get('path') for m in member_rows]
                     )
+                    _persist_similarity_group_members(group_key, member_rows)
                     all_groups.append({
                         'group_id': len(all_groups),
                         'group_key': group_key,
