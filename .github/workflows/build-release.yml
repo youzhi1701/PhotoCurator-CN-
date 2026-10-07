@@ -3,6 +3,7 @@ name: Build Windows Release
 on:
   push:
     branches: ["main"]
+    tags: ["v1.5.0"]
   workflow_dispatch:
 
 permissions:
@@ -54,7 +55,7 @@ jobs:
           if (!(Test-Path "dist\PhotoCurator\PhotoCurator.exe")) { throw "PhotoCurator.exe not built" }
           $v=(Get-Item "dist\PhotoCurator\PhotoCurator.exe").VersionInfo.ProductVersion
           Write-Host "Packaged EXE version: $v"
-          if ($v -notlike "1.4.2*") { throw "Wrong EXE version: $v" }
+          if ($v -notlike "1.5.0*") { throw "Wrong EXE version: $v" }
 
       - name: Smoke test packaged executable
         shell: powershell
@@ -79,30 +80,31 @@ jobs:
           $pf86 = [Environment]::GetFolderPath('ProgramFilesX86')
           $iscc = Join-Path $pf86 "Inno Setup 6\ISCC.exe"
           & $iscc "packaging\PhotoCurator.iss"
-          if (!(Test-Path "release\PhotoCurator-Setup-v1.4.2.exe")) { throw "Installer not built" }
+          if (!(Test-Path "release\PhotoCurator-Setup-v1.5.0.exe")) { throw "Installer not built" }
 
       - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
-          name: PhotoCurator-Setup-v1.4.2
-          path: release/PhotoCurator-Setup-v1.4.2.exe
+          name: PhotoCurator-Setup-v1.5.0
+          path: release/PhotoCurator-Setup-v1.5.0.exe
           if-no-files-found: error
 
-      - name: Publish GitHub Release v1.4.2
+      - name: Publish GitHub Release v1.5.0
+        if: github.ref == 'refs/tags/v1.5.0'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.4.2
-          name: PhotoCurator 中文桌面版 v1.4.2
+          tag_name: v1.5.0
+          name: PhotoCurator 中文桌面版 v1.5.0
           target_commitish: ${{ github.sha }}
           make_latest: true
           prerelease: false
           draft: false
-          files: release/PhotoCurator-Setup-v1.4.2.exe
+          files: release/PhotoCurator-Setup-v1.5.0.exe
           body: |
-            ## PhotoCurator 中文桌面版 v1.4.2
+            ## PhotoCurator 中文桌面版 v1.5.0
 
             正式封装发布版本。推荐普通 Windows 用户直接下载安装包：
-            **PhotoCurator-Setup-v1.4.2.exe**
+            **PhotoCurator-Setup-v1.5.0.exe**
 
             ### 本版重点
             - 统一照片整理工作区：清晰度分析、相似组选优、精选推荐、回收站复核
@@ -119,5 +121,5 @@ jobs:
             只有在“回收站复核”中再次确认永久删除后，文件才会真正从磁盘移除。
 
             ### 安装
-            下载并运行 `PhotoCurator-Setup-v1.4.2.exe` 即可。
+            下载并运行 `PhotoCurator-Setup-v1.5.0.exe` 即可。
             已安装旧版可直接覆盖安装。
