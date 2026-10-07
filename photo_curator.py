@@ -2323,7 +2323,9 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   .progress-wrap{margin-bottom:12px;display:none}
   .progress-bar{height:6px;background:var(--panel2);border-radius:3px;overflow:hidden}
   .progress-fill{height:100%;width:0;background:var(--accent);transition:width .25s}
-  .progress-text{font-size:12px;color:var(--muted);margin-top:5px}
+  .progress-text{font-size:12px;color:var(--muted);margin-top:5px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .progress-line{display:flex;align-items:center;justify-content:space-between;gap:10px}
+  .new-results{flex:0 0 auto;margin-top:5px;background:color-mix(in srgb,var(--accent) 9%,var(--panel))}
   .gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(clamp(138px,12vw,175px),1fr));gap:12px;align-items:start}
   .empty{grid-column:1/-1;text-align:center;color:var(--muted);padding:60px 0}.empty .icon{font-size:44px}
   .empty .title{font-size:19px;font-weight:700;color:var(--text);margin:12px 0 4px}
@@ -2675,7 +2677,8 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
     </div>
     <div class="progress-wrap" id="progressWrap">
       <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
-      <div class="progress-text" id="progressText">…</div>
+      <div class="progress-line"><div class="progress-text" id="progressText">…</div>
+        <button class="chip new-results" id="loadNewResults" style="display:none">加载新结果</button></div>
     </div>
     <div class="filter-bar" id="filterBar" style="display:none"></div>
     <div class="result-tools" id="resultTools" style="display:none">
@@ -2742,6 +2745,7 @@ let folder=null, photos=[], lbList=[], lbIndex=0, currentStep='cull', folderStat
 const cullLiveStore=new Map();
 const dedupLiveStore=new Map();
 let isRunning=false, runningStep=null, codespacesMode=false;
+let coreRunning=false, corePollTimer=null, coreSnapshots={cull:null,dedup:null};
 let lastRankSig='', lastStep=null, weightTimer=null, removedCount=0, pollFailures=0, largeResultWarned=false;
 // These controls are needed by setupFilterBar() during initial page boot.
 // Define them before the first setupFilterBar() call to avoid TDZ failures
@@ -3323,6 +3327,104 @@ function doStop(){
   startBtn.textContent='正在停止…';startBtn.disabled=true;
   fetch('/api/stop/'+runningStep,{method:'POST'}).finally(()=>{startBtn.disabled=false;});
 }
+
+/* ---- v1.5 core cleanup engines: Cull + Similarity run in parallel. ---- */
+function corePayload(step,cfg){
+  return {
+    folder,
+    opt:step==='cull'?cfg.cullStrictness:cfg.dedupThreshold,
+    adaptive:cfg.cullAdaptive,
+    rescue:cfg.cullRescue,
+    ftype:'all',
+    pair:step==='cull'?'both':cfg.pairMode,
+    recursive:cfg.recursiveScan,
+    compare_scope:cfg.compareScope,
+    output_mode:cfg.outputMode,
+    custom_output:cfg.customOutput,
+    topn:cfg.rankTopN,
+    weights:cfg.weights
+  };
+}
+function updateNewResultsButton(){
+  const b=document.getElementById('loadNewResults');
+  if(!b)return;
+  const d=coreSnapshots[currentStep];
+  if(!d||!['cull','dedup'].includes(currentStep)){b.style.display='none';return;}
+  const total=Number(d.result_total||((d.photos||[]).length)||0);
+  const shown=Number(document.getElementById('sShowing').textContent||0);
+  b.textContent=(d.running?'后台新增结果 ':'查看最新结果 ')+Math.max(0,total-shown);
+  b.style.display='inline-flex';
+}
+function applyLatestCoreSnapshot(){
+  const d=coreSnapshots[currentStep];
+  if(!d)return;
+  if(currentStep==='cull'){
+    const rows=d.photos||[];
+    cullLiveStore.clear();rows.forEach(p=>{if(p&&p.path)cullLiveStore.set(p.path,p);});
+    renderCullStep(Array.from(cullLiveStore.values()));
+    if(!d.running)maybeLoadAllCull(d);
+  }else if(currentStep==='dedup'){
+    const rows=d.photos||[];
+    dedupLiveStore.clear();rows.forEach(g=>{if(g&&g.group_id!=null)dedupLiveStore.set(String(g.group_id),g);});
+    renderDedupGroups(Array.from(dedupLiveStore.values()));
+    if(!d.running)maybeLoadAllDedup(d);
+  }
+  const b=document.getElementById('loadNewResults');if(b)b.style.display='none';
+}
+document.getElementById('loadNewResults').onclick=applyLatestCoreSnapshot;
+
+async function pollCore(){
+  if(corePollTimer){clearTimeout(corePollTimer);corePollTimer=null;}
+  try{
+    const rows=await Promise.all(['cull','dedup'].map(k=>fetch('/api/progress/'+k).then(r=>r.json())));
+    coreSnapshots.cull=rows[0];coreSnapshots.dedup=rows[1];
+    if(currentStep==='cull')updateVisibleStepStatus('cull',rows[0]);
+    if(currentStep==='dedup')updateVisibleStepStatus('dedup',rows[1]);
+    updateNewResultsButton();
+    const any=rows.some(d=>d&&d.running);
+    coreRunning=any;
+    setStartBtn(any);
+    if(any){
+      corePollTimer=setTimeout(pollCore,900);
+    }else{
+      document.getElementById('progressText').textContent='后台分析已完成 · 点击“查看最新结果”统一载入';
+      updateNewResultsButton();
+    }
+  }catch(err){
+    document.getElementById('progressText').textContent='后台状态同步中断，将自动重试';
+    if(coreRunning)corePollTimer=setTimeout(pollCore,1400);
+  }
+}
+async function coreRun(){
+  if(!folder){toast('请先选择照片文件夹','bad');return;}
+  if(coreRunning||stateBusyFromUi()){return;}
+  const cfg=snapshotPipelineConfig();
+  coreRunning=true;setStartBtn(true);
+  document.getElementById('progressWrap').style.display='block';
+  document.getElementById('progressText').textContent='正在启动模糊分析与相似分析…';
+  try{
+    const responses=await Promise.all(['cull','dedup'].map(step=>fetch('/api/run/'+step,{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(corePayload(step,cfg))
+    })));
+    const payloads=await Promise.all(responses.map(async r=>({ok:r.ok,data:await r.json().catch(()=>({}))})));
+    const failed=payloads.find(x=>!x.ok);
+    if(failed)throw new Error(failed.data.error||'核心分析启动失败');
+    toast('已在后台同时启动：模糊废片分析 + 相似照片分析','good');
+    pollCore();
+  }catch(err){
+    coreRunning=false;setStartBtn(false);
+    toast('启动失败：'+(err.message||'未知错误'),'bad');
+  }
+}
+function stateBusyFromUi(){return !!(runningStep||godMode);}
+async function stopCore(){
+  if(!coreRunning)return;
+  startBtn.disabled=true;startBtn.textContent='正在停止后台分析…';
+  await Promise.all(['cull','dedup'].map(k=>fetch('/api/stop/'+k,{method:'POST'}).catch(()=>null)));
+  startBtn.disabled=false;
+  corePollTimer=setTimeout(pollCore,250);
+}
 /* ---- Unified analysis: Cull → Dedup → Rank as one workspace task ---- */
 const godBtn=document.getElementById('godBtn');
 function setGodBtn(on){godBtn.textContent=on?'■ 停止分析':'▶ 开始分析';startBtn.textContent=on?'■ 停止分析':'▶ 开始分析';startBtn.classList.toggle('stopping',on);}
@@ -3365,7 +3467,7 @@ async function godRun(){
   }
 }
 godBtn.onclick=()=>{};
-startBtn.onclick=()=>{if(godMode||isRunning){godAbort=true;doStop();toast('正在停止当前分析…','info');}else godRun();};
+startBtn.onclick=()=>{if(coreRunning){stopCore();}else coreRun();};
 function cullRowsForPayload(d){
   const rows=d.photos||[];
   if(!d.running)cullLiveStore.clear();
