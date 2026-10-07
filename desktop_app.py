@@ -66,6 +66,10 @@ _instance_guard = None
 _mutex_handle = None
 if os.name == 'nt':
     import ctypes
+    try:
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("PhotoCurator.CN")
+    except Exception:
+        pass
     kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
     _mutex_handle = kernel32.CreateMutexW(
         None, False, "Local\\PhotoCurator_CN_youzh1701"
@@ -389,6 +393,21 @@ def self_test():
         raise RuntimeError("packaged RAW support is unavailable")
     if not raw_loader.HAS_HEIF:
         raise RuntimeError("packaged HEIC support is unavailable")
+
+    if IS_FROZEN:
+        icon_path = resource_path("packaging", "PhotoCurator.ico")
+        if not icon_path.is_file():
+            raise RuntimeError("packaged tray/taskbar icon is unavailable")
+        try:
+            with Image.open(str(icon_path)) as icon:
+                sizes = set(icon.ico.sizes()) if getattr(icon, "ico", None) else {icon.size}
+            required = {(16, 16), (20, 20), (32, 32), (48, 48), (256, 256)}
+            if not required.issubset(sizes):
+                raise RuntimeError(f"packaged icon is missing DPI sizes: {sorted(required - sizes)}")
+        except RuntimeError:
+            raise
+        except Exception as exc:
+            raise RuntimeError(f"packaged icon validation failed: {exc}") from exc
 
     server = LocalServer()
     server.start()
