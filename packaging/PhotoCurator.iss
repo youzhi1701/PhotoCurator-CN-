@@ -72,7 +72,7 @@ begin
   if CurUninstallStep = usUninstall then
     DeleteSettings := MsgBox(
       '是否同时删除 PhotoCurator 的设置？' + #13#10 +
-      '无论选择什么，都不会删除你的原照片、筛选结果或自定义输出目录。',
+      '无论选择什么，都不会删除你的原照片、筛选结果、自定义输出目录或 PhotoCurator 软件回收站。',
       mbConfirmation, MB_YESNO) = IDYES;
 
   if (CurUninstallStep = usPostUninstall) and DeleteSettings then
