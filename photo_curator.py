@@ -5973,6 +5973,34 @@ function renderDedupGroups(groups){
   g.innerHTML=html;
   updateResultTools();
 }
+function patchDedupGroupSelection(group){
+  if(!group)return false;
+  const node=document.querySelector('.dedup-group[data-group="'+String(group.group_id)+'"]');
+  if(!node)return false;
+  const members=group.members||[];
+  const byPath=new Map(members.map(p=>[p.path,p]));
+  node.querySelectorAll('.dedup-choice').forEach(card=>{
+    const p=byPath.get(card.dataset.path);if(!p)return;
+    const [label,badgeClass,cardState]=dedupMemberState(group,p);
+    card.classList.toggle('selected',group.status==='reviewed'&&!!p.selected);
+    card.classList.toggle('pending-delete',cardState==='pending-delete');
+    card.classList.toggle('trashed',cardState==='trashed');
+    const btn=card.querySelector('.dedup-recommend');
+    if(btn){
+      btn.className='dedup-recommend '+badgeClass;
+      btn.textContent=label;
+      btn.dataset.life=p.lifecycle||'normal';
+      btn.dataset.trashId=p.trash_id||'';
+      btn.disabled=['pending_trash','pending_permanent_delete','permanently_deleted','pending_restore'].includes(p.lifecycle||'normal');
+    }
+  });
+  const active=members.filter(visibleInReview);
+  const kept=active.filter(p=>p.selected).length;
+  const deleted=members.length-active.length;
+  const meta=node.querySelector('.dedup-group-meta');
+  if(meta)meta.textContent='保留 '+kept+' · 删除 '+deleted+' · 待处理 '+Math.max(0,active.length-kept);
+  return true;
+}
 
 document.getElementById('gallery').addEventListener('click',e=>{
   const complete=e.target.closest('.group-complete');
@@ -6007,7 +6035,8 @@ function selectDedupPhoto(groupId,path){
     .then(d=>{
       (d.photos||[]).forEach(g=>{if(g&&g.group_id!=null)dedupLiveStore.set(String(g.group_id),g);});
       if(d.changed_group&&d.changed_group.group_id!=null)dedupLiveStore.set(String(d.changed_group.group_id),d.changed_group);
-      renderDedupGroups(Array.from(dedupLiveStore.values()));
+      photos=Array.from(dedupLiveStore.values());
+      if(!patchDedupGroupSelection(d.changed_group))renderDedupGroups(photos);
       toast(d.selected?'已加入保留':'已取消保留','good');
     })
     .catch(err=>toast('切换失败：'+(err.message||'未知错误'),'bad'));
@@ -6308,6 +6337,19 @@ function cullCardHtml(p,idx){const path=escHtml(p.path);
     ${moveSel}${tierBadge}${stateBadge}
     ${p.thumb?`<img class="photo-img" src="${p.thumb}" loading="lazy" decoding="async">`:'<div class="photo-img" style="display:grid;place-items:center;background:var(--panel2)">文件已删除</div>'}
     <div class="photo-info"><div class="pi-row"><span class="photo-name">${escHtml(p.name)}</span><span class="ftype${p.raw?'':(p.heic?' heic':' jpg')}">${p.fmt||(p.raw?'RAW':p.heic?'HEIC':'JPG')}</span>${deleted?'':`<button class="delete-btn" data-step="cull" data-path="${path}" title="删除">🗑 删除</button>`}</div><div class="source-path">${escHtml(p.rel_dir||'当前文件夹')}</div></div></div>`;}
+function findCullCardNode(path){
+  const nodes=document.querySelectorAll('#gallery .photo-card[data-path]');
+  for(const node of nodes)if(node.dataset.path===path)return node;
+  return null;
+}
+function replaceCullCardNode(oldPath,p){
+  const node=findCullCardNode(oldPath)||findCullCardNode(p.path);
+  if(!node)return false;
+  const idx=Number(node.dataset.i||0);
+  const w=document.createElement('div');w.innerHTML=cullCardHtml(p,idx);
+  node.replaceWith(w.firstElementChild);
+  return true;
+}
 function syncCullCardNode(node,p,idx){
   const moveOn=p.move_selected!==false,life=cullLifecycleInfo(p),deleted=!!life;
   node.dataset.i=idx;node.dataset.tier=p.tier;node.dataset.life=p.lifecycle||'normal';
@@ -6423,10 +6465,13 @@ function updateCullMoveButton(){
 function applyMoveSelectionResponse(path,d){
   if(path){
     const pp=photos.find(x=>x.path===path);
-    if(pp)pp.move_selected=!!d.move_selected;
+    if(pp){
+      pp.move_selected=!!d.move_selected;
+      const node=findCullCardNode(path);
+      if(node)syncCullCardNode(node,pp,Number(node.dataset.i||0));
+    }
   }
   lastCullSig='';lastCullMoveSig='';
-  renderCullStep(photos);
   updateCullMoveButton();
   if(document.getElementById('lightbox').classList.contains('open')&&currentStep==='cull')showLb();
 }
@@ -6442,8 +6487,13 @@ function setAllBlurryMoveSelection(selected){
     body:JSON.stringify({all:selected})})
     .then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;})
     .then(d=>{
-      photos.forEach(p=>{if(p.tier==='blurry')p.move_selected=selected;});
-      lastCullSig='';lastCullMoveSig='';renderCullStep(photos);updateCullMoveButton();
+      photos.forEach(p=>{
+        if(p.tier!=='blurry')return;
+        p.move_selected=selected;
+        const node=findCullCardNode(p.path);
+        if(node)syncCullCardNode(node,p,Number(node.dataset.i||0));
+      });
+      lastCullSig='';lastCullMoveSig='';updateCullMoveButton();
       toast(selected?'已选择全部模糊照片':'已取消全部模糊照片的移动选择','good');
     }).catch(err=>toast('批量选择失败：'+(err.message||'未知错误'),'bad'));
 }
@@ -6454,8 +6504,17 @@ function cullSetTier(path,tier){
     .then(d=>{
       document.getElementById('sSharp').textContent=d.sharp;document.getElementById('sSoft').textContent=d.soft;document.getElementById('sBlurry').textContent=d.blurry;
       const pp=photos.find(x=>x.path===path||x.path===d.path);
-      if(pp){pp.tier=d.tier;pp.badge=d.badge;pp.badgeType=d.badgeType;pp.kept=d.kept;pp.rejected=!d.kept;pp.move_selected=!!d.move_selected;if(d.path)pp.path=d.path;if(d.thumb)pp.thumb=d.thumb;}
-      lastCullSig='';lastCullMoveSig='';renderCullStep(photos);updateCullMoveButton();
+      if(pp){
+        const oldPath=pp.path;
+        pp.tier=d.tier;pp.badge=d.badge;pp.badgeType=d.badgeType;pp.kept=d.kept;pp.rejected=!d.kept;pp.move_selected=!!d.move_selected;
+        if(d.path)pp.path=d.path;if(d.thumb)pp.thumb=d.thumb;
+        // The default "全部" view can update one card in place. Filtered
+        // views may gain/lose membership, so only those need a full reconcile.
+        if(cullFilter==='all')replaceCullCardNode(oldPath,pp);
+        else renderCullStep(photos);
+      }
+      lastCullSig='';lastCullMoveSig='';
+      setupFilterBar();updateCullMoveButton();
     }).catch(err=>toast('分类修改失败：'+(err.message||'未知错误'),'bad'));
 }
 
