@@ -399,7 +399,11 @@ jobs:
               "collapsedFolders",
               "data-view=\"list\"",
               "data-view=\"small\"",
-              "Ctrl + mouse wheel changes thumbnail density only",
+              "Gallery thumbnail zoom: Ctrl + wheel changes photo-card size, never page zoom.",
+              "catalog_media_scan(",
+              "@app.route('/api/sources')",
+              "id=\"sourcesList\"",
+              "id=\"thumbSizeRange\"",
           ]
           missing = [x for x in required if x not in source]
           if missing:
