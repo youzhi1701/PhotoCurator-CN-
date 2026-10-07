@@ -2543,11 +2543,12 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   .dedup-choice:hover{transform:translateY(-1px);border-color:rgba(37,99,235,.45)}
   .dedup-choice.selected{border-color:var(--good);box-shadow:0 0 0 2px color-mix(in srgb,var(--good) 18%,transparent)}
   .dedup-choice img{width:100%;aspect-ratio:3/2;object-fit:cover;display:block}
-  .dedup-choice-meta{padding:7px 8px;font-size:11px}
+  .dedup-choice-meta{position:relative;display:grid;grid-template-columns:minmax(0,1fr) 34px;gap:6px;align-items:stretch;padding:6px 6px 6px 8px;font-size:11px;background:var(--panel2)}
+  .dedup-choice-meta .delete-btn{width:34px;min-height:34px;font-size:14px;padding:0;align-self:stretch}
   .dedup-choice-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--muted)}
   .dedup-choice-state{margin-top:4px;font-weight:700;color:var(--muted)}
   .dedup-choice.selected .dedup-choice-state{color:var(--good)}
-  .dedup-recommend{position:absolute;top:6px;left:6px;background:var(--good);color:#fff;border-radius:5px;padding:3px 7px;font-size:10px;font-weight:700;z-index:2}
+  .dedup-recommend{position:absolute;top:6px;left:6px;border:0;background:var(--good);color:#fff;border-radius:6px;padding:4px 8px;font-size:10px;font-weight:700;z-index:2;cursor:pointer}
   .folder-results{display:flex;flex-direction:column;gap:14px;width:100%;grid-column:1/-1}
   .folder-group{border:1px solid var(--border);border-radius:12px;background:var(--panel);overflow:hidden}
   .folder-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 12px;background:var(--panel2);font-size:12px}
@@ -3799,6 +3800,21 @@ function emptyHTML(step){
     <div class="lines">${c[3].map(l=>`<div>${l}</div>`).join('')}</div></div>`;
 }
 let lastGallerySig='', gPage=0, gItems=[];
+function dedupGroupStatusLabel(status){
+  if(status==='reviewed')return ['已筛选','reviewed'];
+  if(status==='updated')return ['已筛选 · 有新增','updated'];
+  return ['待筛选','pending'];
+}
+function dedupMemberState(group,p){
+  const life=p.lifecycle||'normal';
+  if(life==='pending_trash')return ['待移入回收站','state-pending','pending-delete'];
+  if(life==='pending_permanent_delete')return ['待彻底删除','state-pending','pending-delete'];
+  if(life==='trashed')return ['已移入回收站','state-trash','trashed'];
+  if(life==='permanently_deleted')return ['已彻底删除','state-trash','trashed'];
+  if(group.status==='reviewed'&&p.selected)return ['✓ 保留','','selected'];
+  if(p.selected)return ['推荐保留','',''];
+  return ['待筛选','state-neutral',''];
+}
 function renderDedupGroups(groups){
   photos=groups||[];
   const g=document.getElementById('gallery');
@@ -3823,19 +3839,33 @@ function renderDedupGroups(groups){
     if(!folded)rows.forEach(group=>{
       seq++;
       const members=group.members||[];
-      const kept=members.filter(p=>p.selected).length;
+      const deleted=members.filter(p=>['pending_trash','pending_permanent_delete','trashed','permanently_deleted'].includes(p.lifecycle)).length;
+      const active=members.length-deleted;
+      const kept=members.filter(p=>p.selected&&!['pending_trash','pending_permanent_delete','trashed','permanently_deleted'].includes(p.lifecycle)).length;
+      const [statusText,statusClass]=dedupGroupStatusLabel(group.status||'pending');
       html+='<div class="dedup-group" data-group="'+group.group_id+'">';
-      html+='<div class="dedup-group-head"><b>相似组 '+seq+' · '+members.length+' 张</b><span>已选择 '+kept+' / '+members.length+' 张保留</span></div>';
-      html+='<div class="dedup-quick"><button data-dmode="best1" data-group="'+group.group_id+'">保留最佳 1 张</button><button data-dmode="best2" data-group="'+group.group_id+'">保留最佳 2 张</button><button data-dmode="all" data-group="'+group.group_id+'">全部保留</button></div>';
+      html+='<div class="dedup-group-head"><div><b>相似组 '+seq+' · '+members.length+' 张</b> <span class="group-status '+statusClass+'">'+statusText+'</span></div>'
+        +'<span>保留 '+kept+' · 删除 '+deleted+' · 待处理 '+Math.max(0,active-kept)+'</span></div>';
+      html+='<div class="dedup-group-actions" style="display:flex;align-items:center;gap:8px;margin-bottom:8px">'
+        +'<button class="chip group-complete" data-group="'+group.group_id+'">完成本组</button>'
+        +'<details class="dedup-more"><summary>更多操作</summary><div class="dedup-quick">'
+        +'<button data-dmode="best1" data-group="'+group.group_id+'">保留最佳 1 张</button>'
+        +'<button data-dmode="best2" data-group="'+group.group_id+'">保留最佳 2 张</button>'
+        +'<button data-dmode="all" data-group="'+group.group_id+'">全部保留</button>'
+        +'</div></details></div>';
       html+='<div class="dedup-choices">';
       members.forEach(p=>{
-        const sel=!!p.selected;
-        html+='<div class="dedup-choice '+(sel?'selected':'')+'" data-group="'+group.group_id+'" data-path="'+escHtml(p.path)+'">';
-        html+='<div class="dedup-recommend">'+(sel?'☑ 保留':'☐ 保留')+'</div>';
-        html+='<img src="'+p.thumb+'" loading="lazy" decoding="async">';
-        html+='<div class="dedup-choice-meta"><div class="dedup-choice-name">'+escHtml(p.name)+'</div>';
-        html+='<div class="source-path">'+escHtml(p.rel_dir||'当前文件夹')+'</div>';
-        html+='<button class="delete-btn" data-step="dedup" data-path="'+escHtml(p.path)+'" style="margin-top:6px" title="移入软件回收站">🗑 删除</button></div></div>';
+        const [label,badgeClass,cardState]=dedupMemberState(group,p);
+        const selectedClass=(group.status==='reviewed'&&p.selected)?' selected':'';
+        html+='<div class="dedup-choice'+selectedClass+(cardState?' '+cardState:'')+'" data-group="'+group.group_id+'" data-path="'+escHtml(p.path)+'">';
+        html+='<button class="dedup-recommend '+badgeClass+'" data-group="'+group.group_id+'" data-path="'+escHtml(p.path)+'" title="切换保留状态">'+label+'</button>';
+        if(p.thumb)html+='<img src="'+p.thumb+'" loading="lazy" decoding="async">';
+        else html+='<div style="aspect-ratio:3/2;display:grid;place-items:center;background:var(--panel2);color:var(--muted)">文件已删除</div>';
+        html+='<div class="dedup-choice-meta"><div><div class="dedup-choice-name">'+escHtml(p.name)+'</div>';
+        html+='<div class="source-path">'+escHtml(p.rel_dir||'当前文件夹')+'</div></div>';
+        if(!['pending_trash','pending_permanent_delete','trashed','permanently_deleted'].includes(p.lifecycle))
+          html+='<button class="delete-btn" data-step="dedup" data-path="'+escHtml(p.path)+'" title="删除">🗑</button>';
+        html+='</div></div>';
       });
       html+='</div></div>';
     });
@@ -3845,7 +3875,22 @@ function renderDedupGroups(groups){
   g.innerHTML=html;
   updateResultTools();
 }
+
 document.getElementById('gallery').addEventListener('click',e=>{
+  const complete=e.target.closest('.group-complete');
+  if(complete){
+    e.stopPropagation();
+    fetch('/api/dedup-complete',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({group_id:Number(complete.dataset.group)})})
+      .then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;})
+      .then(d=>{
+        const idx=photos.findIndex(g=>g.group_id===Number(complete.dataset.group));
+        if(idx>=0&&d.changed_group)photos[idx]=d.changed_group;
+        renderDedupGroups(photos);
+        toast('本组已完成筛选','good');
+      }).catch(err=>toast('完成本组失败：'+(err.message||'未知错误'),'bad'));
+    return;
+  }
   const b=e.target.closest('.dedup-quick button');
   if(!b)return;
   e.stopPropagation();
@@ -4313,7 +4358,16 @@ document.getElementById('gallery').addEventListener('click',e=>{
   const tr=e.target.closest('.trash-restore-btn');if(tr){e.stopPropagation();trashRestoreOne(Number(tr.dataset.id));return;}
   const tp=e.target.closest('.trash-purge-btn');if(tp){e.stopPropagation();trashPurgeOne(Number(tp.dataset.id));return;}
   const db=e.target.closest('.delete-btn');if(db){e.stopPropagation();deletePhoto(db.dataset.step||currentStep,db.dataset.path);return;}
-  const dc=e.target.closest('.dedup-choice');if(dc&&currentStep==='dedup'){e.stopPropagation();selectDedupPhoto(dc.dataset.group,dc.dataset.path);return;}
+  const keep=e.target.closest('.dedup-recommend');
+  if(keep&&currentStep==='dedup'){e.stopPropagation();selectDedupPhoto(keep.dataset.group,keep.dataset.path);return;}
+  const dc=e.target.closest('.dedup-choice');
+  if(dc&&currentStep==='dedup'){
+    e.stopPropagation();
+    const group=(photos||[]).find(g=>String(g.group_id)===String(dc.dataset.group));
+    const members=(group&&group.members)||[];
+    const idx=Math.max(0,members.findIndex(x=>x.path===dc.dataset.path));
+    lbList=members.slice();openLb(idx);return;
+  }
   const rm=e.target.closest('.remove-btn');if(rm){e.stopPropagation();removePhoto(rm.dataset.path);return;}
   const pb=e.target.closest('.pbg-toggle');
   if(pb){e.stopPropagation();togglePhoneBg(pb.dataset.path);return;}
