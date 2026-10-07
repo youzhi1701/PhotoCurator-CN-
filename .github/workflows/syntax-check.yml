@@ -7,9 +7,14 @@ on:
     branches: ["main"]
   workflow_dispatch:
 
+concurrency:
+  group: photocurator-checks-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   syntax:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
 
@@ -654,7 +659,10 @@ jobs:
           PY
 
   windows-smoke:
+    # Only run the costly Windows smoke suite for PR validation, explicit releases, or manual checks.
+    if: "${{ github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request' || (github.event_name == 'push' && startsWith(github.event.head_commit.message, 'release: publish v')) }}"
     runs-on: windows-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
 
