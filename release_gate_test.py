@@ -181,8 +181,11 @@ def main():
             "adaptive gallery fill contract missing")
     require(".photo-card,.dedup-choice{content-visibility:auto" in core,
             "off-screen card rendering guard missing")
-    require("fingerprints = _fingerprints(images)" in core,
-            "Cull metadata reuse missing")
+    require("images, scan_fingerprints = _shared_list_images" in core
+            and "fingerprints = scan_fingerprints" in core,
+            "Cull scan-fingerprint reuse missing")
+    require("dedup_fingerprints = scan_fingerprints" in core,
+            "Dedup scan-fingerprint reuse missing")
     require("rank_fingerprints = _fingerprints(paths)" in core,
             "Rank metadata reuse missing")
     require("Path(it['path']).is_file()" not in core,
