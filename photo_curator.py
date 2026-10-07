@@ -860,7 +860,9 @@ VENDOR_FILES = {'maplibre-gl-csp.js': 'text/javascript',
 
 RECENTS_FILE = DATA_ROOT / 'config' / 'recents.json'
 THUMB_DIR = DATA_ROOT / 'cache' / 'thumbnails'
+OFFLINE_PREVIEW_DIR = DATA_ROOT / 'offline_previews'
 THUMB_DIR.mkdir(parents=True, exist_ok=True)
+OFFLINE_PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
 DEDUP_SIGNATURE_VERSION = 1
 DEDUP_CACHE_DIR = DATA_ROOT / 'config' / 'dedup_features'
 DEDUP_CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -1769,7 +1771,7 @@ def _thumb_cache_path(image_path):
     try:
         media_id = catalog_media_id_for_path(INDEX_DB, image_path)
         if media_id:
-            return THUMB_DIR / f"catalog_{media_id}.jpg"
+            return OFFLINE_PREVIEW_DIR / f"{media_id}.jpg"
     except Exception:
         pass
 
@@ -6585,7 +6587,7 @@ def api_catalog_thumb():
         record = None
     if not record:
         abort(404)
-    cached = THUMB_DIR / f"catalog_{media_id}.jpg"
+    cached = OFFLINE_PREVIEW_DIR / f"{media_id}.jpg"
     if cached.is_file():
         return send_file(str(cached), mimetype='image/jpeg')
 
