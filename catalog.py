@@ -17,6 +17,8 @@ import time
 import uuid
 from pathlib import Path
 
+from db_runtime import connect_db
+
 
 DRIVE_KIND = {
     2: "removable",
@@ -27,14 +29,19 @@ DRIVE_KIND = {
 }
 
 
+CATALOG_SCHEMA_VERSION = 3
+
+
 def _connect(db_path):
-    db = sqlite3.connect(str(db_path), timeout=30)
-    db.row_factory = sqlite3.Row
-    return db
+    return connect_db(db_path, timeout=30, row_factory=sqlite3.Row)
 
 
 def init_catalog_schema(db_path):
     with _connect(db_path) as db:
+        db.execute("""CREATE TABLE IF NOT EXISTS schema_meta (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )""")
         db.execute("""CREATE TABLE IF NOT EXISTS data_source (
             source_id TEXT PRIMARY KEY,
             identity_key TEXT NOT NULL UNIQUE,
@@ -76,15 +83,51 @@ def init_catalog_schema(db_path):
             size INTEGER NOT NULL DEFAULT 0,
             mtime_ns INTEGER NOT NULL DEFAULT 0,
             state TEXT NOT NULL DEFAULT 'present',
+            lifecycle TEXT NOT NULL DEFAULT 'normal',
+            scan_generation INTEGER NOT NULL DEFAULT 0,
             first_seen_at REAL NOT NULL,
             last_seen_at REAL NOT NULL,
             missing_since REAL,
             UNIQUE(root_id, relative_path)
         )""")
+        media_cols = {
+            str(row[1])
+            for row in db.execute("PRAGMA table_info(media_catalog)").fetchall()
+        }
+        if "lifecycle" not in media_cols:
+            db.execute(
+                "ALTER TABLE media_catalog ADD COLUMN lifecycle TEXT NOT NULL DEFAULT 'normal'"
+            )
+        if "scan_generation" not in media_cols:
+            db.execute(
+                "ALTER TABLE media_catalog ADD COLUMN scan_generation INTEGER NOT NULL DEFAULT 0"
+            )
         db.execute("""CREATE INDEX IF NOT EXISTS idx_media_catalog_source_state
                       ON media_catalog(source_id, state)""")
         db.execute("""CREATE INDEX IF NOT EXISTS idx_media_catalog_root
                       ON media_catalog(root_id, relative_path)""")
+        db.execute("""CREATE INDEX IF NOT EXISTS idx_media_catalog_generation
+                      ON media_catalog(root_id, scan_generation)""")
+        db.execute("""CREATE TABLE IF NOT EXISTS scan_session (
+            session_id TEXT PRIMARY KEY,
+            root_id TEXT NOT NULL,
+            source_id TEXT NOT NULL,
+            generation INTEGER NOT NULL,
+            state TEXT NOT NULL,
+            started_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            finished_at REAL,
+            files_seen INTEGER NOT NULL DEFAULT 0,
+            error_count INTEGER NOT NULL DEFAULT 0,
+            error TEXT NOT NULL DEFAULT ''
+        )""")
+        db.execute("""CREATE INDEX IF NOT EXISTS idx_scan_session_root_state
+                      ON scan_session(root_id, state, started_at)""")
+        db.execute(
+            """INSERT INTO schema_meta(key,value) VALUES('catalog_schema_version',?)
+               ON CONFLICT(key) DO UPDATE SET value=excluded.value""",
+            (str(CATALOG_SCHEMA_VERSION),),
+        )
         db.commit()
 
 
