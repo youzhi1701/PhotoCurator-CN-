@@ -1241,8 +1241,13 @@ def _photo_sidecars(path):
     """Return sidecars that belong to the same photo capture."""
     p = Path(path)
     out = []
+    seen = set()
     for ext in ('.xmp', '.XMP', '.aae', '.AAE'):
         candidate = p.with_suffix(ext)
+        key = os.path.normcase(os.path.realpath(str(candidate)))
+        if key in seen:
+            continue
+        seen.add(key)
         if candidate.is_file():
             out.append(candidate)
     return out
@@ -1543,7 +1548,13 @@ def _purge_trash_item(trash_id):
         raise FileNotFoundError("回收站记录不存在")
     target = Path(str(row[0]))
     if target.is_file():
+        sidecars = _photo_sidecars(target)
         target.unlink()
+        for sidecar in sidecars:
+            try:
+                sidecar.unlink()
+            except OSError:
+                logger.warning("sidecar delete failed: %s", sidecar)
     with _DB_LOCK, connect_db(INDEX_DB, timeout=15) as db:
         db.execute("DELETE FROM software_trash WHERE id=?", (int(trash_id),))
         db.commit()
