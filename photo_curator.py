@@ -42,7 +42,8 @@ from photo_ranking_v3 import AdvancedPhotoAnalyzer, PhotoScoreV3
 from photo_dedup_batch import FastBatchDeduplicator
 from background_tasks import BackgroundTaskManager
 from runtime_paths import resolve_data_root
-from db_runtime import connect_db, quick_check as sqlite_quick_check
+from db_runtime import (connect_db, quick_check as sqlite_quick_check,
+                        read_schema_version, backup_database)
 from catalog import (
     catalog_media_scan,
     begin_catalog_scan,
@@ -111,8 +112,21 @@ _FILE_PLAN_LOCK = threading.Lock()
 _GEOCODE_LOCK = threading.Lock()
 _GEOCODE_LAST_AT = 0.0
 CULL_METRICS_VERSION = 1
+RUNTIME_SCHEMA_VERSION = 2
+
 
 def _db_init():
+    previous_schema = read_schema_version(INDEX_DB, 'runtime_schema_version')
+    if previous_schema < RUNTIME_SCHEMA_VERSION and Path(INDEX_DB).is_file():
+        try:
+            backup_database(
+                INDEX_DB,
+                DATA_ROOT / 'backups',
+                f"schema-v{RUNTIME_SCHEMA_VERSION}",
+                keep=5,
+            )
+        except Exception:
+            logger.warning("database pre-migration backup failed", exc_info=True)
     with _DB_LOCK, connect_db(INDEX_DB, timeout=15) as db:
         db.execute("""CREATE TABLE IF NOT EXISTS cull_cache (
             path TEXT PRIMARY KEY, size INTEGER NOT NULL, mtime_ns INTEGER NOT NULL,
@@ -188,6 +202,15 @@ def _db_init():
         cols = {r[1] for r in db.execute("PRAGMA table_info(similarity_group_state)").fetchall()}
         if 'member_hash' not in cols:
             db.execute("ALTER TABLE similarity_group_state ADD COLUMN member_hash TEXT NOT NULL DEFAULT ''")
+        db.execute("""CREATE TABLE IF NOT EXISTS schema_meta (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )""")
+        db.execute(
+            """INSERT INTO schema_meta(key,value) VALUES('runtime_schema_version',?)
+               ON CONFLICT(key) DO UPDATE SET value=excluded.value""",
+            (str(RUNTIME_SCHEMA_VERSION),),
+        )
         db.commit()
 
 def _media_state_set(original_path, current_path=None, state_name='normal',
