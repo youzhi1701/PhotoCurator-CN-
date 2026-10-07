@@ -126,10 +126,25 @@ def main():
         recursive_custom = photo_curator.list_images(root, recursive=True)
         assert_true(all(custom_inside not in p.parents for p in recursive_custom),
                     f"递归扫描错误包含自定义结果目录：{recursive_custom}")
+
+        # Shared snapshots are configuration-sensitive. Switching to a custom
+        # output exclusion must not reuse the earlier source-mode snapshot.
+        shared_custom = photo_curator._shared_list_images(
+            root, recursive=True, max_age=60.0
+        )
+        assert_true(all(custom_inside not in p.parents for p in shared_custom),
+                    f"共享扫描快照错误复用了未排除自定义目录的旧结果：{shared_custom}")
+
         photo_curator.state["scan"].update({
             "output_mode": "source",
             "custom_output": "",
         })
+        shared_source_again = photo_curator._shared_list_images(
+            root, recursive=True, max_age=60.0
+        )
+        custom_probe = custom_inside / "不应扫描_自定义.jpg"
+        assert_true(custom_probe in shared_source_again,
+                    "切回源目录模式后错误复用了 custom 输出排除快照")
 
         photo_curator.state["folder"] = str(root)
         for p in found:
