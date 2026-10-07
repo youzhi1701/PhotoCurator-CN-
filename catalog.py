@@ -444,6 +444,46 @@ def refresh_connections(db_path):
         db.commit()
 
 
+def discover_mounted_devices(db_path):
+    """Return lightweight mounted-device presence without crawling filesystems.
+
+    Devices are matched to a persisted data source only by a stable identity.
+    A reused drive letter alone is never enough to claim that an old source
+    has returned.
+    """
+    init_catalog_schema(db_path)
+    if os.name != "nt":
+        return []
+    mounted = _mounted_volume_map()
+    unique = {}
+    for key, info in mounted.items():
+        if not key.startswith("win-guid:"):
+            continue
+        unique[str(info.get("mount_path") or key)] = dict(info)
+    with _connect(db_path) as db:
+        rows = db.execute(
+            """SELECT source_id,identity_key,display_name,kind,last_mount,volume_guid
+               FROM data_source"""
+        ).fetchall()
+    by_identity = {str(row["identity_key"]): row for row in rows}
+    out = []
+    for info in unique.values():
+        identity = str(info.get("identity_key") or "")
+        known = by_identity.get(identity)
+        out.append({
+            "identity_key": identity,
+            "mount_path": str(info.get("mount_path") or ""),
+            "kind": str(info.get("kind") or "volume"),
+            "known": bool(known),
+            "source_id": str(known["source_id"]) if known else "",
+            "display_name": (
+                str(known["display_name"])
+                if known else Path(str(info.get("mount_path") or "")).drive or "新存储设备"
+            ),
+        })
+    return sorted(out, key=lambda item: (not item["known"], item["mount_path"].lower()))
+
+
 def list_sources(db_path, *, refresh=True):
     """List persisted sources without forcing hardware probes on first paint.
 
@@ -727,7 +767,7 @@ def root_snapshot(db_path, root_id, limit=2000, offset=0):
         total = sum(counts.values())
         rows = db.execute(
             """SELECT m.media_id,m.relative_path,m.original_path,m.current_path,
-                      m.size,m.mtime_ns,m.state,m.first_seen_at,m.last_seen_at,
+                      m.size,m.mtime_ns,m.state,m.lifecycle,m.first_seen_at,m.last_seen_at,
                       m.missing_since,
                       r.tier AS review_tier,
                       CASE WHEN c.path IS NULL THEN 0 ELSE 1 END AS has_cull_cache
@@ -762,6 +802,8 @@ def root_snapshot(db_path, root_id, limit=2000, offset=0):
         "counts": counts,
         "total": total,
         "offset": offset,
+        "limit": limit,
+        "has_more": offset + len(rows) < total,
         "items": [
             {
                 "media_id": str(row["media_id"]),
@@ -772,6 +814,7 @@ def root_snapshot(db_path, root_id, limit=2000, offset=0):
                 "size": int(row["size"] or 0),
                 "mtime_ns": int(row["mtime_ns"] or 0),
                 "state": str(row["state"]),
+                "lifecycle": str(row["lifecycle"] or "normal"),
                 "review_tier": str(row["review_tier"] or ""),
                 "has_cull_cache": bool(row["has_cull_cache"]),
                 "missing_since": (
