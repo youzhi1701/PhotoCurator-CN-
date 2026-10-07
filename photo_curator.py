@@ -3323,18 +3323,29 @@ function taskLabel(d){
   if((d.progress||0)>=100||st.startsWith('完成')||st.includes('筛选完成'))return '已完成';
   return st&&st!=='待开始'?'待继续':'待开始';
 }
+let lastBackgroundActive=0,lastAutoSyncAt=0;
 async function refreshTaskCenter(){
   try{
-    const rows=await Promise.all(['cull','dedup','rank'].map(k=>fetch('/api/progress/'+k).then(r=>r.json()).catch(()=>null)));
+    const [rows,tasks]=await Promise.all([
+      Promise.all(['cull','dedup','rank'].map(k=>fetch('/api/progress/'+k).then(r=>r.json()).catch(()=>null))),
+      fetch('/api/tasks').then(r=>r.json()).catch(()=>({active:0,counts:{}}))
+    ]);
     document.getElementById('taskCull').textContent=taskLabel(rows[0]);
     document.getElementById('taskDedup').textContent=taskLabel(rows[1]);
     document.getElementById('taskRank').textContent=taskLabel(rows[2]);
-    const any=rows.some(x=>x&&x.running);
-    document.getElementById('taskToggle').textContent=any?'●':'◉';
-    if(any)document.getElementById('taskToggle').title='分析任务正在运行';
+    const analysis=rows.some(x=>x&&x.running),queued=Number(tasks.active||0);
+    document.getElementById('taskToggle').textContent=(analysis||queued)?'●':'◉';
+    document.getElementById('taskToggle').title=(analysis||queued)
+      ?'后台运行中 · '+queued+' 个文件任务':'后台任务空闲';
+    if(lastBackgroundActive>0&&queued===0&&Date.now()-lastAutoSyncAt>800){
+      lastAutoSyncAt=Date.now();syncCurrentView();
+    }
+    lastBackgroundActive=queued;
   }catch(_){}
 }
-setInterval(refreshTaskCenter,1200);
+setInterval(refreshTaskCenter,1400);
+window.addEventListener('focus',()=>{refreshTaskCenter();syncCurrentView();});
+document.addEventListener('visibilitychange',()=>{if(!document.hidden){refreshTaskCenter();syncCurrentView();}});
 refreshTaskCenter();
 
 /* settings panels per step */
@@ -4359,39 +4370,77 @@ function loadTrash(){
     .then(d=>renderTrash(d.photos||[]))
     .catch(err=>toast('回收站读取失败：'+(err.message||'未知错误'),'bad'));
 }
+function waitTaskAndSync(taskId,doneText){
+  const started=Date.now();
+  const tick=()=>{
+    fetch('/api/tasks/'+taskId).then(r=>r.json()).then(d=>{
+      if(d.state==='done'){
+        if(doneText)toast(doneText,'good');
+        if(currentStep==='trash')loadTrash();
+        else syncCurrentView();
+        refreshTaskCenter();return;
+      }
+      if(d.state==='failed'){
+        toast('后台任务失败：'+(d.error||'未知错误'),'bad');
+        syncCurrentView();refreshTaskCenter();return;
+      }
+      if(Date.now()-started<120000)setTimeout(tick,500);
+    }).catch(()=>{if(Date.now()-started<120000)setTimeout(tick,900);});
+  };
+  setTimeout(tick,350);
+}
 function trashRestoreOne(id,fromLightbox=false){
   fetch('/api/trash-restore',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})})
     .then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;})
     .then(d=>{
-      renderTrash(d.photos||[]);
-      toast('已恢复到原照片目录'+(d.restored_path?'：'+d.restored_path:''),'good');
+      toast('已提交后台恢复','good');
+      photos=(photos||[]).filter(x=>Number(x.id)!==Number(id));renderTrash(photos);
       if(fromLightbox){lbList=photos.slice();if(!lbList.length)closeLb();else{if(lbIndex>=lbList.length)lbIndex=lbList.length-1;showLb();}}
+      waitTaskAndSync(d.task_id,'照片已恢复到原目录');
     }).catch(err=>toast('恢复失败：'+(err.message||'未知错误'),'bad'));
 }
-function trashPurgeOne(id,fromLightbox=false){
-  if(!confirm('确认永久删除这张照片？\n\n永久删除后将无法从 PhotoCurator 恢复。'))return;
+async function trashPurgeOne(id,fromLightbox=false){
+  const ok=await askBatchConfirm('彻底删除','永久删除后无法从 PhotoCurator 恢复这张照片。','彻底删除');
+  if(!ok)return;
   fetch('/api/trash-purge',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})})
     .then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;})
     .then(d=>{
-      renderTrash(d.photos||[]);toast('照片已永久删除','good');
+      toast('已提交后台永久删除','info');
+      photos=(photos||[]).filter(x=>Number(x.id)!==Number(id));renderTrash(photos);
       if(fromLightbox){lbList=photos.slice();if(!lbList.length)closeLb();else{if(lbIndex>=lbList.length)lbIndex=lbList.length-1;showLb();}}
+      waitTaskAndSync(d.task_id,'照片已永久删除');
     }).catch(err=>toast('永久删除失败：'+(err.message||'未知错误'),'bad'));
 }
-function trashRestoreAll(){
+async function trashRestoreAll(){
   if(!photos.length)return;
-  if(!confirm('确认恢复软件回收站中的全部 '+photos.length+' 张照片？'))return;
+  const ok=await askBatchConfirm('全部恢复','恢复软件回收站中的全部 '+photos.length+' 张照片。','全部恢复');
+  if(!ok)return;
   fetch('/api/trash-restore-all',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})
     .then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;})
-    .then(d=>{renderTrash(d.photos||[]);toast('已恢复 '+(d.restored||0)+' 张照片'+(d.failed?'，'+d.failed+' 张失败':''),d.failed?'bad':'good');})
+    .then(d=>{toast('已提交后台恢复 '+(d.count||0)+' 张照片','good');renderTrash([]);refreshTaskCenter();})
     .catch(err=>toast('批量恢复失败：'+(err.message||'未知错误'),'bad'));
 }
-function trashPurgeAll(){
+async function trashPurgeAll(){
   if(!photos.length)return;
-  if(!confirm('确认永久删除软件回收站中的全部 '+photos.length+' 张照片？\n\n这是最后一步，删除后不可恢复。'))return;
+  const ok=await askBatchConfirm('清空软件回收站','将永久删除当前软件回收站中的 '+photos.length+' 张照片，此操作不可恢复。','永久删除全部');
+  if(!ok)return;
   fetch('/api/trash-purge',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({all:true})})
     .then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;})
-    .then(d=>{renderTrash(d.photos||[]);toast('已永久删除 '+(d.purged||0)+' 张照片'+(d.failed?'，'+d.failed+' 张失败':''),d.failed?'bad':'good');})
+    .then(d=>{toast('已提交后台永久删除 '+(d.count||0)+' 张照片','info');renderTrash([]);refreshTaskCenter();})
     .catch(err=>toast('清空回收站失败：'+(err.message||'未知错误'),'bad'));
+}
+
+async function syncCurrentView(){
+  if(!folder)return;
+  try{
+    if(currentStep==='trash'){loadTrash();return;}
+    if(currentStep==='dedup'){await loadDedupPage(true);return;}
+    const d=await fetch('/api/progress/'+currentStep).then(r=>r.json());
+    if(d.src_folder&&folder&&!sameFolder(d.src_folder,folder))return;
+    if(currentStep==='cull')renderCullStep(cullRowsForPayload(d));
+    else if(currentStep==='rank')renderRank(d.photos||[]);
+    updateVisibleStepStatus(currentStep,d);
+  }catch(_){}
 }
 
 /* ---- cull (3-tier, reconciling, filterable) ---- */
