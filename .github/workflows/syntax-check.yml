@@ -63,17 +63,76 @@ jobs:
           build_workflow = Path(".github/workflows/build-release.yml").read_text(encoding="utf-8")
           manifest = json.loads(Path("packaging/release_manifest.json").read_text(encoding="utf-8"))
 
+          if not re.fullmatch(r"\d+\.\d+\.\d+", dv):
+              raise SystemExit(f"APP_VERSION must be numeric semver x.y.z: {dv}")
           if manifest.get("version") != dv:
               raise SystemExit("Release manifest version does not match APP_VERSION")
+          expected_installer = f"PhotoCurator-Setup-v{dv}.exe"
+          if manifest.get("installer") != expected_installer:
+              raise SystemExit("Release manifest installer name does not match version")
+          if manifest.get("upgrade_mode") != "in_place" or manifest.get("same_app_id") is not True:
+              raise SystemExit("Release manifest must keep in-place upgrade + stable AppId policy")
+          if manifest.get("replace") != ["app"]:
+              raise SystemExit("Release manifest may replace only the app directory")
+          required_preserve = {
+              "data/config/library_index.sqlite3",
+              "data/cache",
+              "data/logs",
+              "user_photo_folders",
+              "PhotoCurator_RecycleBin（软件回收站）",
+          }
+          if not required_preserve.issubset(set(manifest.get("preserve") or [])):
+              raise SystemExit("Release manifest lost required preserved user/runtime data")
+
           if f'#define MyAppVersion "{dv}"' not in installer:
-              raise SystemExit("Installer version does not match APP_VERSION")
+              raise SystemExit("Installer fallback version does not match APP_VERSION")
+          if "#ifndef MyAppVersion" not in installer:
+              raise SystemExit("Installer version must be overridable by release metadata")
+          if "VersionInfoVersion={#MyAppVersion}.0" not in installer:
+              raise SystemExit("Installer VersionInfoVersion must follow MyAppVersion")
           if f"StringStruct('ProductVersion', '{dv}')" not in version_info:
               raise SystemExit("EXE version info does not match APP_VERSION")
-          if f"PhotoCurator-Setup-v{dv}.exe" not in build_workflow:
-              raise SystemExit("Build workflow artifact version does not match APP_VERSION")
-          if "if: github.ref == 'refs/tags/v1.5.0'" not in build_workflow:
-              raise SystemExit("v1.5.0 Release must be gated behind the release tag")
-          print("Packaging + version consistency OK:", dv)
+
+          release_required = [
+              'tags: ["v*"]',
+              "id: release_meta",
+              'Get-Content "packaging\\release_manifest.json"',
+              '"version=$version" >> $env:GITHUB_OUTPUT',
+              '"installer=PhotoCurator-Setup-v$version.exe" >> $env:GITHUB_OUTPUT',
+              "if: startsWith(github.ref, 'refs/tags/')",
+              '"v${{ steps.release_meta.outputs.version }}"',
+              '/DMyAppVersion=${{ steps.release_meta.outputs.version }}',
+              "if: startsWith(github.ref, 'refs/tags/v')",
+              'tag_name: ${{ github.ref_name }}',
+              'files: release/${{ steps.release_meta.outputs.installer }}',
+          ]
+          missing_release = [x for x in release_required if x not in build_workflow]
+          if missing_release:
+              raise SystemExit("Manifest-driven release workflow regression: " + repr(missing_release))
+          if "refs/tags/v1.5.0" in build_workflow:
+              raise SystemExit("Release workflow must not hardcode a single version tag")
+
+          # Frozen layout contract:
+          #   {app}/app/PhotoCurator.exe -> parent.parent == {app}
+          #   writable state lives under {app}/data and is not replaced on upgrade.
+          layout_required = [
+              'DestDir: "{app}\\app"',
+              'Name: "{app}\\data"',
+              'Filename: "{app}\\app\\{#MyAppExeName}"',
+              'Type: filesandordirs; Name: "{app}\\app"',
+          ]
+          missing_layout = [x for x in layout_required if x not in installer]
+          if missing_layout:
+              raise SystemExit("Installer layout contract regression: " + repr(missing_layout))
+          install_delete = installer.split("[InstallDelete]", 1)[1].split("[Files]", 1)[0]
+          if "{app}\\data" in install_delete:
+              raise SystemExit("Cover upgrade must never delete the persistent data directory")
+          if 'INSTALL_ROOT = Path(sys.executable).resolve().parent.parent' not in desktop:
+              raise SystemExit("Frozen desktop root no longer matches {app}/app executable layout")
+          if 'DATA_ROOT = INSTALL_ROOT / "data"' not in desktop:
+              raise SystemExit("Frozen writable data root must stay under {app}/data")
+
+          print("Packaging + version/update consistency OK:", dv)
           PY
 
       - name: Extract embedded UI JavaScript
@@ -176,8 +235,8 @@ jobs:
               raise SystemExit("desktop tray regression: " + repr(missing))
           if "pystray" not in requirements:
               raise SystemExit("pystray dependency missing")
-          if "refs/tags/v1.5.0" not in workflow:
-              raise SystemExit("tag-gated v1.5.0 release missing")
+          if "id: release_meta" not in workflow or "refs/tags/v1.5.0" in workflow:
+              raise SystemExit("Manifest-driven tag release workflow missing or hardcoded")
 
           banned = [
               "send2trash",
