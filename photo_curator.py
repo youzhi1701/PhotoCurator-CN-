@@ -637,10 +637,16 @@ def _save_cull_metrics_batch(rows):
         return
     payload = []
     now = time.time()
-    for path, region_s, quality in rows:
+    for row in rows:
+        path, region_s, quality = row[:3]
         try:
-            p = Path(path); st = p.stat()
-            payload.append((str(p), int(st.st_size), int(st.st_mtime_ns),
+            if len(row) >= 5:
+                size, mtime_ns = int(row[3]), int(row[4])
+                p = Path(path)
+            else:
+                p = Path(path); st = p.stat()
+                size, mtime_ns = int(st.st_size), int(st.st_mtime_ns)
+            payload.append((str(p), size, mtime_ns,
                             float(region_s), float(quality), now))
         except OSError:
             continue
@@ -663,12 +669,18 @@ def _save_rank_scores_batch(rows):
         return
     payload = []
     now = time.time()
-    for path, score in rows:
+    for row in rows:
+        path, score = row[:2]
         try:
-            p = Path(path); st = p.stat()
+            if len(row) >= 4:
+                size, mtime_ns = int(row[2]), int(row[3])
+                p = Path(path)
+            else:
+                p = Path(path); st = p.stat()
+                size, mtime_ns = int(st.st_size), int(st.st_mtime_ns)
             data = asdict(score)
             data['_cache_version'] = RANK_CACHE_VERSION
-            payload.append((str(p), int(st.st_size), int(st.st_mtime_ns),
+            payload.append((str(p), size, mtime_ns,
                             json.dumps(data, ensure_ascii=False), now))
         except OSError:
             continue
@@ -2809,7 +2821,10 @@ def run_cull(folder, strictness, adaptive, rescue_on, recursive=True):
             overrides = s.get('overrides', {})
             removed = s.get('removed_paths', set())
             for it in items:
-                if it['path'] in removed or not Path(it['path']).is_file():
+                # The file was successfully discovered/read earlier in this run.
+                # In-app removals are tracked explicitly; do not re-stat every
+                # processed path each time the live classifier refreshes.
+                if it['path'] in removed:
                     continue
                 tier, star = classify_sharpness(it['region_s'], it['q'],
                                                 blur_lo, sharp_hi, q_rescue, rescue_on)
@@ -2892,7 +2907,11 @@ def run_cull(folder, strictness, adaptive, rescue_on, recursive=True):
                 gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
                 region_s = region_sharpness(gray)
                 quality = quick_quality(bgr, gray)
-                cache_buffer.append((str(p), region_s, quality))
+                fp = fingerprints.get(str(p))
+                if fp is not None:
+                    cache_buffer.append((str(p), region_s, quality, fp[0], fp[1]))
+                else:
+                    cache_buffer.append((str(p), region_s, quality))
                 if len(cache_buffer) >= 64:
                     _save_cull_metrics_batch(cache_buffer)
                     cache_buffer.clear()
@@ -3009,7 +3028,8 @@ def _sync_dedup_with_cull():
     new_groups = []
     for group in dedup.get('groups_data', []):
         members = [m for m in group.get('members', [])
-                   if m.get('path') and Path(m.get('path')).is_file()]
+                   if m.get('path') and (m.get('lifecycle') or 'normal')
+                   not in ('permanently_deleted',)]
         if not members:
             continue
         group['members'] = members
@@ -3037,7 +3057,7 @@ def _sync_dedup_with_cull():
         source_singletons = dedup.get('singleton_paths') or []
     dedup['singleton_paths'] = [
         p for p in source_singletons
-        if p in allowed and Path(p).is_file()
+        if p in allowed
     ]
     dedup['kept_paths'] = list(dedup['singleton_paths']) + [
         p for g in new_groups for p in (g.get('selected_paths') or [])
@@ -3380,7 +3400,8 @@ def run_rank(folder, ftype='all', pair='both', recursive=True):
         total = len(paths)
         s['total'] = total
         analyzer = AdvancedPhotoAnalyzer()
-        rank_cache_map = _load_rank_scores_map(paths)
+        rank_fingerprints = _fingerprints(paths)
+        rank_cache_map = _load_rank_scores_map(paths, fingerprints=rank_fingerprints)
         rank_cache_buffer = []
 
         t0 = time.time()
@@ -3409,7 +3430,8 @@ def run_rank(folder, ftype='all', pair='both', recursive=True):
             else:
                 sc = analyzer.analyze_image(str(p))
                 if sc:
-                    rank_cache_buffer.append((str(p), sc))
+                    fp = rank_fingerprints.get(str(p))
+                    rank_cache_buffer.append((str(p), sc, fp[0], fp[1]) if fp else (str(p), sc))
                     if len(rank_cache_buffer) >= 32:
                         _save_rank_scores_batch(rank_cache_buffer)
                         rank_cache_buffer.clear()
