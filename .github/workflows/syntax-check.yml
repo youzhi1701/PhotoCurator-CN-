@@ -13,6 +13,9 @@ concurrency:
 
 jobs:
   syntax:
+    # Only consume a Linux runner for PRs, explicit releases, or manual checks.
+    # Ordinary direct pushes to main are runner-free.
+    if: "${{ github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request' || (github.event_name == 'push' && startsWith(github.event.head_commit.message, 'release: publish v')) }}"
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -659,8 +662,9 @@ jobs:
           PY
 
   windows-smoke:
-    # Only run the costly Windows smoke suite for PR validation, explicit releases, or manual checks.
-    if: "${{ github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request' || (github.event_name == 'push' && startsWith(github.event.head_commit.message, 'release: publish v')) }}"
+    # Only run the costly Windows smoke suite for PR validation or an explicit manual check.
+    # Release commits already run the packaged EXE self-test in build-release.yml.
+    if: "${{ github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request' }}"
     runs-on: windows-latest
     timeout-minutes: 60
     steps:
