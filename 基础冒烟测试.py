@@ -378,6 +378,58 @@ def main():
         # PhotoCurator uses its own recycle bin, not the Windows recycle bin.
         # All destructive operations are asynchronous and expose task state.
         photo_curator.state["folder"] = str(root)
+
+        # Fault injection: simulate a hard stop after the file rename but before
+        # the background task committed its metadata. The persisted destination
+        # in payload_json must make both move and restore operations recoverable.
+        interrupted_src = root / "中断恢复事务测试.jpg"
+        Image.new("RGB", (51, 37), "white").save(interrupted_src)
+        planned_trash = photo_curator._trash_destination(
+            interrupted_src, root
+        ).resolve()
+        photo_curator._media_state_set(
+            interrupted_src, interrupted_src, "pending_trash", "cull"
+        )
+        interrupted_src.rename(planned_trash)
+        recovered_move = photo_curator._background_move_to_trash({
+            "path": str(interrupted_src),
+            "folder": str(root),
+            "step": "cull",
+            "trash_path": str(planned_trash),
+            "previous_lifecycle": "normal",
+        })
+        assert_true(recovered_move.get("recovered") is True,
+                    f"中断后的回收站移动没有被任务恢复：{recovered_move}")
+        interrupted_trash_id = recovered_move.get("trash_id")
+        assert_true(interrupted_trash_id and planned_trash.is_file(),
+                    "中断恢复后回收站文件或记录缺失")
+
+        photo_curator._media_state_set(
+            interrupted_src, planned_trash, "pending_restore", "cull"
+        )
+        planned_trash.rename(interrupted_src)
+        recovered_restore = photo_curator._background_restore_trash({
+            "trash_id": interrupted_trash_id,
+            "original_path": str(interrupted_src),
+            "trash_path": str(planned_trash),
+            "restore_path": str(interrupted_src),
+            "source_step": "cull",
+        })
+        assert_true(recovered_restore.get("restored_path") == str(interrupted_src.resolve()),
+                    f"中断后的恢复操作没有完成生命周期提交：{recovered_restore}")
+        interrupted_state = photo_curator._media_state_get(interrupted_src)
+        assert_true(interrupted_src.is_file()
+                    and interrupted_state
+                    and interrupted_state.get("state") == "normal",
+                    f"中断恢复后的媒体状态错误：{interrupted_state}")
+        with sqlite3.connect(str(photo_curator.INDEX_DB)) as db:
+            stale_interrupted = db.execute(
+                "SELECT id FROM software_trash WHERE id=?",
+                (interrupted_trash_id,)
+            ).fetchone()
+        assert_true(stale_interrupted is None,
+                    "中断恢复完成后仍残留软件回收站记录")
+
         trash_src = root / "软件回收站复核测试.jpg"
         Image.new("RGB", (52, 38), "white").save(trash_src)
         photo_curator.state["cull"].update({
