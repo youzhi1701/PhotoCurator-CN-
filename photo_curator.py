@@ -4062,7 +4062,7 @@ document.addEventListener('keydown',e=>{
   else if(e.key==='p'||e.key==='P'){e.preventDefault();closeDeleteDialog('permanent');}
 });
 let folder=null, photos=[], lbList=[], lbIndex=0, currentStep='cull', folderStatus={};
-let sourceCatalog=[], selectedSource=null, catalogRootView=null;
+let sourceCatalog=[], discoveredDevices=[], selectedSource=null, catalogRootView=null;
 let latestStorageSummary=null, demoShortcutPath='', demoShortcutCount=0, demoShortcutReady=false;
 const cullLiveStore=new Map();
 const dedupLiveStore=new Map();
@@ -4906,11 +4906,7 @@ function formatSourceKind(kind){
 }
 function renderSources(){
   const box=document.getElementById('sourcesList');
-  if(!sourceCatalog.length){
-    box.innerHTML='<div class="source-empty">还没有已建立索引的数据源</div>';
-    return;
-  }
-  box.innerHTML=sourceCatalog.map(source=>{
+  const registered=(sourceCatalog||[]).map(source=>{
     const current=!!(selectedSource&&selectedSource.source_id===source.source_id);
     const open=source.connected||current;
     const state=source.connected?'已连接':'未连接 · 历史保留';
@@ -4928,6 +4924,12 @@ function renderSources(){
       +(source.capacity_bytes?' · '+formatBytes(source.capacity_bytes):'')+'</small></span></summary>'
       +'<div class="source-roots">'+(roots||'<div class="source-empty">暂无已索引目录</div>')+'</div></details>';
   }).join('');
+  const fresh=(discoveredDevices||[]).filter(d=>!d.known).map(d=>
+    '<button class="source-root-btn discovered-device" data-discovered-path="'+escHtml(d.mount_path||'')+'">'
+    +'<b>＋ '+escHtml(d.display_name||d.mount_path||'新存储设备')+'</b>'
+    +'<span>已连接 · 尚未加入图库</span></button>'
+  ).join('');
+  box.innerHTML=(registered||'<div class="source-empty">还没有已建立索引的数据源</div>')+fresh;
   box.querySelectorAll('.source-root-btn').forEach(btn=>{
     btn.onclick=e=>{
       e.preventDefault();e.stopPropagation();
@@ -4936,6 +4938,17 @@ function renderSources(){
         document.getElementById('folderInput').value=folder||'';
       }else{
         loadCatalogRoot(btn.dataset.rootId);
+      }
+    };
+  });
+  box.querySelectorAll('.discovered-device').forEach(btn=>{
+    btn.onclick=e=>{
+      e.preventDefault();e.stopPropagation();
+      const path=btn.dataset.discoveredPath||'';
+      if(path){
+        selectFolderValue(path);
+        document.getElementById('folderInput').value=path;
+        toast('已选择新设备，请确认扫描范围后开始分析','info');
       }
     };
   });
@@ -5084,6 +5097,7 @@ async function refreshEnvironment(){
   try{
     const d=await fetch('/api/environment-refresh').then(r=>r.json());
     if(Array.isArray(d.sources))sourceCatalog=d.sources;
+    if(Array.isArray(d.devices))discoveredDevices=d.devices;
     renderSources();updateSourceUi();
     const shortcuts=document.getElementById('shortcuts');
     if(shortcuts&&Array.isArray(d.sd)&&d.sd.length){
@@ -6525,13 +6539,20 @@ def api_environment_refresh():
     started = time.monotonic()
     try:
         sources = catalog_list_sources(INDEX_DB, refresh=True)
+        devices = catalog_discover_devices(INDEX_DB)
     except Exception:
         sources = []
+        devices = []
         logger.warning("data source connection refresh failed", exc_info=True)
     elapsed = time.monotonic() - started
     if elapsed > 1.0:
         logger.warning("slow environment refresh: %.3fs", elapsed)
-    return jsonify({'sources': sources, 'sd': [], 'elapsed_ms': int(elapsed * 1000)})
+    return jsonify({
+        'sources': sources,
+        'devices': devices,
+        'sd': [],
+        'elapsed_ms': int(elapsed * 1000),
+    })
 
 
 @app.route('/api/demo-status')
