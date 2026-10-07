@@ -2717,15 +2717,11 @@ def _shared_list_images(folder, recursive=True, max_age=2.0):
             finish_catalog_scan(
                 INDEX_DB, scan_session, full_scan=bool(recursive)
             )
-            try:
-                TASK_MANAGER.enqueue(
-                    'build_offline_previews',
-                    {'root_id': scan_session['root_id'], 'offset': 0},
-                    priority=90,
-                    idempotency_key=f"offline_previews:{scan_session['root_id']}:0",
-                )
-            except Exception:
-                logger.debug("offline preview queue skipped", exc_info=True)
+            # Offline previews are durable maintenance, not part of the scan's
+            # critical path. Defer them until foreground analysis is idle so
+            # Cull/Dedup never compete with preview decoding for the same disk.
+            state['scan']['catalog_root_id'] = scan_session['root_id']
+            state['scan']['preview_generation_pending'] = True
     except Exception as exc:
         if scan_session is not None:
             abort_catalog_scan(INDEX_DB, scan_session, str(exc))
@@ -2754,6 +2750,30 @@ def _shared_list_images(folder, recursive=True, max_age=2.0):
                 _SCAN_SNAPSHOTS.pop(old_key, None)
         _SCAN_SNAPSHOT_CV.notify_all()
     return ready_paths, scan_fingerprints
+
+
+def _queue_offline_previews_if_analysis_idle():
+    scan = state.get('scan') or {}
+    if not scan.get('preview_generation_pending'):
+        return False
+    if any(bool((state.get(k) or {}).get('running')) for k in ('cull', 'dedup', 'rank')):
+        return False
+    root_id = str(scan.get('catalog_root_id') or '')
+    if not root_id:
+        scan['preview_generation_pending'] = False
+        return False
+    try:
+        TASK_MANAGER.enqueue(
+            'build_offline_previews',
+            {'root_id': root_id, 'offset': 0},
+            priority=90,
+            idempotency_key=f"offline_previews:{root_id}:0",
+        )
+        scan['preview_generation_pending'] = False
+        return True
+    except Exception:
+        logger.debug("offline preview queue deferred", exc_info=True)
+        return False
 
 
 def current_scan_snapshot(folder=None):
@@ -2976,6 +2996,7 @@ def run_cull(folder, strictness, adaptive, rescue_on, recursive=True):
         s['status'] = f"发生错误：{e}"
     finally:
         s['running'] = False
+        _queue_offline_previews_if_analysis_idle()
 
 
 def _relocate_for_status(path, now_kept):
@@ -3304,6 +3325,7 @@ def run_dedup(folder, threshold, ftype='all', pair='both',
         s['status'] = f"发生错误：{e}"
     finally:
         s['running'] = False
+        _queue_offline_previews_if_analysis_idle()
 
 
 # --------------------------------------------------------------------------- #
@@ -3516,6 +3538,7 @@ def run_rank(folder, ftype='all', pair='both', recursive=True):
         s['status'] = f"发生错误：{e}"
     finally:
         s['running'] = False
+        _queue_offline_previews_if_analysis_idle()
         # A manual Cull change can land between the final pending-path check and
         # task completion. Once running=False, re-dispatch anything left so no
         # user-approved photo is silently missed by the final recommendation.
