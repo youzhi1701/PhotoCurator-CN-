@@ -4538,7 +4538,8 @@ function loadActivity(){
   }).catch(()=>{});
 }
 document.getElementById('activityRefresh').onclick=loadActivity;
-loadActivity();
+if('requestIdleCallback' in window)requestIdleCallback(loadActivity,{timeout:1500});
+else setTimeout(loadActivity,700);
 
 /* Gallery thumbnail zoom: Ctrl + wheel changes photo-card size, never page zoom. */
 let thumbSize=260,thumbTarget=260,thumbRaf=0,thumbPersistTimer=0;
@@ -5570,8 +5571,8 @@ async function refreshEnvironment(){
   }catch(_){}
 }
 loadShortcuts();
-setTimeout(refreshEnvironment,5000);
-setInterval(refreshEnvironment,60000);
+setTimeout(()=>{if(!document.hidden)refreshEnvironment();},5000);
+setInterval(()=>{if(!document.hidden)refreshEnvironment();},60000);
 document.getElementById('folderInput').onchange=e=>selectFolderValue(e.target.value);
 document.getElementById('folderInput').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();selectFolderValue(e.target.value);}};
 document.getElementById('browseBtn').onclick=async()=>{
@@ -5742,7 +5743,7 @@ document.getElementById('loadNewResults').onclick=applyLatestCoreSnapshot;
 async function pollCore(){
   if(corePollTimer){clearTimeout(corePollTimer);corePollTimer=null;}
   try{
-    const snap=await fetchRuntimeStatus(true);
+    const snap=await fetchRuntimeStatus(false);
     const analysis=snap.analysis||{};
     const rows=[analysis.cull||{},analysis.dedup||{}];
     coreSnapshots.cull=rows[0];coreSnapshots.dedup=rows[1];
@@ -5753,14 +5754,14 @@ async function pollCore(){
     coreRunning=any;
     setStartBtn(any);
     if(any){
-      corePollTimer=setTimeout(pollCore,900);
+      corePollTimer=setTimeout(pollCore,document.hidden?3500:900);
     }else{
       document.getElementById('progressText').textContent='后台分析已完成 · 点击“查看最新结果”统一载入';
       updateNewResultsButton();
     }
   }catch(err){
     document.getElementById('progressText').textContent='后台状态同步中断，将自动重试';
-    if(coreRunning)corePollTimer=setTimeout(pollCore,1400);
+    if(coreRunning)corePollTimer=setTimeout(pollCore,document.hidden?4000:1400);
   }
 }
 async function coreRun(){
@@ -5896,7 +5897,7 @@ function poll(step){
     .then(d=>{
       pollFailures=0;
       if(d.src_folder && folder && !sameFolder(d.src_folder,folder)){
-        setTimeout(()=>poll(step),800);
+        setTimeout(()=>poll(step),document.hidden?3500:800);
         return;
       }
       updateVisibleStepStatus(step,d);
@@ -5907,7 +5908,7 @@ function poll(step){
       }
 
       if(d.running){
-        setTimeout(()=>poll(step),800);
+        setTimeout(()=>poll(step),document.hidden?3500:800);
         return;
       }
 
@@ -5932,7 +5933,7 @@ function poll(step){
       pollFailures++;
       if(pollFailures<=5 && runningStep===step){
         document.getElementById('progressText').textContent='连接本地处理服务中…（'+pollFailures+'/5）';
-        setTimeout(()=>poll(step),800);
+        setTimeout(()=>poll(step),document.hidden?3500:800);
         return;
       }
       const msg='无法读取处理进度：'+(err&&err.message?err.message:'本地服务连接失败');
@@ -6824,7 +6825,11 @@ function loadExif(path,side){
   const token=path;side.dataset.exifToken=token;
   const source=exifCache.has(path)
     ?Promise.resolve(exifCache.get(path))
-    :fetch('/api/exif?path='+encodeURIComponent(path)).then(r=>r.json()).then(e=>{exifCache.set(path,e);return e;});
+    :fetch('/api/exif?path='+encodeURIComponent(path)).then(r=>r.json()).then(e=>{
+      exifCache.set(path,e);
+      if(exifCache.size>256)exifCache.delete(exifCache.keys().next().value);
+      return e;
+    });
   source.then(e=>{
     if(side.dataset.exifToken!==token)return; // user moved on
     let rows='',wantMap=null;
