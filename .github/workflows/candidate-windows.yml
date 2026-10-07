@@ -26,27 +26,63 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Stamp candidate version
+      - name: Stamp candidate version safely
         shell: powershell
         run: |
-          $v = $env:CANDIDATE_VERSION
+          @'
+          import os
+          import re
+          from pathlib import Path
 
-          foreach ($file in @("desktop_app.py", "photo_curator.py")) {
-            $text = Get-Content $file -Raw
-            $text = $text -replace 'APP_VERSION = "1\.5\.0"', ('APP_VERSION = "' + $v + '"')
-            Set-Content $file $text -Encoding utf8
-          }
+          version = os.environ["CANDIDATE_VERSION"].strip()
+          if not re.fullmatch(r"\d+\.\d+\.\d+", version):
+              raise SystemExit(f"invalid candidate version: {version!r}")
 
-          $vi = Get-Content "packaging\version_info.txt" -Raw
-          $parts = $v.Split(".")
-          $tuple = "($($parts[0]), $($parts[1]), $($parts[2]), 0)"
-          $vi = $vi -replace 'filevers=\(\d+,\s*\d+,\s*\d+,\s*\d+\)', ("filevers=" + $tuple)
-          $vi = $vi -replace 'prodvers=\(\d+,\s*\d+,\s*\d+,\s*\d+\)', ("prodvers=" + $tuple)
-          $vi = $vi -replace "StringStruct\('FileVersion', '[^']+'\)", ("StringStruct('FileVersion', '" + $v + "')")
-          $vi = $vi -replace "StringStruct\('ProductVersion', '[^']+'\)", ("StringStruct('ProductVersion', '" + $v + "')")
-          Set-Content "packaging\version_info.txt" $vi -Encoding utf8
+          for name in ("desktop_app.py", "photo_curator.py"):
+              path = Path(name)
+              text = path.read_text(encoding="utf-8")
+              text, count = re.subn(
+                  r'^APP_VERSION\s*=\s*"[^"]+"',
+                  f'APP_VERSION = "{version}"',
+                  text,
+                  count=1,
+                  flags=re.M,
+              )
+              if count != 1:
+                  raise SystemExit(f"APP_VERSION replacement failed: {name}")
+              path.write_text(text, encoding="utf-8", newline="\n")
 
-          Write-Host "Candidate version stamped: $v"
+          path = Path("packaging/version_info.txt")
+          text = path.read_text(encoding="utf-8")
+          major, minor, patch = map(int, version.split("."))
+          version_tuple = f"({major}, {minor}, {patch}, 0)"
+          text = re.sub(r'filevers=\(\d+,\s*\d+,\s*\d+,\s*\d+\)',
+                        "filevers=" + version_tuple, text, count=1)
+          text = re.sub(r'prodvers=\(\d+,\s*\d+,\s*\d+,\s*\d+\)',
+                        "prodvers=" + version_tuple, text, count=1)
+          text = re.sub(r"StringStruct\('FileVersion', '[^']+'\)",
+                        f"StringStruct('FileVersion', '{version}')", text, count=1)
+          text = re.sub(r"StringStruct\('ProductVersion', '[^']+'\)",
+                        f"StringStruct('ProductVersion', '{version}')", text, count=1)
+          path.write_text(text, encoding="utf-8", newline="\n")
+
+          # Candidate builds must never corrupt the Chinese UI while stamping.
+          for name in ("desktop_app.py", "photo_curator.py"):
+              text = Path(name).read_text(encoding="utf-8")
+              required = (
+                  ("照片筛选",) if name == "desktop_app.py"
+                  else ("模糊废片", "相似照片", "回收站", "开始分析")
+              )
+              missing = [item for item in required if item not in text]
+              if missing:
+                  raise SystemExit(f"UTF-8/UI text corrupted in {name}: {missing}")
+              mojibake = ("Ã", "Â", "ä¸", "æ¨", "ç‰", "å›")
+              bad = [token for token in mojibake if token in text]
+              if bad:
+                  raise SystemExit(f"mojibake detected in {name}: {bad}")
+
+          print("Candidate version stamped with explicit UTF-8:", version)
+          '@ | python -
 
       - name: Install build dependencies
         run: |
