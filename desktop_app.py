@@ -20,7 +20,7 @@ from runtime_paths import (
 )
 
 APP_TITLE = "PhotoCurator"
-APP_VERSION = "1.5.5"
+APP_VERSION = "1.5.6"
 HOST = "127.0.0.1"
 DEFAULT_PORT = 5014
 
@@ -304,7 +304,7 @@ def main():
         confirm_close=False,
         text_select=True,
         background_color="#eef7ff",
-        frameless=False,
+        frameless=True,
         easy_drag=False,
     )
     desktop_api.attach_window(window)
