@@ -2672,8 +2672,6 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   .btn.secondary:hover{filter:none;border-color:var(--accent)}
   /* Emphasised contextual call-to-action */
   .btn.cta{box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 30%,transparent)}
-  .btn.god{background:linear-gradient(90deg,#f59e0b,#d946ef);font-weight:700}
-  .btn.god.stopping{background:var(--bad)}
   .shortcut{display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--panel);cursor:pointer;font-size:13px;margin-top:4px;width:100%;text-align:left}
   .shortcut:hover{border-color:var(--accent)}
   .tag{font-size:9px;font-weight:700;padding:2px 5px;border-radius:4px;color:#fff}
@@ -3090,7 +3088,6 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
       <button class="btn cta" id="dedupApplyBtn" style="display:none!important" aria-hidden="true">旧版批量处理</button>
       <button class="btn" id="startBtn">▶ 开始分析</button>
       <button class="btn-ghost sidebar-collapse" id="sidebarCollapse" title="收起/展开侧栏">⇤ 收起侧栏</button>
-      <button class="btn god" id="godBtn" style="display:none" aria-hidden="true">内部全流程</button>
     </div>
   </div>
   <div class="main">
@@ -3262,7 +3259,6 @@ let lastRankSig='', lastStep=null, weightTimer=null, removedCount=0, pollFailure
 // Define them before the first setupFilterBar() call to avoid TDZ failures
 // that would stop Codespaces shortcut/sample initialization.
 const startBtn=document.getElementById('startBtn');
-let godMode=false, godAbort=false, godResolve=null;
 let cullReady=false;
 const CATS=[['aesthetic','综合观感'],['composition','构图'],['technical','技术质量'],['sharpness','清晰度'],['color','色彩']];
 const catColor=(i,n)=>`hsl(${Math.round(i*360/(n||CATS.length))},80%,62%)`;
@@ -3642,7 +3638,8 @@ function setupFilterBar(){
     bar.innerHTML=opts.map(([k,l])=>`<button class="chip${k===cullFilter?' active':''}" data-f="${k}">${l}</button>`).join('')
       +`<span class="chip-sep"></span>`
       +types.map(([k,l])=>`<button class="chip${k===cullType?' active':''}" data-t="${k}">${l}</button>`).join('')
-      +(blurry.length?`<span class="chip-sep"></span><span class="move-summary">待移动 <b id="cullMoveCount">${moveSelected}/${blurry.length}</b></span><button class="chip move-bulk" id="moveSelAll">全选</button><button class="chip move-bulk" id="moveSelNone">全不选</button>`:'');
+      +(blurry.length?`<span class="chip-sep"></span><span class="move-summary">待删除 <b id="cullMoveCount">${moveSelected}/${blurry.length}</b></span><button class="chip move-bulk" id="moveSelAll">全选</button><button class="chip move-bulk" id="moveSelNone">全不选</button>`:'')
+      +`<span class="chip-sep"></span><button class="chip" id="cullLoadMore" style="display:none"></button>`;
     bar.querySelectorAll('.chip[data-f]').forEach(c=>c.onclick=()=>{cullFilter=c.dataset.f;gPage=0;
       bar.querySelectorAll('.chip[data-f]').forEach(x=>x.classList.toggle('active',x.dataset.f===cullFilter));
       renderCullStep(photos);});
@@ -3652,7 +3649,8 @@ function setupFilterBar(){
     const ma=document.getElementById('moveSelAll'),mn=document.getElementById('moveSelNone');
     if(ma)ma.onclick=()=>setAllBlurryMoveSelection(true);
     if(mn)mn.onclick=()=>setAllBlurryMoveSelection(false);
-    updateCullMoveButton();
+    const more=document.getElementById('cullLoadMore');if(more)more.onclick=()=>loadCullPage(false);
+    updateCullMoveButton();updateCullLoadMore();
     return;
   }
   if(currentStep==='dedup'){
@@ -3737,7 +3735,7 @@ function loadShortcuts(){fetch('/api/shortcuts').then(r=>r.json()).then(d=>{
     fi.placeholder='输入 Codespaces 中的云端文件夹路径';
     h+=`<div style="background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:9px 10px;font-size:11px;line-height:1.55;margin-bottom:7px">☁️ <b>Codespaces 在线预览</b><br>当前只能访问云端工作区文件，不能直接读取你电脑的 C:/F: 等本地硬盘。</div>`;
   }else{
-    bb.disabled=isRunning||godMode;bb.textContent='选择文件夹…';
+    bb.disabled=isRunning;bb.textContent='选择文件夹…';
     fi.placeholder='请选择或粘贴照片文件夹路径';
   }
 
@@ -3768,11 +3766,11 @@ function loadShortcuts(){fetch('/api/shortcuts').then(r=>r.json()).then(d=>{
     +`请重新运行依赖安装后再试。</div>`+h;
   if(!(d.sd||[]).length&&!codespacesMode)h+=`<div style="font-size:11px;color:var(--muted);margin-top:6px">未检测到相机存储卡；插入后会自动出现在这里，也可以直接选择文件夹。</div>`;
   document.getElementById('shortcuts').innerHTML=h;
-  document.querySelectorAll('.shortcut').forEach(b=>{b.disabled=isRunning||godMode;b.onclick=()=>{if(isRunning||godMode)return;selectFolderValue(b.dataset.p);fi.value=folder||'';};});
+  document.querySelectorAll('.shortcut').forEach(b=>{b.disabled=isRunning;b.onclick=()=>{if(isRunning)return;selectFolderValue(b.dataset.p);fi.value=folder||'';};});
 }).catch(()=>{});
 }
 loadShortcuts();
-setInterval(()=>{if(!document.hidden&&!isRunning&&!godMode)loadShortcuts();},30000);  // pick up a card inserted later
+setInterval(()=>{if(!document.hidden&&!isRunning)loadShortcuts();},30000);  // pick up a card inserted later
 document.getElementById('folderInput').onchange=e=>selectFolderValue(e.target.value);
 document.getElementById('folderInput').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();selectFolderValue(e.target.value);}};
 document.getElementById('browseBtn').onclick=async()=>{
@@ -3808,9 +3806,9 @@ document.getElementById('browseBtn').onclick=async()=>{
 /* start / stop (the same button toggles) */
 function setStartBtn(running){
   isRunning=running;
-  const busy=running||godMode;
+  const busy=running;
   document.body.classList.toggle('processing',busy);
-  startBtn.textContent=godMode?(running?'■ 停止分析':'分析处理中…'):(running?'■ 停止当前分析':'▶ 开始分析');
+  startBtn.textContent=running?'■ 停止当前分析':'▶ 开始分析';
   startBtn.classList.toggle('stopping',running);
   const fi=document.getElementById('folderInput');
   const bb=document.getElementById('browseBtn');
@@ -3874,10 +3872,6 @@ async function startStep(step,config=null){
     setStartBtn(false);
     runningStep=null;
     toast('启动失败：'+msg,'bad');
-    if(godMode){
-      godAbort=true;
-      if(godResolve){const r=godResolve;godResolve=null;r({failed:true,status:msg});}
-    }
     return false;
   }
 }
@@ -3980,7 +3974,7 @@ async function coreRun(){
     toast('启动失败：'+(err.message||'未知错误'),'bad');
   }
 }
-function stateBusyFromUi(){return !!(runningStep||godMode);}
+function stateBusyFromUi(){return !!runningStep;}
 async function stopCore(){
   if(!coreRunning)return;
   startBtn.disabled=true;startBtn.textContent='正在停止后台分析…';
@@ -3988,49 +3982,12 @@ async function stopCore(){
   startBtn.disabled=false;
   corePollTimer=setTimeout(pollCore,250);
 }
-/* ---- Unified analysis: Cull → Dedup → Rank as one workspace task ---- */
-const godBtn=document.getElementById('godBtn');
-function setGodBtn(on){godBtn.textContent=on?'■ 停止分析':'▶ 开始分析';startBtn.textContent=on?'■ 停止分析':'▶ 开始分析';startBtn.classList.toggle('stopping',on);}
-async function godRun(){
-  if(!folder){toast('请先选择照片文件夹','bad');return;}
-  if(isRunning){toast('请先停止当前正在执行的任务。','bad');return;}
-  godMode=true;godAbort=false;setGodBtn(true);startBtn.disabled=false;
-  const pipelineConfig=snapshotPipelineConfig();
-  try{
-    let first=true,completedAll=true;
-    for(const step of ['cull','dedup','rank']){
-      if(godAbort)break;
-      if(first){activateStep('cull');first=false;}
-      const result=await new Promise(res=>{ godResolve=res; startStep(step,pipelineConfig); });
-      const status=String((result||{}).status||'');
-      if(!result || result.failed || status.includes('发生错误') || status.includes('启动失败')){
-        godAbort=true;
-        toast('分析未能继续，请查看当前任务提示。','bad');
-        break;
-      }
-      if(status.includes('已停止')){
-        godAbort=true;
-        break;
-      }
-      if(step==='cull'){
-        const st=(result&&result.stats)||{};
-        const survivors=Number(st.sharp||0)+Number(st.soft||0);
-        if(survivors<=0){
-          completedAll=false;
-          toast(Number(st.images||0)>0
-            ?'清晰度复核后没有需要继续处理的照片，已跳过相似分析和精选评分。'
-            :'所选范围没有可分析的照片，请检查文件夹或格式支持。','info');
-          break;
-        }
-      }
-    }
-    if(!godAbort&&completedAll)toast('✨ 分析完成：清晰度、相似组和精选结果均已生成','good');
-  } finally {
-    godMode=false;setGodBtn(false);setStartBtn(false);startBtn.disabled=false;
-  }
-}
-godBtn.onclick=()=>{};
-startBtn.onclick=()=>{if(coreRunning){stopCore();}else coreRun();};
+startBtn.onclick=()=>{
+  if(coreRunning){stopCore();return;}
+  if(isRunning){doStop();return;}
+  if(currentStep==='rank'){doStart();return;}
+  coreRun();
+};
 function cullRowsForPayload(d){
   const rows=d.photos||[];
   if(!d.running)cullLiveStore.clear();
@@ -4038,35 +3995,35 @@ function cullRowsForPayload(d){
   return Array.from(cullLiveStore.values());
 }
 
-let cullChunkToken=0;
-async function loadRemainingCull(total,offset){
+let cullChunkToken=0,cullVisibleTotal=0;
+async function loadCullPage(reset=false){
+  if(currentStep!=='cull')return;
   const token=++cullChunkToken;
-  const merged=new Map((photos||[]).map(p=>[p.path,p]));
-  let pos=offset||merged.size;
-  while(currentStep==='cull' && token===cullChunkToken && pos<total){
-    try{
-      const d=await fetch('/api/results/cull?offset='+pos+'&limit=5000').then(r=>{
-        if(!r.ok)throw new Error('HTTP '+r.status);return r.json();
-      });
-      const rows=d.photos||[];
-      if(!rows.length)break;
-      rows.forEach(p=>merged.set(p.path,p));
-      pos=d.next_offset||pos+rows.length;
-      const combined=Array.from(merged.values());
-      cullLiveStore.clear();combined.forEach(p=>cullLiveStore.set(p.path,p));
-      renderCullStep(combined);
-      document.getElementById('progressText').textContent='结果载入 '+combined.length+' / '+total+' · 可继续浏览和复核';
-      await new Promise(res=>setTimeout(res,0));
-    }catch(err){
-      toast('继续载入结果失败，可切换视图后重试：'+(err.message||'未知错误'),'bad');
-      break;
-    }
-  }
+  const offset=reset?0:cullLiveStore.size;
+  try{
+    const d=await fetch('/api/results/cull?offset='+offset+'&limit=200')
+      .then(async r=>{const x=await r.json();if(!r.ok)throw new Error(x.error||('HTTP '+r.status));return x;});
+    if(token!==cullChunkToken||currentStep!=='cull')return;
+    if(reset)cullLiveStore.clear();
+    (d.photos||[]).forEach(p=>{if(p&&p.path)cullLiveStore.set(p.path,p);});
+    cullVisibleTotal=Number(d.total||0);
+    photos=Array.from(cullLiveStore.values());
+    renderCullStep(photos);
+    setupFilterBar();
+    updateCullLoadMore();
+  }catch(err){toast('载入清晰度结果失败：'+(err.message||'未知错误'),'bad');}
 }
+function updateCullLoadMore(){
+  const btn=document.getElementById('cullLoadMore');
+  if(!btn)return;
+  const left=Math.max(0,cullVisibleTotal-cullLiveStore.size);
+  btn.style.display=left?'inline-flex':'none';
+  btn.textContent=left?'加载更多（剩余 '+left+'）':'';
+}
+async function loadRemainingCull(total,offset){return loadCullPage(false);}
 function maybeLoadAllCull(d){
-  if(currentStep!=='cull'||d.running)return;
-  const have=(d.photos||[]).length,total=Number(d.result_total||have);
-  if(total>have)loadRemainingCull(total,have);
+  cullVisibleTotal=Number(d.result_total||cullVisibleTotal||0);
+  updateCullLoadMore();
 }
 function dedupRowsForPayload(d){
   const rows=d.photos||[];
@@ -4142,11 +4099,7 @@ function poll(step){
         updateCullMoveButton();
       }
       if(step==='dedup'){
-        const dg=Number((d.stats||{}).duplicate_groups||0);
-        const ab=document.getElementById('dedupApplyBtn');
-        ab.style.display=(!godMode&&dg>0)?'block':'none';
       }
-      if(godResolve){const r=godResolve;godResolve=null;r(d);}
     })
     .catch(err=>{
       pollFailures++;
@@ -4159,10 +4112,6 @@ function poll(step){
       toast(msg,'bad');
       if(step===currentStep)document.getElementById('progressText').textContent=msg;
       setStartBtn(false);runningStep=null;
-      if(godMode){
-        godAbort=true;
-        if(godResolve){const r=godResolve;godResolve=null;r({failed:true,status:msg});}
-      }
     });
 }
 
@@ -4699,19 +4648,19 @@ function updateCullMoveButton(){
   const mb=document.getElementById('moveBlurryBtn');if(!mb)return;
   const n=cullMoveCounts();
   const count=document.getElementById('cullMoveCount');if(count)count.textContent=n.selected+'/'+n.total;
-  if(currentStep!=='cull'||!cullReady||!n.total||godMode){
+  if(currentStep!=='cull'||!cullReady||!n.total){
     mb.style.display='none';mb.disabled=false;mb.classList.remove('cta','btn');mb.classList.add('btn-ghost');
     startBtn.classList.remove('secondary');return;
   }
   mb.style.display='block';
   if(n.selected>0){
     mb.disabled=false;
-    mb.textContent='🗂️ 移动 '+n.selected+' 张 → Blurred（模糊照片）';
+    mb.textContent='🗑 '+n.selected+' 张移入软件回收站';
     mb.classList.remove('btn-ghost');mb.classList.add('btn','cta');
     startBtn.classList.add('secondary');
   }else{
     mb.disabled=true;
-    mb.textContent='🗂️ 未选择需要移动的模糊照片';
+    mb.textContent='未选择需要删除的模糊照片';
     mb.classList.remove('btn','cta');mb.classList.add('btn-ghost');
     startBtn.classList.remove('secondary');
   }
