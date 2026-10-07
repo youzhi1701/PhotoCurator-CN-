@@ -112,7 +112,19 @@ class BackgroundTaskManager:
                 kind, payload_json, _ = row
                 handler = self.handlers.get(kind)
                 if handler is None:
-                    raise RuntimeError(f"未注册后台任务处理器：{kind}")
+                    # During application startup queued tasks may be recovered
+                    # before photo_curator has registered filesystem handlers.
+                    # Put the task back instead of converting a healthy queued
+                    # operation into a false failure.
+                    with self._connect() as db:
+                        db.execute("UPDATE background_task SET state='queued',updated_at=? WHERE id=?",
+                                   (time.time(), task_id))
+                        db.commit()
+                    with self._cv:
+                        self._seq += 1
+                        heapq.heappush(self._heap, (20, self._seq, task_id))
+                    time.sleep(0.2)
+                    continue
                 result = handler(json.loads(payload_json or "{}"))
                 with self._connect() as db:
                     db.execute("UPDATE background_task SET state='done',updated_at=?,error=NULL,result_json=? WHERE id=?",
