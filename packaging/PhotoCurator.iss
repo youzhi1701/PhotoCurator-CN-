@@ -1,6 +1,6 @@
 #define MyAppName "PhotoCurator"
 #ifndef MyAppVersion
-  #define MyAppVersion "1.5.0"
+  #define MyAppVersion "1.5.4"
 #endif
 #define MyAppPublisher "PhotoCurator-CN"
 #define MyAppExeName "PhotoCurator.exe"
@@ -31,9 +31,8 @@ Uninstallable=yes
 ShowLanguageDialog=no
 VersionInfoVersion={#MyAppVersion}.0
 SetupIconFile=PhotoCurator.ico
-; PhotoCurator normally hides to the tray when its window closes. Do not let
-; Inno's AppMutex pre-check block upgrades with a manual "please close it"
-; dialog; PrepareToInstall below terminates the old instance automatically.
+; Upgrades terminate a running PhotoCurator instance automatically so mapped
+; program files can be replaced without asking the user to close it manually.
 CloseApplications=no
 RestartApplications=no
 
@@ -91,9 +90,8 @@ begin
   begin
     Log('PhotoCurator is running; closing the old instance automatically before upgrade.');
 
-    { The desktop app intentionally turns a normal close into "hide to tray",
-      so a regular WM_CLOSE is insufficient. taskkill is scoped to the product
-      executable and /T also closes a transient child picker if one exists. }
+    { taskkill is scoped to the product executable and /T also closes a
+      transient child picker if one exists. }
     if not Exec(
       ExpandConstant('{sys}\taskkill.exe'),
       '/F /T /IM "{#MyAppExeName}"',
