@@ -3,7 +3,7 @@ name: Build Windows Release
 on:
   push:
     branches: ["main"]
-    tags: ["v1.5.0"]
+    tags: ["v*"]
   workflow_dispatch:
 
 permissions:
@@ -22,6 +22,26 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+
+      - name: Resolve release metadata
+        id: release_meta
+        shell: powershell
+        run: |
+          $manifest = Get-Content "packaging\release_manifest.json" -Raw | ConvertFrom-Json
+          $version = [string]$manifest.version
+          if ([string]::IsNullOrWhiteSpace($version)) { throw "Release manifest version is empty" }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "installer=PhotoCurator-Setup-v$version.exe" >> $env:GITHUB_OUTPUT
+          Write-Host "Resolved PhotoCurator version: $version"
+
+      - name: Verify release tag matches source version
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: powershell
+        run: |
+          $expected = "v${{ steps.release_meta.outputs.version }}"
+          if ("${{ github.ref_name }}" -ne $expected) {
+            throw "Tag ${{ github.ref_name }} does not match source version $expected"
+          }
 
       - name: Install dependencies
         run: |
@@ -56,7 +76,8 @@ jobs:
           if (!(Test-Path "dist\PhotoCurator\PhotoCurator.exe")) { throw "PhotoCurator.exe not built" }
           $v=(Get-Item "dist\PhotoCurator\PhotoCurator.exe").VersionInfo.ProductVersion
           Write-Host "Packaged EXE version: $v"
-          if ($v -notlike "1.5.0*") { throw "Wrong EXE version: $v" }
+          $expected = "${{ steps.release_meta.outputs.version }}"
+          if ($v -notlike "$expected*") { throw "Wrong EXE version: $v (expected $expected)" }
 
       - name: Smoke test packaged executable
         shell: powershell
@@ -80,32 +101,33 @@ jobs:
           New-Item -ItemType Directory -Force release | Out-Null
           $pf86 = [Environment]::GetFolderPath('ProgramFilesX86')
           $iscc = Join-Path $pf86 "Inno Setup 6\ISCC.exe"
-          & $iscc "packaging\PhotoCurator.iss"
-          if (!(Test-Path "release\PhotoCurator-Setup-v1.5.0.exe")) { throw "Installer not built" }
+          & $iscc "/DMyAppVersion=${{ steps.release_meta.outputs.version }}" "packaging\PhotoCurator.iss"
+          $installer = "release\${{ steps.release_meta.outputs.installer }}"
+          if (!(Test-Path $installer)) { throw "Installer not built: $installer" }
 
       - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
-          name: PhotoCurator-Setup-v1.5.0
-          path: release/PhotoCurator-Setup-v1.5.0.exe
+          name: PhotoCurator-Setup-v${{ steps.release_meta.outputs.version }}
+          path: release/${{ steps.release_meta.outputs.installer }}
           if-no-files-found: error
 
-      - name: Publish GitHub Release v1.5.0
-        if: github.ref == 'refs/tags/v1.5.0'
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.5.0
-          name: PhotoCurator 中文桌面版 v1.5.0
+          tag_name: ${{ github.ref_name }}
+          name: PhotoCurator 中文桌面版 v${{ steps.release_meta.outputs.version }}
           target_commitish: ${{ github.sha }}
           make_latest: true
           prerelease: false
           draft: false
-          files: release/PhotoCurator-Setup-v1.5.0.exe
+          files: release/${{ steps.release_meta.outputs.installer }}
           body: |
-            ## PhotoCurator 中文桌面版 v1.5.0
+            ## PhotoCurator 中文桌面版 v${{ steps.release_meta.outputs.version }}
 
             正式封装发布版本。推荐普通 Windows 用户直接下载安装包：
-            **PhotoCurator-Setup-v1.5.0.exe**
+            **${{ steps.release_meta.outputs.installer }}**
 
             ### 本版重点
             - 主流程收敛为：模糊废片、相似照片、软件回收站
@@ -125,5 +147,5 @@ jobs:
             只有在“回收站复核”中再次确认永久删除后，文件才会真正从磁盘移除。
 
             ### 安装
-            下载并运行 `PhotoCurator-Setup-v1.5.0.exe` 即可。
+            下载并运行 `${{ steps.release_meta.outputs.installer }}` 即可。
             已安装旧版可直接覆盖安装。
