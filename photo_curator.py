@@ -5035,6 +5035,8 @@ async function coreRun(){
   const cfg=snapshotPipelineConfig();
   const coreSteps=['cull','dedup'];
   coreRunning=true;setStartBtn(true);
+  showPhotoView();
+  document.getElementById('gallery').innerHTML='<div class="empty"><div class="icon">◌</div><div class="title">正在分析照片</div><p>模糊筛选与相似照片分析正在后台并行启动，结果会持续进入当前工作区。</p></div>';
   document.getElementById('progressWrap').style.display='block';
   document.getElementById('progressText').textContent='正在启动模糊分析与相似分析…';
   try{
@@ -5065,6 +5067,7 @@ async function coreRun(){
     coreRunning=false;setStartBtn(false);
     document.getElementById('progressText').textContent='核心分析未完整启动，已回滚已启动任务';
     toast('启动失败：'+(err.message||'未知错误'),'bad');
+    if(!photos.length)renderWorkspaceLanding();
   }
 }
 function stateBusyFromUi(){return !!runningStep;}
