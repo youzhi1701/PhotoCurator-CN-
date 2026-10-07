@@ -3681,6 +3681,7 @@ document.addEventListener('keydown',e=>{
   else if(e.key==='p'||e.key==='P'){e.preventDefault();closeDeleteDialog('permanent');}
 });
 let folder=null, photos=[], lbList=[], lbIndex=0, currentStep='cull', folderStatus={};
+let sourceCatalog=[], selectedSource=null;
 const cullLiveStore=new Map();
 const dedupLiveStore=new Map();
 let isRunning=false, runningStep=null, codespacesMode=false;
@@ -3831,12 +3832,31 @@ function loadActivity(){
 }
 document.getElementById('toolLog').addEventListener('toggle',e=>{if(e.currentTarget.open)loadActivity();});
 
-/* Gallery thumbnail zoom: Ctrl + mouse wheel changes thumbnail density only. */
-let thumbSize=190;
-try{const saved=parseInt(localStorage.getItem('pc-thumb-size')||'190',10);if(Number.isFinite(saved))thumbSize=Math.min(340,Math.max(120,saved));}catch(_){}
-function applyThumbSize(v){thumbSize=Math.min(340,Math.max(120,Math.round(v/10)*10));document.documentElement.style.setProperty('--thumb-size',thumbSize+'px');try{localStorage.setItem('pc-thumb-size',String(thumbSize));}catch(_){}}
+/* Gallery thumbnail zoom: Ctrl + wheel changes photo-card size, never page zoom. */
+let thumbSize=180;
+try{
+  const saved=parseInt(localStorage.getItem('pc-thumb-size')||'180',10);
+  if(Number.isFinite(saved))thumbSize=Math.min(320,Math.max(110,saved));
+}catch(_){}
+function applyThumbSize(v){
+  thumbSize=Math.min(320,Math.max(110,Math.round(v/10)*10));
+  document.documentElement.style.setProperty('--thumb-size',thumbSize+'px');
+  const range=document.getElementById('thumbSizeRange');
+  const label=document.getElementById('thumbSizeValue');
+  if(range)range.value=String(thumbSize);
+  if(label)label.textContent=String(thumbSize);
+  try{localStorage.setItem('pc-thumb-size',String(thumbSize));}catch(_){}
+}
 applyThumbSize(thumbSize);
-document.querySelector('.main').addEventListener('wheel',e=>{if(!e.ctrlKey||document.getElementById('lightbox').classList.contains('open'))return;e.preventDefault();applyThumbSize(thumbSize+(e.deltaY<0?20:-20));},{passive:false});
+document.getElementById('thumbSizeRange').oninput=e=>applyThumbSize(Number(e.target.value));
+document.getElementById('thumbSmaller').onclick=()=>applyThumbSize(thumbSize-20);
+document.getElementById('thumbLarger').onclick=()=>applyThumbSize(thumbSize+20);
+document.querySelector('.main').addEventListener('wheel',e=>{
+  if(!e.ctrlKey||document.getElementById('lightbox').classList.contains('open'))return;
+  e.preventDefault();
+  applyThumbSize(thumbSize+(e.deltaY<0?20:-20));
+},{passive:false});
+
 function nativeWindow(action){if(window.pywebview&&window.pywebview.api&&window.pywebview.api.window_action){window.pywebview.api.window_action(action).catch(()=>{});}}
 document.getElementById('winMin').onclick=()=>nativeWindow('minimize');
 document.getElementById('winMax').onclick=()=>nativeWindow('toggle_maximize');
@@ -3862,10 +3882,19 @@ function setSidebarCollapsed(on){
 }
 try{setSidebarCollapsed(localStorage.getItem('pc-sidebar-collapsed')==='1');}catch(_){}
 sidebarCollapse.onclick=()=>setSidebarCollapsed(!document.body.classList.contains('sidebar-collapsed'));
+function setInspectorCollapsed(on){
+  document.body.classList.toggle('inspector-collapsed',!!on);
+  try{localStorage.setItem('pc-inspector-collapsed',on?'1':'0');}catch(_){}
+}
+try{setInspectorCollapsed(localStorage.getItem('pc-inspector-collapsed')==='1');}catch(_){}
 document.getElementById('settingsQuick').onclick=()=>{
-  if(document.body.classList.contains('sidebar-collapsed'))setSidebarCollapsed(false);
-  const d=document.getElementById('settingsDetails');d.open=true;d.scrollIntoView({behavior:'smooth',block:'nearest'});
+  const next=!document.body.classList.contains('inspector-collapsed');
+  setInspectorCollapsed(next);
+  if(!next){
+    const d=document.getElementById('settingsDetails');d.open=true;
+  }
 };
+document.getElementById('inspectorClose').onclick=()=>setInspectorCollapsed(true);
 const toolboxPanel=document.getElementById('toolboxPanel');
 document.getElementById('toolboxOpen').onclick=()=>toolboxPanel.classList.add('open');
 document.getElementById('toolboxClose').onclick=()=>toolboxPanel.classList.remove('open');
@@ -4212,6 +4241,7 @@ function resetWorkspaceForFolder(){
   ['sImages','sSharp','sSoft','sBlurry','sGroups','sShowing','sTrash'].forEach(id=>{
     const el=document.getElementById(id);if(el)el.textContent='0';
   });
+  document.getElementById('statusShowing').textContent='0';
   document.getElementById('progressWrap').style.display='none';
   document.getElementById('filterBar').style.display='none';
   document.getElementById('resultTools').style.display='none';
@@ -4232,65 +4262,151 @@ function updateStartAvailability(){
   startBtn.setAttribute('aria-disabled',ready?'false':'true');
   startBtn.title=ready?'开始分析当前照片文件夹':'请先选择照片文件夹';
 }
+function sourceForPath(value){
+  const wanted=normalizedFolder(value);
+  for(const source of sourceCatalog||[]){
+    for(const root of source.roots||[]){
+      if(sameFolder(root.current_root,wanted)||sameFolder(root.original_root,wanted)){
+        return {...source,root};
+      }
+    }
+  }
+  return null;
+}
+function updateSourceUi(){
+  selectedSource=folder?sourceForPath(folder):null;
+  const name=document.getElementById('topSourceName');
+  const path=document.getElementById('topSourcePath');
+  const topDot=document.getElementById('topSourceDot');
+  const statusDot=document.getElementById('statusSourceDot');
+  const statusText=document.getElementById('statusSourceText');
+  const connected=!!(selectedSource&&selectedSource.connected);
+  if(folder){
+    name.textContent=selectedSource?selectedSource.display_name:'当前照片来源';
+    path.textContent=folder;
+    statusText.textContent=(selectedSource?(selectedSource.display_name+' · '):'')+(connected?'已连接':'路径已选择');
+  }else{
+    name.textContent='未选择数据源';
+    path.textContent='添加硬盘、U盘或照片文件夹后开始';
+    statusText.textContent='数据源未连接';
+  }
+  [topDot,statusDot].forEach(dot=>{
+    dot.classList.toggle('online',connected);
+    dot.classList.toggle('offline',!connected);
+  });
+}
 function selectFolderValue(value){
   const next=String(value||'').trim();
-  if(next===folder){updateStartAvailability();return;}
+  if(next===folder){updateStartAvailability();updateSourceUi();return;}
   folder=next||null;
   resetWorkspaceForFolder();
   updateStartAvailability();
+  updateSourceUi();
 }
 
 /* shortcuts */
 function sdLabel(p){const parts=p.split(/[\\/]/).filter(Boolean);
   const tail=parts.slice(-2).join('/');
   const m=/^([A-Za-z]:)/.exec(p);return m?m[1]+' '+tail:tail;}
-function loadShortcuts(){fetch('/api/shortcuts').then(r=>r.json()).then(d=>{
-  let h='';
-  codespacesMode=!!d.codespaces;
-  const fi=document.getElementById('folderInput');
-  const bb=document.getElementById('browseBtn');
-
-  if(codespacesMode){
-    bb.disabled=true;bb.textContent='云端路径模式';
-    fi.placeholder='输入 Codespaces 中的云端文件夹路径';
-    h+=`<div style="background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:9px 10px;font-size:11px;line-height:1.55;margin-bottom:7px">☁️ <b>Codespaces 在线预览</b><br>当前只能访问云端工作区文件，不能直接读取你电脑的 C:/F: 等本地硬盘。</div>`;
-  }else{
-    bb.disabled=isRunning;bb.textContent='选择文件夹…';
-    fi.placeholder='请选择或粘贴照片文件夹路径';
+function formatBytes(n){
+  n=Math.max(0,Number(n)||0);
+  const units=['B','KB','MB','GB','TB'];let i=0;
+  while(n>=1024&&i<units.length-1){n/=1024;i++;}
+  return (i<2?n.toFixed(0):n.toFixed(1))+' '+units[i];
+}
+function formatSourceKind(kind){
+  return ({removable:'U盘 / 移动设备',fixed:'磁盘',network:'网络存储',volume:'存储设备'})[kind]||'存储设备';
+}
+function renderSources(){
+  const box=document.getElementById('sourcesList');
+  if(!sourceCatalog.length){
+    box.innerHTML='<div class="source-empty">还没有已建立索引的数据源</div>';
+    return;
   }
+  box.innerHTML=sourceCatalog.map(source=>{
+    const state=source.connected?'已连接':'未连接 · 历史数据保留';
+    const roots=(source.roots||[]).map(root=>{
+      const current=root.current_root||root.original_root||'';
+      const title=(root.display_name||current||'照片库')+' · '+Number(root.photo_count||0)+' 张';
+      return '<button class="source-root-btn" data-source-root="'+escHtml(current)+'"'
+        +(source.connected?'':' disabled')
+        +' title="'+escHtml(current)+'">'+escHtml(title)+'</button>';
+    }).join('');
+    return '<div class="source-card '+(source.connected?'connected':'offline')+'">'
+      +'<span class="source-dot '+(source.connected?'online':'offline')+'"></span>'
+      +'<div><b>'+escHtml(source.display_name)+'</b>'
+      +'<small>'+escHtml(formatSourceKind(source.kind))+' · '+escHtml(state)
+      +(source.capacity_bytes?' · '+formatBytes(source.capacity_bytes):'')+'</small>'
+      +roots+'</div></div>';
+  }).join('');
+  box.querySelectorAll('.source-root-btn:not([disabled])').forEach(btn=>{
+    btn.onclick=()=>{
+      selectFolderValue(btn.dataset.sourceRoot);
+      document.getElementById('folderInput').value=folder||'';
+    };
+  });
+}
+function loadStorageSummary(){
+  fetch('/api/storage-summary').then(r=>r.json()).then(d=>{
+    if(d.error)return;
+    document.getElementById('dbUsage').textContent=formatBytes(d.database_bytes);
+    document.getElementById('previewUsage').textContent=formatBytes(d.preview_cache_bytes);
+    document.getElementById('featureUsage').textContent=formatBytes(d.dedup_feature_bytes);
+    document.getElementById('logUsage').textContent=formatBytes(d.log_bytes);
+    document.getElementById('dataRootText').textContent='数据目录：'+(d.data_root||'—');
+  }).catch(()=>{});
+}
+function loadShortcuts(){
+  fetch('/api/shortcuts').then(r=>r.json()).then(d=>{
+    let h='';
+    codespacesMode=!!d.codespaces;
+    sourceCatalog=Array.isArray(d.sources)?d.sources:[];
+    renderSources();
+    updateSourceUi();
+    const fi=document.getElementById('folderInput');
+    const bb=document.getElementById('browseBtn');
 
-  if(d.demo_folder){
-    const p=d.demo_folder;
-    const n=d.demo_count||12, br=d.demo_breakdown||{};
-    h+=`<button class="shortcut" data-p="${escHtml(p)}" style="border-color:var(--accent);background:color-mix(in srgb,var(--accent) 7%,var(--panel));align-items:flex-start">
-      <span class="tag recent" style="margin-top:1px">内置测试</span>
-      <span style="display:flex;flex-direction:column;gap:2px;min-width:0">
-        <b style="font-size:12px;color:var(--text)">内置测试数据 · ${n} 张</b>
-        <span style="font-size:10px;color:var(--muted)">清晰 ${br.sharp||4} · 轻微软 ${br.soft||4} · 模糊 ${br.blurry||4} · 程序内永久保留</span>
-      </span>
-    </button>`;
-    if(codespacesMode&&!folder){selectFolderValue(p);fi.value=p;}
-  }
+    if(codespacesMode){
+      bb.disabled=true;bb.textContent='云端路径';
+      fi.placeholder='输入 Codespaces 中的云端文件夹路径';
+    }else{
+      bb.disabled=isRunning||coreRunning;bb.textContent='＋ 添加';
+      fi.placeholder='选择或粘贴照片文件夹路径';
+    }
 
-  (d.sd||[]).forEach(o=>{const p=(typeof o==='string')?o:o.path;
-    const br=(o&&o.brand)?(' · '+o.brand):'';
-    h+=`<button class="shortcut" data-p="${escHtml(p)}"><span class="tag sd">SD${escHtml(br)}</span>${escHtml(sdLabel(p))}</button>`;});
-  (d.recent||[]).slice(0,4).forEach(p=>h+=`<button class="shortcut" data-p="${escHtml(p)}"><span class="tag recent">最近</span>${escHtml(sdLabel(p))}</button>`);
-  if(d.rawpy===false)h=`<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:8px;`
-    +`padding:8px 10px;font-size:11px;line-height:1.5;margin-bottom:6px">⚠️ <b>RAW 支持未启用</b> — `
-    +`未安装 rawpy，CR2/NEF/ARW/DNG 等 RAW 文件会被跳过。<br>`
-    +`请重新运行依赖安装后再试。</div>`+h;
-  if(d.heif===false)h=`<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:8px;`
-    +`padding:8px 10px;font-size:11px;line-height:1.5;margin-bottom:6px">⚠️ <b>HEIC 支持未启用</b> — `
-    +`未安装 pillow-heif，iPhone 的 HEIC/HEIF 文件会被跳过。<br>`
-    +`请重新运行依赖安装后再试。</div>`+h;
-  if(!(d.sd||[]).length&&!codespacesMode)h+=`<div style="font-size:11px;color:var(--muted);margin-top:6px">未检测到相机存储卡；插入后会自动出现在这里，也可以直接选择文件夹。</div>`;
-  document.getElementById('shortcuts').innerHTML=h;
-  document.querySelectorAll('.shortcut').forEach(b=>{b.disabled=isRunning;b.onclick=()=>{if(isRunning)return;selectFolderValue(b.dataset.p);fi.value=folder||'';};});
-}).catch(()=>{});
+    if(d.demo_folder){
+      const p=d.demo_folder;
+      const n=d.demo_count||36;
+      h+='<button class="shortcut demo-shortcut" data-p="'+escHtml(p)+'">'
+        +'<span class="tag recent">示例</span>'
+        +'<span><b>多目录演示图库 · '+n+' 张</b>'
+        +'<small>6 个子文件夹 · 清晰/轻微软/模糊/近似连拍</small></span></button>';
+      if(codespacesMode&&!folder){selectFolderValue(p);fi.value=p;}
+    }
+
+    (d.sd||[]).forEach(o=>{
+      const p=(typeof o==='string')?o:o.path;
+      const br=(o&&o.brand)?(' · '+o.brand):'';
+      h+='<button class="shortcut" data-p="'+escHtml(p)+'"><span class="tag sd">相机卡'+escHtml(br)
+        +'</span><span>'+escHtml(sdLabel(p))+'</span></button>';
+    });
+    (d.recent||[]).filter(p=>!sourceCatalog.some(s=>(s.roots||[]).some(r=>sameFolder(r.current_root,p)||sameFolder(r.original_root,p))))
+      .slice(0,3).forEach(p=>{
+        h+='<button class="shortcut" data-p="'+escHtml(p)+'"><span class="tag recent">最近</span><span>'+escHtml(sdLabel(p))+'</span></button>';
+      });
+    document.getElementById('shortcuts').innerHTML=h;
+    document.querySelectorAll('.shortcut').forEach(b=>{
+      b.disabled=isRunning||coreRunning;
+      b.onclick=()=>{
+        if(isRunning||coreRunning)return;
+        selectFolderValue(b.dataset.p);fi.value=folder||'';
+      };
+    });
+    loadStorageSummary();
+  }).catch(()=>{});
 }
 loadShortcuts();
-setInterval(()=>{if(!document.hidden&&!isRunning)loadShortcuts();},30000);  // pick up a card inserted later
+setInterval(()=>{if(!document.hidden&&!isRunning&&!coreRunning)loadShortcuts();},30000);
 document.getElementById('folderInput').onchange=e=>selectFolderValue(e.target.value);
 document.getElementById('folderInput').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();selectFolderValue(e.target.value);}};
 document.getElementById('browseBtn').onclick=async()=>{
@@ -5615,6 +5731,14 @@ document.getElementById('moveBlurryBtn').onclick=async function(){
     this.disabled=false;updateCullMoveButton();
   }
 }
+const showingNode=document.getElementById('sShowing');
+if(showingNode){
+  const syncShowing=()=>{document.getElementById('statusShowing').textContent=showingNode.textContent||'0';};
+  new MutationObserver(syncShowing).observe(showingNode,{childList:true,characterData:true,subtree:true});
+  syncShowing();
+}
+updateSourceUi();
+loadStorageSummary();
 document.documentElement.dataset.uiReady='1';
 </script></body></html>'''
 
