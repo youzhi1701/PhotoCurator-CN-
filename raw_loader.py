@@ -24,7 +24,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageOps
 
 logger = logging.getLogger(__name__)
 
@@ -72,10 +72,18 @@ def is_heif(path) -> bool:
     return Path(str(path)).suffix.lower() in HEIF_EXTS
 
 
+BROWSER_NATIVE_EXTS = {'.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.avif'}
+
+
 def needs_jpeg_preview(path) -> bool:
-    """True for formats no browser can render inline (RAW, and HEIC outside
-    Safari) — the app serves a transcoded JPEG for these."""
-    return is_raw(path) or is_heif(path)
+    """True when the desktop WebView should receive a transcoded JPEG.
+
+    RAW/HEIF always use a proxy.  Pillow-readable formats such as TIFF,
+    JPEG-2000, TGA and others are also proxied because browser support varies
+    even though PhotoCurator can decode them locally.
+    """
+    ext = Path(str(path)).suffix.lower()
+    return is_raw(path) or is_heif(path) or ext not in BROWSER_NATIVE_EXTS
 
 
 def _embedded_jpeg(path):
@@ -183,7 +191,27 @@ def imread_bgr(path, reduced=True):
         bgr = _cv_imread_unicode(path, cv2.IMREAD_REDUCED_COLOR_2)
         if bgr is not None:
             return bgr
-    return _cv_imread_unicode(path, cv2.IMREAD_COLOR)
+    else:
+        bgr = _cv_imread_unicode(path, cv2.IMREAD_COLOR)
+        if bgr is not None:
+            return bgr
+
+    # Pillow fallback closes the capability gap between discovery and analysis:
+    # if Pillow can open a format that OpenCV cannot, it must not become a
+    # "found but unanalyzable" photo.
+    try:
+        with open_image_pil(path) as img:
+            img = ImageOps.exif_transpose(img).convert('RGB')
+            if reduced and img.width > 1 and img.height > 1:
+                img.thumbnail(
+                    (max(1, img.width // 2), max(1, img.height // 2)),
+                    Image.Resampling.BILINEAR,
+                )
+            rgb = np.asarray(img)
+        return cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+    except Exception as e:
+        logger.warning(f"pillow fallback decode failed {path}: {e}")
+        return None
 
 
 def imread_gray(path, reduced=True):
@@ -195,4 +223,9 @@ def imread_gray(path, reduced=True):
         gray = _cv_imread_unicode(path, cv2.IMREAD_REDUCED_GRAYSCALE_2)
         if gray is not None:
             return gray
-    return _cv_imread_unicode(path, cv2.IMREAD_GRAYSCALE)
+    else:
+        gray = _cv_imread_unicode(path, cv2.IMREAD_GRAYSCALE)
+        if gray is not None:
+            return gray
+    bgr = imread_bgr(path, reduced=reduced)
+    return cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY) if bgr is not None else None
