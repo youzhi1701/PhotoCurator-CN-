@@ -1064,13 +1064,13 @@ def ftype_label(ftype):
 
 def filter_ftype(paths, ftype):
     """Keep only the selected file type.
-    'raw' = any RAW, 'heic' = any HEIF, 'jpg' = everything else,
+    'raw' = any RAW, 'heic' = any HEIF, 'standard' = non-RAW/non-HEIF,
     'ext:nef' = that exact format, 'all'/empty = no filtering."""
     if ftype == 'raw':
         return [p for p in paths if is_raw(p)]
     if ftype == 'heic':
         return [p for p in paths if is_heif(p)]
-    if ftype == 'jpg':
+    if ftype in ('jpg', 'standard'):
         return [p for p in paths if not is_raw(p) and not is_heif(p)]
     if str(ftype).startswith('ext:'):
         want = ftype[4:].lower()
@@ -4574,7 +4574,7 @@ function setupFilterBar(){
     // Per-format chips (NEF, CR2, ARW, ...) built from what's actually loaded.
     const rawFmts=[...new Set(photos.filter(p=>p.raw).map(p=>p.fmt||'RAW'))].sort();
     const hasHeic=photos.some(p=>p.heic);
-    const types=[['all','全部格式'],['raw','仅 RAW'],['jpg','仅 JPG'],
+    const types=[['all','全部格式'],['raw','仅 RAW'],['standard','普通图片'],
       ...(hasHeic?[['heic','仅 HEIC']]:[]),
       ...(rawFmts.length>1?rawFmts.map(f=>['ext:'+f.toLowerCase(),'仅 '+f]):[])];
     if(!types.some(([k])=>k===cullType))cullType='all';
