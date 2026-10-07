@@ -121,7 +121,7 @@ jobs:
               "Create release tag after successful installer build",
               "release: publish v" + gh_expr + " steps.release_meta.outputs.version }}",
               'git push origin "refs/tags/$tag"',
-              "if: startsWith(github.ref, 'refs/tags/v') || (github.ref == 'refs/heads/main'",
+              "startsWith(github.ref, 'refs/tags/v') || (github.ref == 'refs/heads/main'",
               "format('v{0}', steps.release_meta.outputs.version)",
               'files: release/' + gh_expr + ' steps.release_meta.outputs.installer }}',
               'generate_release_notes: true',
