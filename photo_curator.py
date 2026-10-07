@@ -58,6 +58,8 @@ from catalog import (
     register_source as catalog_register_source,
     storage_summary as catalog_storage_summary,
     clear_rebuildable_storage,
+    clear_offline_previews as catalog_clear_offline_previews,
+    remove_library_root as catalog_remove_library_root,
     root_snapshot as catalog_root_snapshot,
     media_record as catalog_media_record,
     media_id_for_path as catalog_media_id_for_path,
@@ -3837,6 +3839,8 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   }
   .activity-log{max-height:300px!important;overflow:auto!important;padding:0!important;font-size:11px!important;gap:7px!important}
   .catalog-load-more{display:block;margin:14px auto 20px;padding:9px 16px;border:1px solid var(--border);border-radius:10px;background:rgba(255,255,255,.86);color:var(--accent);font-weight:800;cursor:pointer}
+  .storage-actions #clearOfflinePreviews,.storage-actions #removeLibraryIndex,.storage-actions #exportDiagnostics{grid-column:1/-1}
+  .storage-actions .danger-data-action{color:#b91c1c!important;background:rgba(254,226,226,.62)!important;border-color:rgba(185,28,28,.18)!important}
   .activity-item{padding:8px 9px!important;border:1px solid rgba(124,139,192,.10);line-height:1.45;background:rgba(248,250,255,.72)!important}
   .drawer-scrim{display:none!important}
   #settingsQuick,#taskToggle,#toolboxOpen{display:none!important}
@@ -4002,9 +4006,11 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
         <div><span>相似特征</span><b id="featureUsage">—</b></div>
         <div><span>日志</span><b id="logUsage">—</b></div>
         <div class="storage-actions">
-          <button data-clean="previews">清理预览缓存</button>
+          <button data-clean="previews">清理临时预览</button>
           <button data-clean="logs">清理旧日志</button>
           <button data-clean="features">重建相似特征</button>
+          <button id="clearOfflinePreviews">清理离线预览</button>
+          <button id="removeLibraryIndex" class="danger-data-action">移除此图库索引</button>
           <button id="exportDiagnostics">导出诊断包</button>
         </div>
         <small id="dataRootText">正在读取数据目录…</small>
@@ -5189,6 +5195,56 @@ async function clearStorageCategory(category){
   }
 }
 document.querySelectorAll('[data-clean]').forEach(btn=>btn.onclick=()=>clearStorageCategory(btn.dataset.clean));
+function currentCatalogRootId(){
+  const info=currentRootInfo();
+  return (catalogRootView&&catalogRootView.root&&catalogRootView.root.root_id)
+    ||(info&&info.root&&info.root.root_id)||'';
+}
+document.getElementById('clearOfflinePreviews').onclick=async()=>{
+  const rootId=currentCatalogRootId();
+  const scope=rootId?'当前图库':'全部图库';
+  const ok=await askBatchConfirm(
+    '清理离线预览',
+    '将清理'+scope+'已经生成的离线缩略图。不会删除原照片、图库索引或分析结果；设备离线时这些照片将暂时没有预览，重新连接后可以重新生成。',
+    '清理离线预览'
+  );
+  if(!ok)return;
+  try{
+    const r=await fetch('/api/offline-previews-clear',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({root_id:rootId||null})
+    });
+    const d=await r.json();
+    if(!r.ok||d.error)throw new Error(d.error||('HTTP '+r.status));
+    toast('已清理离线预览 · '+d.removed+' 个 · 释放 '+formatBytes(d.freed_bytes),'good');
+    loadStorageSummary(true);
+    if(catalogRootView&&rootId)loadCatalogRoot(rootId);
+  }catch(err){toast('清理离线预览失败：'+(err.message||'未知错误'),'bad');}
+};
+document.getElementById('removeLibraryIndex').onclick=async()=>{
+  const rootId=currentCatalogRootId();
+  if(!rootId){toast('请先选择一个已经建立索引的图库','info');return;}
+  const name=(catalogRootView&&catalogRootView.root&&catalogRootView.root.display_name)
+    ||(currentRootInfo()&&currentRootInfo().root&&currentRootInfo().root.display_name)||'当前图库';
+  const ok=await askBatchConfirm(
+    '从 PhotoCurator 移除图库',
+    '只会删除 PhotoCurator 中“'+name+'”的索引与离线预览，不会删除硬盘里的任何原照片，也不会清空软件回收站中的真实文件。',
+    '只移除索引'
+  );
+  if(!ok)return;
+  try{
+    const r=await fetch('/api/library-root-remove',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({root_id:rootId})
+    });
+    const d=await r.json();
+    if(!r.ok||d.error)throw new Error(d.error||('HTTP '+r.status));
+    catalogRootView=null;folder=null;photos=[];
+    document.getElementById('folderInput').value='';
+    toast('已从 PhotoCurator 移除图库索引 · '+Number(d.media_count||0)+' 张记录','good');
+    await refreshEnvironment();renderWorkspaceLanding();loadStorageSummary(true);
+  }catch(err){toast('移除图库索引失败：'+(err.message||'未知错误'),'bad');}
+};
 document.getElementById('exportDiagnostics').onclick=async()=>{
   const btn=document.getElementById('exportDiagnostics');
   const old=btn.textContent;btn.disabled=true;btn.textContent='正在导出…';
@@ -6777,6 +6833,48 @@ def api_storage_clear():
         return jsonify(result)
     except Exception as exc:
         logger.warning("storage cleanup failed", exc_info=True)
+        return jsonify({'error': str(exc)}), 500
+
+
+@app.route('/api/offline-previews-clear', methods=['POST'])
+def api_offline_previews_clear():
+    body = request.get_json(silent=True) or {}
+    root_id = str(body.get('root_id') or '').strip() or None
+    if any(state.get(key, {}).get('running') for key in ('cull', 'dedup', 'rank')):
+        return jsonify({'error': '分析任务运行中，请等待分析完成后再清理离线预览'}), 409
+    try:
+        result = catalog_clear_offline_previews(DATA_ROOT, INDEX_DB, root_id)
+        _activity('清理离线预览', root_id or '全部图库',
+                  f"{result.get('removed', 0)} files · {result.get('freed_bytes', 0)} bytes")
+        return jsonify({'ok': True, **result})
+    except Exception as exc:
+        logger.warning("offline preview cleanup failed", exc_info=True)
+        return jsonify({'error': str(exc)}), 500
+
+
+@app.route('/api/library-root-remove', methods=['POST'])
+def api_library_root_remove():
+    body = request.get_json(silent=True) or {}
+    root_id = str(body.get('root_id') or '').strip()
+    if not root_id:
+        return jsonify({'error': '缺少图库标识'}), 400
+    if any(state.get(key, {}).get('running') for key in ('cull', 'dedup', 'rank')):
+        return jsonify({'error': '分析任务运行中，请等待分析完成后再移除图库索引'}), 409
+    try:
+        preview_result = catalog_clear_offline_previews(DATA_ROOT, INDEX_DB, root_id)
+        result = catalog_remove_library_root(INDEX_DB, root_id)
+        if not result:
+            return jsonify({'error': '图库不存在'}), 404
+        _activity('移除图库索引', result.get('display_name') or root_id,
+                  f"{result.get('media_count', 0)} records; source files untouched")
+        return jsonify({
+            'ok': True,
+            'media_count': int(result.get('media_count') or 0),
+            'source_removed': bool(result.get('source_removed')),
+            'preview_removed': int(preview_result.get('removed') or 0),
+        })
+    except Exception as exc:
+        logger.warning("library index removal failed", exc_info=True)
         return jsonify({'error': str(exc)}), 500
 
 
