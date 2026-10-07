@@ -491,13 +491,15 @@ jobs:
           required = (
               'APP_TITLE = "PhotoCurator"',
               "frameless=True",
-              "maximized=True",
+              "maximized=False",
               "resizable=True",
-              "min_size=(860, 600)",
+              "min_size=(720, 520)",
               "webview.start(gui='edgechromium'",
               "tray.run_detached()",
               "def window_action(self, action)",
               "window.events.closing += on_closing",
+              "def _windows_work_area()",
+              "def _fit_window_to_work_area(window)",
           )
           missing = [item for item in required if item not in desktop]
           if missing:
@@ -536,15 +538,19 @@ jobs:
               'class="workspace-tabs"',
               'class="library-sidebar"',
               'class="inspector-drawer"',
+              'id="sidebarUtilityHost"',
+              'id="activityPanel"',
               'id="dashboardView"',
               'id="photoView"',
               "function showDashboard(",
               "function showPhotoView(",
-              "setInspectorOpen(false)",
+              "function visibleInReview(",
+              "repeat(auto-fill,var(--thumb-size))",
+              "pc-thumb-size-v160",
           )
           missing_ui = [item for item in required_ui if item not in ui]
           if missing_ui:
-              raise SystemExit("v1.5.8 workspace contract missing: " + repr(missing_ui))
+              raise SystemExit("v1.6.0 workspace contract missing: " + repr(missing_ui))
 
           shortcuts = core.split("@app.route('/api/shortcuts')", 1)[1].split(
               "@app.route('/api/sources')", 1
@@ -565,6 +571,12 @@ jobs:
               raise SystemExit("First-paint source list must not probe physical drives")
           if "setTimeout(refreshEnvironment,5000)" not in core:
               raise SystemExit("Physical-drive refresh must be deferred after first paint")
+
+          if "PILLOW_IMG_EXTS" not in core or "Image.registered_extensions()" not in core:
+              raise SystemExit("Image discovery must follow installed decoder capability")
+
+          if "REVIEW_HIDDEN_LIFECYCLES" not in core:
+              raise SystemExit("Review lifecycle visibility must be centralized")
 
           env_refresh = core.split("@app.route('/api/environment-refresh')", 1)[1].split(
               "@app.route('/api/demo-status')", 1
