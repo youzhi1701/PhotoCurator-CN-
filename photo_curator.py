@@ -5163,18 +5163,30 @@ function catalogCardHtml(item){
     +'<div class="source-path">'+escHtml(item.relative_path)+'</div>'
     +'<div class="catalog-meta">'+(item.has_cull_cache?'已分析':'仅索引')+' · '+formatBytes(item.size)+'</div></div></div>';
 }
-async function loadCatalogRoot(rootId,{append=false}={}){
+const CATALOG_PAGE_SIZE=400,CATALOG_DOM_WINDOW=800;
+async function loadCatalogRoot(rootId,{append=false,prepend=false}={}){
   if(catalogRootLoading)return;
   catalogRootLoading=true;
   showPhotoView();
   try{
-    const offset=append&&catalogRootView?Number(catalogRootView.loaded||0):0;
-    const r=await fetch('/api/catalog-root/'+encodeURIComponent(rootId)+'?limit=400&offset='+offset);
+    const sameView=catalogRootView&&catalogRootView.root_id===rootId;
+    const previous=sameView?catalogRootView:null;
+    const windowStart=previous?Number(previous.window_start||0):0;
+    const windowItems=previous?(previous.items||[]):[];
+    const offset=prepend&&previous
+      ?Math.max(0,windowStart-CATALOG_PAGE_SIZE)
+      :(append&&previous?windowStart+windowItems.length:0);
+    const limit=prepend&&previous
+      ?Math.max(1,windowStart-offset)
+      :CATALOG_PAGE_SIZE;
+    const r=await fetch('/api/catalog-root/'+encodeURIComponent(rootId)+'?limit='+limit+'&offset='+offset);
     const d=await r.json();
     if(!r.ok||d.error)throw new Error(d.error||('HTTP '+r.status));
     const incoming=d.items||[];
-    if(!append){
-      catalogRootView={...d,items:incoming.slice(),loaded:incoming.length};
+    const g=document.getElementById('gallery');
+
+    if(!append&&!prepend){
+      catalogRootView={...d,root_id:rootId,items:incoming.slice(),window_start:0};
       folder=null;
       updateStartAvailability();
       updateSourceUi();
@@ -5184,30 +5196,70 @@ async function loadCatalogRoot(rootId,{append=false}={}){
       document.getElementById('filterBar').style.display='none';
       document.getElementById('resultTools').style.display='none';
       document.getElementById('workspaceTitle').textContent=(d.source&&d.source.display_name)||'离线图库';
-      document.getElementById('workspaceHint').textContent='历史索引分批加载；设备未连接时仍可查看已生成的离线预览。';
-      const g=document.getElementById('gallery');
+      document.getElementById('workspaceHint').textContent='历史索引采用窗口化分页；设备未连接时仍可查看已生成的离线预览。';
       g.className='gallery catalog-history';
       g.innerHTML=incoming.length
         ?incoming.map(catalogCardHtml).join('')
         :'<div class="empty"><div class="icon">🗄️</div><div class="title">这个图库还没有持久化媒体索引</div><p>重新连接数据源并完成一次扫描后会建立历史目录。</p></div>';
-    }else{
-      catalogRootView.items.push(...incoming);
-      catalogRootView.loaded+=incoming.length;
-      catalogRootView.has_more=!!d.has_more;
-      document.getElementById('gallery').insertAdjacentHTML('beforeend',incoming.map(catalogCardHtml).join(''));
+    }else if(prepend&&previous){
+      previous.items.unshift(...incoming);
+      previous.window_start=offset;
+      previous.total=Number(d.total||previous.total||0);
+      if(incoming.length){
+        g.insertAdjacentHTML('afterbegin',incoming.map(catalogCardHtml).join(''));
+      }
+      if(previous.items.length>CATALOG_DOM_WINDOW){
+        const drop=previous.items.length-CATALOG_DOM_WINDOW;
+        previous.items.splice(previous.items.length-drop,drop);
+        const cards=g.querySelectorAll('.catalog-card');
+        for(let i=0;i<drop;i++){
+          const node=cards[cards.length-1-i];
+          if(node)node.remove();
+        }
+      }
+    }else if(append&&previous){
+      previous.items.push(...incoming);
+      previous.total=Number(d.total||previous.total||0);
+      if(incoming.length){
+        g.insertAdjacentHTML('beforeend',incoming.map(catalogCardHtml).join(''));
+      }
+      if(previous.items.length>CATALOG_DOM_WINDOW){
+        const drop=previous.items.length-CATALOG_DOM_WINDOW;
+        previous.items.splice(0,drop);
+        previous.window_start+=drop;
+        for(let i=0;i<drop;i++){
+          const node=g.querySelector('.catalog-card');
+          if(!node)break;
+          node.remove();
+        }
+      }
     }
-    catalogRootView.has_more=!!d.has_more;
-    catalogRootView.total=Number(d.total||catalogRootView.total||0);
-    const loaded=Number(catalogRootView.loaded||incoming.length);
-    document.getElementById('sShowing').textContent=String(loaded);
-    document.getElementById('sImages').textContent=String(catalogRootView.total||loaded);
 
-    let more=document.getElementById('catalogLoadMore');
-    if(more)more.remove();
-    if(catalogRootView.has_more){
-      more=document.createElement('button');
+    catalogRootView.total=Number(d.total||catalogRootView.total||0);
+    const shown=Number((catalogRootView.items||[]).length);
+    const first=shown?Number(catalogRootView.window_start||0)+1:0;
+    const last=Number(catalogRootView.window_start||0)+shown;
+    catalogRootView.has_more=last<catalogRootView.total;
+    document.getElementById('sShowing').textContent=String(shown);
+    document.getElementById('sImages').textContent=String(catalogRootView.total||shown);
+    document.getElementById('workspaceHint').textContent=shown
+      ?'历史索引窗口化加载 · 当前 '+first+'–'+last+' / '+catalogRootView.total+' · 最多保留 '+CATALOG_DOM_WINDOW+' 张前台卡片'
+      :'历史索引采用窗口化分页；设备未连接时仍可查看已生成的离线预览。';
+
+    ['catalogLoadEarlier','catalogLoadMore'].forEach(id=>{
+      const old=document.getElementById(id);if(old)old.remove();
+    });
+    if(Number(catalogRootView.window_start||0)>0){
+      const earlier=document.createElement('button');
+      earlier.id='catalogLoadEarlier';earlier.className='catalog-load-more';
+      earlier.textContent='加载上一批 · 当前 '+first+'–'+last+' / '+catalogRootView.total;
+      earlier.onclick=()=>loadCatalogRoot(rootId,{prepend:true});
+      document.getElementById('photoView').appendChild(earlier);
+    }
+    if(last<catalogRootView.total){
+      const more=document.createElement('button');
       more.id='catalogLoadMore';more.className='catalog-load-more';
-      more.textContent='继续加载 · '+loaded+' / '+catalogRootView.total;
+      more.textContent='继续加载 · 当前 '+first+'–'+last+' / '+catalogRootView.total;
       more.onclick=()=>loadCatalogRoot(rootId,{append:true});
       document.getElementById('photoView').appendChild(more);
     }
