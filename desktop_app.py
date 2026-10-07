@@ -483,16 +483,16 @@ def main():
         APP_TITLE,
         URL,
         js_api=desktop_api,
-        width=1180,
-        height=760,
-        min_size=(720, 520),
+        width=1280,
+        height=820,
+        min_size=(860, 600),
         resizable=True,
-        maximized=False,
+        maximized=True,
         zoomable=False,
         confirm_close=False,
         text_select=True,
         background_color="#eef7ff",
-        frameless=True,
+        frameless=False,
         easy_drag=False,
     )
     desktop_api.attach_window(window)
@@ -567,38 +567,11 @@ def main():
             tray = None
             _write_early_error_log()
 
-    def on_closing():
-        # IMPORTANT: pywebview's closing event is synchronous/blocking.
-        # Do not call window.hide()/destroy()/minimize()/maximize() here.
-        return desktop_api.native_close_decision(tray is not None)
-
-    window.events.closing += on_closing
-
-    initial_layout_started = threading.Event()
-
-    def on_loaded():
-        # Frameless windows are laid out only after WebView2 has finished
-        # loading, and from a detached worker. This avoids competing with
-        # WebView2 initialization while still respecting the taskbar work area.
-        if initial_layout_started.is_set():
-            return
-        initial_layout_started.set()
-
-        def apply_initial_layout():
-            try:
-                time.sleep(0.12)
-                if not desktop_api._maximized:
-                    desktop_api.maximize_to_work_area()
-            except Exception:
-                _write_early_error_log()
-
-        threading.Thread(
-            target=apply_initial_layout,
-            daemon=True,
-            name="photocurator-initial-window-layout",
-        ).start()
-
-    window.events.loaded += on_loaded
+    # Native Windows title bar owns close/maximize/restore.  In particular,
+    # there is intentionally NO pywebview closing/shown/loaded callback here:
+    # those callbacks previously re-entered native window APIs and could lock
+    # WebView2's GUI message loop.  Closing the native window now exits the
+    # desktop shell normally; unfinished file tasks are persisted.
 
     try:
         # On Windows force Edge WebView2. Falling back to IE/MSHTML would open
