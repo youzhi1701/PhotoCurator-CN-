@@ -5591,7 +5591,7 @@ function renderRank(items){
   const activeRankItems=items.filter(visibleInReview);
   rankView=(rankFilter==='pbg')?activeRankItems.filter(p=>p.phonebg):activeRankItems;
   gItems=rankView;
-  const pbgN=items.filter(p=>p.phonebg).length;
+  const pbgN=activeRankItems.filter(p=>p.phonebg).length;
   const pbgChip=document.getElementById('pbgChipCount');if(pbgChip)pbgChip.textContent=pbgN;
   document.getElementById('exportPbgBtn').style.display=(currentStep==='rank'&&pbgN>0)?'block':'none';
 
