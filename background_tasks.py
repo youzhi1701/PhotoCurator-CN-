@@ -29,8 +29,10 @@ class BackgroundTaskManager:
         self._cv = threading.Condition()
         self._foreground_pressure = threading.Event()
         self._threads = []
+        self._completed_since_prune = 0
         self._init_db()
         self._recover_interrupted()
+        self._prune_history()
         for i in range(self.workers):
             worker = threading.Thread(
                 target=self._worker, daemon=True,
@@ -76,6 +78,29 @@ class BackgroundTaskManager:
                 heapq.heappush(self._heap, (int(priority), self._seq, int(task_id)))
             if any(int(priority) <= FOREGROUND_PRIORITY_MAX for _, priority in rows):
                 self._foreground_pressure.set()
+
+    def _prune_history(self):
+        """Keep the durable queue bounded without touching active work."""
+        try:
+            with self._connect() as db:
+                db.execute(
+                    """DELETE FROM background_task
+                       WHERE state='done' AND id NOT IN (
+                         SELECT id FROM background_task
+                         WHERE state='done' ORDER BY id DESC LIMIT 2000
+                       )"""
+                )
+                db.execute(
+                    """DELETE FROM background_task
+                       WHERE state='failed' AND id NOT IN (
+                         SELECT id FROM background_task
+                         WHERE state='failed' ORDER BY id DESC LIMIT 500
+                       )"""
+                )
+                db.commit()
+            self._completed_since_prune = 0
+        except Exception:
+            logger.debug("background task history prune skipped", exc_info=True)
 
     def register(self, kind, handler):
         self.handlers[str(kind)] = handler
@@ -147,6 +172,9 @@ class BackgroundTaskManager:
                     db.execute("UPDATE background_task SET state='done',updated_at=?,error=NULL,result_json=? WHERE id=?",
                                (time.time(), json.dumps(result, ensure_ascii=False, default=str), task_id))
                     db.commit()
+                self._completed_since_prune += 1
+                if self._completed_since_prune >= 128:
+                    self._prune_history()
                 self._refresh_pressure()
             except Exception as exc:
                 logger.exception("background task %s failed", task_id)
