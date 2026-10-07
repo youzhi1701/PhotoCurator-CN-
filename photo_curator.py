@@ -146,9 +146,13 @@ def _db_init():
             group_key TEXT PRIMARY KEY,
             folder_root TEXT NOT NULL,
             status TEXT NOT NULL DEFAULT 'pending',
+            member_hash TEXT NOT NULL DEFAULT '',
             revision INTEGER NOT NULL DEFAULT 1,
             updated_at REAL NOT NULL
         )""")
+        cols = {r[1] for r in db.execute("PRAGMA table_info(similarity_group_state)").fetchall()}
+        if 'member_hash' not in cols:
+            db.execute("ALTER TABLE similarity_group_state ADD COLUMN member_hash TEXT NOT NULL DEFAULT ''")
         db.commit()
 
 def _media_state_set(original_path, current_path=None, state_name='normal',
@@ -193,6 +197,71 @@ def _media_state_get(original_path):
     except Exception:
         logger.debug("media state load failed", exc_info=True)
     return None
+
+
+def _similarity_group_key(folder_root, compare_scope, first_member_path):
+    seed = '|'.join([
+        os.path.normcase(os.path.realpath(str(folder_root))),
+        str(compare_scope or 'folder'),
+        os.path.normcase(os.path.realpath(str(first_member_path))),
+    ])
+    return hashlib.sha1(seed.encode('utf-8')).hexdigest()[:20]
+
+
+def _similarity_group_state(group_key, folder_root, member_paths):
+    """Return persistent group status and detect members discovered after review."""
+    member_hash = hashlib.sha1(
+        '\n'.join(sorted(os.path.normcase(os.path.realpath(str(p))) for p in member_paths))
+        .encode('utf-8')
+    ).hexdigest()
+    now = time.time()
+    try:
+        with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=15) as db:
+            row = db.execute(
+                "SELECT status,member_hash,revision FROM similarity_group_state WHERE group_key=?",
+                (str(group_key),)
+            ).fetchone()
+            if not row:
+                status, revision = 'pending', 1
+                db.execute(
+                    """INSERT INTO similarity_group_state
+                       (group_key,folder_root,status,member_hash,revision,updated_at)
+                       VALUES(?,?,?,?,?,?)""",
+                    (str(group_key), os.path.realpath(str(folder_root)), status,
+                     member_hash, revision, now)
+                )
+            else:
+                old_status, old_hash, revision = str(row[0]), str(row[1] or ''), int(row[2] or 1)
+                status = old_status
+                if old_hash and old_hash != member_hash:
+                    revision += 1
+                    status = 'updated' if old_status == 'reviewed' else 'pending'
+                db.execute(
+                    """UPDATE similarity_group_state
+                       SET folder_root=?,status=?,member_hash=?,revision=?,updated_at=?
+                       WHERE group_key=?""",
+                    (os.path.realpath(str(folder_root)), status, member_hash,
+                     revision, now, str(group_key))
+                )
+            db.commit()
+        return {'status': status, 'member_hash': member_hash, 'revision': revision}
+    except Exception:
+        logger.debug("similarity group state load failed", exc_info=True)
+        return {'status': 'pending', 'member_hash': member_hash, 'revision': 1}
+
+
+def _set_similarity_group_status(group_key, status):
+    if status not in ('pending', 'reviewed', 'updated'):
+        status = 'pending'
+    try:
+        with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=15) as db:
+            db.execute(
+                "UPDATE similarity_group_state SET status=?,updated_at=? WHERE group_key=?",
+                (status, time.time(), str(group_key))
+            )
+            db.commit()
+    except Exception:
+        logger.debug("similarity group status save failed", exc_info=True)
 
 
 def _activity(action, path='', detail=''):
@@ -2007,9 +2076,20 @@ def run_dedup(folder, threshold, ftype='all', pair='both',
                 } for m in members]
                 rels = sorted({m['rel_dir'] for m in member_rows})
                 if len(member_rows) > 1:
+                    group_key = _similarity_group_key(
+                        folder, compare_scope, member_rows[0]['path']
+                    )
+                    persisted = _similarity_group_state(
+                        group_key, folder, [m['path'] for m in member_rows]
+                    )
                     all_groups.append({
                         'group_id': len(all_groups),
+                        'group_key': group_key,
                         'count': len(member_rows),
+                        'active_count': len(member_rows),
+                        'deleted_count': 0,
+                        'status': persisted.get('status', 'pending'),
+                        'revision': persisted.get('revision', 1),
                         'ready': True,
                         'selected_paths': [selected],
                         'folder_rel': (rels[0] if len(rels) == 1 else '跨文件夹重复'),
