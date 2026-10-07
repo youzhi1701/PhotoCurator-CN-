@@ -460,46 +460,58 @@ jobs:
           print("Core workflow / large-library guards OK")
           PY
 
-      - name: Check desktop shell blocking-event safety
+      - name: Check native Windows shell contract
         run: |
           python - <<'PY'
           from pathlib import Path
 
-          source = Path("desktop_app.py").read_text(encoding="utf-8")
-          if "def hide_to_tray_async(" not in source:
-              raise SystemExit("Desktop close-to-tray must be dispatched asynchronously")
-          if "def native_close_decision(" not in source:
-              raise SystemExit("Desktop native close decision helper is missing")
+          desktop = Path("desktop_app.py").read_text(encoding="utf-8")
+          ui = Path("photo_curator.py").read_text(encoding="utf-8")
 
-          closing = source.split("    def on_closing():", 1)[1].split(
-              "    window.events.closing += on_closing", 1
-          )[0]
-          closing_code = "\n".join(
-              line.split("#", 1)[0] for line in closing.splitlines()
+          required = (
+              "frameless=False",
+              "maximized=True",
+              "resizable=True",
+              "min_size=(860, 600)",
           )
-          forbidden = (
-              "window.hide(",
-              "window.destroy(",
-              "window.minimize(",
-              "window.maximize(",
-              "window.restore(",
-              "stop_analysis_and_wait(",
-              "TASK_MANAGER.shutdown(",
+          missing = [item for item in required if item not in desktop]
+          if missing:
+              raise SystemExit("Native Windows shell contract missing: " + repr(missing))
+
+          forbidden_desktop = (
+              "window.events.closing +=",
+              "window.events.shown +=",
+              "window.events.loaded +=",
           )
-          bad = [token for token in forbidden if token in closing_code]
+          bad = [item for item in forbidden_desktop if item in desktop]
           if bad:
               raise SystemExit(
-                  "Blocking pywebview closing handler performs GUI/blocking work: "
+                  "Native window must not re-enter pywebview lifecycle events: "
                   + repr(bad)
               )
-          if "native_close_decision" not in closing:
-              raise SystemExit("Native closing handler must delegate a non-blocking decision")
-          if "window.events.shown += on_shown" in source:
-              raise SystemExit("Initial native resize must not run from the early shown event")
-          if "window.events.loaded += on_loaded" not in source:
-              raise SystemExit("Initial window layout must wait for WebView2 loaded event")
 
-          print("Desktop shell blocking-event safety OK")
+          forbidden_ui = (
+              'id="winMin"',
+              'id="winMax"',
+              'id="winClose"',
+              "function nativeWindow(action)",
+              "pywebview-drag-region",
+          )
+          bad_ui = [item for item in forbidden_ui if item in ui]
+          if bad_ui:
+              raise SystemExit("Custom desktop chrome leaked back into UI: " + repr(bad_ui))
+
+          required_ui = (
+              'class="workspace-tabs"',
+              'class="library-sidebar"',
+              'class="inspector-drawer"',
+              "setInspectorOpen(false)",
+          )
+          missing_ui = [item for item in required_ui if item not in ui]
+          if missing_ui:
+              raise SystemExit("v1.5.3 workspace contract missing: " + repr(missing_ui))
+
+          print("Native Windows shell + single-rail workspace contract OK")
           PY
 
       - name: Check UI boot and state separation
@@ -639,9 +651,6 @@ jobs:
       - name: Compile Python sources
         run: |
           python -m py_compile desktop_app.py runtime_paths.py catalog.py photo_curator.py background_tasks.py photo_dedup_batch.py photo_file_organizer.py photo_ranking_engine.py photo_ranking_v3.py raw_loader.py "基础冒烟测试.py" "Codespaces冒烟测试.py" windows_smoke_test.py ui_smoke_test.py desktop_shell_smoke_test.py
-
-      - name: Desktop close-to-tray deadlock smoke test
-        run: python desktop_shell_smoke_test.py
 
       - name: Runtime data path and migration smoke test
         shell: powershell
