@@ -1,8 +1,8 @@
 {
   "product": "PhotoCurator",
-  "channel": "stable",
-  "version": "1.6.0",
-  "installer": "PhotoCurator-Setup-v1.6.0.exe",
+  "channel": "candidate",
+  "version": "1.7.0",
+  "installer": "PhotoCurator-Setup-v1.7.0.exe",
   "upgrade_mode": "in_place",
   "same_app_id": true,
   "data_root": "%LOCALAPPDATA%/PhotoCurator/data",
@@ -22,7 +22,7 @@
   "replace": [
     "app"
   ],
-  "notes": "v1.6.0 第一轮系统收口：桌面运行生命周期保持 v1.5.0 稳定基线不变；无边框窗口最大化改为当前显示器工作区尺寸，保留 Windows 任务栏；筛选、任务、日志、工具统一进入左侧控制栏；照片区使用单一缩略图尺寸机制，相似照片不再被 1fr 强制撑满；删除/移入回收站命令提交成功后立即从当前复核视图隐藏，后台生命周期继续持久处理；图片扫描扩展为按 Pillow/RAW/HEIF 实际解码能力动态发现格式。",
+  "notes": "v1.7.0 发布级稳定化：建立统一 SQLite WAL/busy-timeout 策略与 catalog schema 版本；扫描改为持久 session/generation，只有完整成功扫描才能标记 missing；文件生命周期同步 Media Catalog；离线预览与临时缓存物理分离并后台分批生成；新增新存储设备轻量发现、离线图库分页、大格式 Pillow 解码回退、RAW sidecar 安全移动、跨盘 copy/verify/commit；Windows 最大化遵守工作区并恢复真实窗口尺寸；CI/Release 增加数据完整性门禁、UI 新架构测试、依赖审计、SHA256 和发布后资产验证。",
   "release_date": "2026-10-07",
   "published_version": "1.5.0",
   "published_installer": "PhotoCurator-Setup-v1.5.0.exe"
