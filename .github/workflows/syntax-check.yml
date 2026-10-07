@@ -242,6 +242,13 @@ jobs:
               if required_key_part not in helper:
                   raise SystemExit("Shared scan key is missing configuration identity: " + required_key_part)
 
+          cull_block = source.split("def run_cull(", 1)[1].split(
+              "def _relocate_for_status", 1
+          )[0]
+          cull_commit = cull_block.split("s['complete'] = True", 1)
+          if len(cull_commit) != 2 or "_sync_dedup_with_cull()" not in cull_commit[1]:
+              raise SystemExit("Cull completion must reconcile Dedup when parallel task order reverses")
+
           dedup_block = source.split("def run_dedup(", 1)[1].split(
               "# --------------------------------------------------------------------------- #\n#  RANK", 1
           )[0]
