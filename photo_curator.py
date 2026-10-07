@@ -1924,14 +1924,15 @@ def ensure_builtin_demo():
                 d.rectangle((120, 190, 195, 405), fill=(92, 72, 54))
                 d.ellipse((83, 120, 235, 250), fill=(72, 126, 74))
 
-            # Add restrained film-like texture so the fixtures behave more like
-            # photos than vector diagrams during sharpness/similarity analysis.
+            # Keep startup generation cheap. Scene structure, blur levels and
+            # burst variants are what the culling/dedup tests need; thousands
+            # of Python-level texture mutations only steal time from the GUI.
             d = ImageDraw.Draw(img)
-            for _ in range(900):
+            for _ in range(120):
                 x = rng.randrange(w); y = rng.randrange(h)
-                c = rng.randint(0, 18)
+                c = rng.randint(0, 14)
                 base = img.getpixel((x, y))
-                d.point((x, y), fill=tuple(max(0, min(255, v + c - 9)) for v in base))
+                d.point((x, y), fill=tuple(max(0, min(255, v + c - 7)) for v in base))
             return img
 
         global_i = 0
@@ -1961,6 +1962,65 @@ def ensure_builtin_demo():
     except Exception as e:
         logger.warning(f"ensure built-in demo failed: {e}")
         return os.path.realpath(demo) if demo.is_dir() else None
+
+
+DEMO_ROOT = DATA_ROOT / '内置测试数据'
+_demo_prepare_lock = threading.Lock()
+_demo_prepare_thread = None
+
+
+def builtin_demo_status():
+    """Cheap status check; never generates demo media on the caller thread."""
+    try:
+        if not DEMO_ROOT.is_dir():
+            return {
+                'folder': os.path.realpath(DEMO_ROOT),
+                'ready': False,
+                'count': 0,
+                'folders': 0,
+            }
+        files = list(DEMO_ROOT.rglob('*.jpg'))
+        folders = {p.parent for p in files}
+        return {
+            'folder': os.path.realpath(DEMO_ROOT),
+            'ready': len(files) >= 36 and len(folders) >= 6,
+            'count': len(files),
+            'folders': len(folders),
+        }
+    except Exception:
+        return {
+            'folder': os.path.realpath(DEMO_ROOT),
+            'ready': False,
+            'count': 0,
+            'folders': 0,
+        }
+
+
+def prepare_builtin_demo_async():
+    """Prepare demo media without blocking first paint or the WebView thread."""
+    global _demo_prepare_thread
+    status = builtin_demo_status()
+    if status['ready']:
+        return status
+    with _demo_prepare_lock:
+        if _demo_prepare_thread is None or not _demo_prepare_thread.is_alive():
+            _demo_prepare_thread = threading.Thread(
+                target=ensure_builtin_demo,
+                daemon=True,
+                name='photocurator-demo-prep',
+            )
+            _demo_prepare_thread.start()
+    status['preparing'] = True
+    return status
+
+
+def prepare_builtin_demo_wait(timeout=20.0):
+    status = prepare_builtin_demo_async()
+    deadline = time.monotonic() + max(0.1, float(timeout))
+    while not status.get('ready') and time.monotonic() < deadline:
+        time.sleep(0.08)
+        status = builtin_demo_status()
+    return status
 
 
 # DCIM folder-name hints -> camera brand label shown on the SD shortcut.
