@@ -287,6 +287,28 @@ def main():
         except Exception:
             pass
 
+    def tray_status_text(item=None):
+        active = [k for k in ('cull', 'dedup', 'rank') if state.get(k, {}).get('running')]
+        queued = 0
+        try:
+            queued = int(TASK_MANAGER.summary().get('active') or 0)
+        except Exception:
+            pass
+        labels = {'cull': '模糊分析', 'dedup': '相似分析', 'rank': '照片评分'}
+        if active:
+            return "运行中：" + " + ".join(labels.get(k, k) for k in active) + (f" · 文件任务 {queued}" if queued else "")
+        if queued:
+            return f"后台文件任务：{queued} 个"
+        return "后台空闲"
+
+    def analysis_running(item=None):
+        return any(state.get(k, {}).get('running') for k in ('cull', 'dedup', 'rank'))
+
+    def stop_analysis(icon=None, item=None):
+        for key in ('cull', 'dedup', 'rank'):
+            if state.get(key, {}).get('running'):
+                state[key]['cancel'] = True
+
     def exit_from_tray(icon=None, item=None):
         desktop_api.allow_exit = True
         try:
@@ -312,6 +334,8 @@ def main():
                 "PhotoCurator · 照片整理工作区",
                 menu=pystray.Menu(
                     pystray.MenuItem("打开 PhotoCurator", show_window, default=True),
+                    pystray.MenuItem(tray_status_text, None, enabled=False),
+                    pystray.MenuItem("停止当前分析", stop_analysis, enabled=analysis_running),
                     pystray.Menu.SEPARATOR,
                     pystray.MenuItem("退出 PhotoCurator", exit_from_tray),
                 ),
