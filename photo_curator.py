@@ -1973,7 +1973,7 @@ def _shared_list_images(folder, recursive=True, max_age=15.0):
         producer = True
 
     try:
-        paths = _shared_list_images(folder, recursive=recursive)
+        paths = list_images(folder, recursive=recursive)
     except Exception as exc:
         with _SCAN_SNAPSHOT_CV:
             _SCAN_SNAPSHOTS[key] = {'state': 'failed', 'at': time.time(), 'error': str(exc)}
@@ -2303,7 +2303,7 @@ def run_dedup(folder, threshold, ftype='all', pair='both',
         # the eligibility gate for what the user can keep/process. This lets a
         # photo manually rescued from Blurry later enter an already-built
         # duplicate group without forcing a complete re-scan.
-        paths = list_images(folder, recursive=recursive)
+        paths = _shared_list_images(folder, recursive=recursive)
         if chain_ok:
             logger.info(f"Dedup: indexing {len(paths)} source photos; "
                         f"{len(cull.get('sharp_paths') or [])} currently eligible after Cull")
