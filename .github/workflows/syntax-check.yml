@@ -33,6 +33,18 @@ jobs:
             "Codespaces冒烟测试.py" \
             windows_smoke_test.py
 
+      - name: Parse GitHub Actions YAML
+        run: |
+          python -m pip install "PyYAML>=6,<7"
+          python - <<'PY'
+          from pathlib import Path
+          import yaml
+
+          for workflow in sorted(Path(".github/workflows").glob("*.yml")):
+              yaml.safe_load(workflow.read_text(encoding="utf-8"))
+              print("YAML OK:", workflow)
+          PY
+
       - name: Validate packaging and version consistency
         run: |
           bash -n "在线预览.sh"
