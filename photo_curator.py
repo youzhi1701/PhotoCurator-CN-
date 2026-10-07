@@ -1495,6 +1495,10 @@ def _apply_media_lifecycle(original_path, current_path, lifecycle, source_step='
     is_deleted = lifecycle in deleted_states
     _media_state_set(original, current, lifecycle, source_step, detail=str(trash_id or ''))
     try:
+        catalog_update_media_lifecycle(INDEX_DB, original, current, lifecycle)
+    except Exception:
+        logger.debug("media catalog lifecycle sync failed", exc_info=True)
+    try:
         with _DB_LOCK, connect_db(INDEX_DB, timeout=15) as db:
             db.execute(
                 """UPDATE similarity_group_member
