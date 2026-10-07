@@ -20,6 +20,7 @@ class BackgroundTaskManager:
         self.handlers: Dict[str, Callable[[dict], object]] = {}
         self._heap, self._seq, self._stop = [], 0, False
         self._cv = threading.Condition()
+        self._foreground_pressure = threading.Event()
         self._init_db()
         self._recover_interrupted()
         for i in range(self.workers):
@@ -86,6 +87,7 @@ class BackgroundTaskManager:
         with self._cv:
             self._seq += 1
             heapq.heappush(self._heap, (int(priority), self._seq, task_id))
+            self._foreground_pressure.set()
             self._cv.notify()
         return task_id, True
 
@@ -130,6 +132,7 @@ class BackgroundTaskManager:
                     db.execute("UPDATE background_task SET state='done',updated_at=?,error=NULL,result_json=? WHERE id=?",
                                (time.time(), json.dumps(result, ensure_ascii=False, default=str), task_id))
                     db.commit()
+                self._refresh_pressure()
             except Exception as exc:
                 logger.exception("background task %s failed", task_id)
                 try:
@@ -137,8 +140,26 @@ class BackgroundTaskManager:
                         db.execute("UPDATE background_task SET state='failed',updated_at=?,error=? WHERE id=?",
                                    (time.time(), str(exc), task_id))
                         db.commit()
+                    self._refresh_pressure()
                 except Exception:
                     logger.exception("failed to persist task failure")
+
+    def foreground_busy(self):
+        """Cheap signal for analysis workers to yield to direct user file work."""
+        return self._foreground_pressure.is_set()
+
+    def _refresh_pressure(self):
+        try:
+            with self._connect() as db:
+                active = db.execute(
+                    "SELECT COUNT(*) FROM background_task WHERE state IN ('queued','running')"
+                ).fetchone()[0]
+            if int(active or 0) > 0:
+                self._foreground_pressure.set()
+            else:
+                self._foreground_pressure.clear()
+        except Exception:
+            pass
 
     def summary(self):
         with self._connect() as db:
