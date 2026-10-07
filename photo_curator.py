@@ -2315,6 +2315,13 @@ _SCAN_SNAPSHOTS = {}
 
 
 def _shared_list_images(folder, recursive=True, max_age=2.0):
+    """Enumerate a source once and persist discovery in crash-safe batches.
+
+    Cull/Dedup still receive one immutable snapshot for deterministic analysis,
+    but the Media Catalog is updated while the filesystem walk is in progress.
+    If the process or disk disappears mid-scan, the scan session remains
+    interrupted and no older media rows are marked missing.
+    """
     scan_cfg = state.get('scan') or {}
     output_mode = str(scan_cfg.get('output_mode') or 'source')
     custom_output = ''
@@ -2329,58 +2336,104 @@ def _shared_list_images(folder, recursive=True, max_age=2.0):
         custom_output,
     )
     now = time.time()
-    producer = False
     with _SCAN_SNAPSHOT_CV:
         entry = _SCAN_SNAPSHOTS.get(key)
         if entry and entry.get('state') == 'ready' and now - entry.get('at', 0) <= max_age:
             return list(entry.get('paths') or [])
         while entry and entry.get('state') == 'scanning':
-            # A 4 TB HDD can legitimately need well over a minute just to walk
-            # a deep directory tree. Wait for the single producer rather than
-            # starting a second full enumeration after an arbitrary timeout.
             _SCAN_SNAPSHOT_CV.wait(timeout=0.25)
             entry = _SCAN_SNAPSHOTS.get(key)
             if entry and entry.get('state') == 'ready':
                 return list(entry.get('paths') or [])
             if not entry or entry.get('state') == 'failed':
                 break
-        _SCAN_SNAPSHOTS[key] = {'state': 'scanning', 'at': time.time(), 'paths': []}
-        producer = True
+        _SCAN_SNAPSHOTS[key] = {
+            'state': 'scanning', 'at': time.time(), 'paths': [],
+            'discovered': 0,
+        }
 
+    scan_session = None
+    paths = []
+    pending_catalog = []
     try:
-        paths = list_images(folder, recursive=recursive)
-        if producer:
+        scan_real = os.path.normcase(os.path.realpath(str(folder)))
+        demo_real = os.path.normcase(os.path.realpath(str(DATA_ROOT / '内置测试数据')))
+        if scan_real != demo_real:
             try:
-                scan_real = os.path.normcase(os.path.realpath(str(folder)))
-                demo_real = os.path.normcase(os.path.realpath(str(DATA_ROOT / '内置测试数据')))
-                if scan_real != demo_real:
-                    catalog_media_scan(
-                        INDEX_DB,
-                        folder,
-                        paths,
-                        full_scan=bool(recursive),
-                    )
+                scan_session = begin_catalog_scan(INDEX_DB, folder)
             except Exception:
-                logger.warning("catalog source/media snapshot update failed", exc_info=True)
+                scan_session = None
+                logger.warning("catalog scan session start failed", exc_info=True)
+
+        for p in iter_images(folder, recursive=recursive):
+            paths.append(p)
+            if scan_session is not None:
+                pending_catalog.append(p)
+                if len(pending_catalog) >= 512:
+                    catalog_scan_batch(INDEX_DB, scan_session, pending_catalog)
+                    pending_catalog.clear()
+            if len(paths) % 128 == 0:
+                with _SCAN_SNAPSHOT_CV:
+                    entry = _SCAN_SNAPSHOTS.get(key)
+                    if entry and entry.get('state') == 'scanning':
+                        entry['discovered'] = len(paths)
+                        entry['paths'] = list(paths)
+
+        if scan_session is not None:
+            if pending_catalog:
+                catalog_scan_batch(INDEX_DB, scan_session, pending_catalog)
+                pending_catalog.clear()
+            finish_catalog_scan(
+                INDEX_DB, scan_session, full_scan=bool(recursive)
+            )
     except Exception as exc:
+        if scan_session is not None:
+            abort_catalog_scan(INDEX_DB, scan_session, str(exc))
         with _SCAN_SNAPSHOT_CV:
-            _SCAN_SNAPSHOTS[key] = {'state': 'failed', 'at': time.time(), 'error': str(exc)}
+            _SCAN_SNAPSHOTS[key] = {
+                'state': 'failed', 'at': time.time(), 'error': str(exc),
+                'paths': list(paths), 'discovered': len(paths),
+            }
             _SCAN_SNAPSHOT_CV.notify_all()
         raise
 
-    if producer:
-        with _SCAN_SNAPSHOT_CV:
-            _SCAN_SNAPSHOTS[key] = {'state': 'ready', 'at': time.time(), 'paths': list(paths)}
-            # Avoid unbounded accumulation when users switch between many libraries.
-            if len(_SCAN_SNAPSHOTS) > 8:
-                stale = sorted(
-                    ((k, v.get('at', 0)) for k, v in _SCAN_SNAPSHOTS.items() if k != key),
-                    key=lambda kv: kv[1]
-                )
-                for old_key, _ in stale[:max(0, len(_SCAN_SNAPSHOTS) - 8)]:
-                    _SCAN_SNAPSHOTS.pop(old_key, None)
-            _SCAN_SNAPSHOT_CV.notify_all()
+    paths.sort(key=lambda p: os.path.normcase(str(p)))
+    with _SCAN_SNAPSHOT_CV:
+        _SCAN_SNAPSHOTS[key] = {
+            'state': 'ready', 'at': time.time(), 'paths': list(paths),
+            'discovered': len(paths),
+        }
+        if len(_SCAN_SNAPSHOTS) > 8:
+            stale = sorted(
+                ((k, v.get('at', 0)) for k, v in _SCAN_SNAPSHOTS.items() if k != key),
+                key=lambda kv: kv[1],
+            )
+            for old_key, _ in stale[:max(0, len(_SCAN_SNAPSHOTS) - 8)]:
+                _SCAN_SNAPSHOTS.pop(old_key, None)
+        _SCAN_SNAPSHOT_CV.notify_all()
     return list(paths)
+
+
+def current_scan_snapshot(folder=None):
+    """Small status snapshot for UI/diagnostics without filesystem access."""
+    with _SCAN_SNAPSHOT_CV:
+        if folder:
+            norm = os.path.normcase(os.path.realpath(str(folder)))
+            matches = [
+                v for k, v in _SCAN_SNAPSHOTS.items()
+                if k and k[0] == norm
+            ]
+            entry = max(matches, key=lambda v: v.get('at', 0), default=None)
+        else:
+            entry = max(_SCAN_SNAPSHOTS.values(),
+                        key=lambda v: v.get('at', 0), default=None)
+        if not entry:
+            return {'state': 'idle', 'discovered': 0}
+        return {
+            'state': str(entry.get('state') or 'idle'),
+            'discovered': int(entry.get('discovered') or len(entry.get('paths') or [])),
+            'error': str(entry.get('error') or ''),
+        }
 
 
 # --------------------------------------------------------------------------- #
