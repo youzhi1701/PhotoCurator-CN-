@@ -497,13 +497,13 @@ jobs:
               "webview.start(gui='edgechromium'",
               "tray.run_detached()",
               "def window_action(self, action)",
+              "window.events.closing += on_closing",
           )
           missing = [item for item in required if item not in desktop]
           if missing:
               raise SystemExit("Stable Windows shell contract missing: " + repr(missing))
 
           forbidden_desktop = (
-              "window.events.closing +=",
               "window.events.shown +=",
               "window.events.loaded +=",
               "window.native",
@@ -544,7 +544,7 @@ jobs:
           )
           missing_ui = [item for item in required_ui if item not in ui]
           if missing_ui:
-              raise SystemExit("v1.5.7 workspace contract missing: " + repr(missing_ui))
+              raise SystemExit("v1.5.8 workspace contract missing: " + repr(missing_ui))
 
           shortcuts = core.split("@app.route('/api/shortcuts')", 1)[1].split(
               "@app.route('/api/sources')", 1
