@@ -629,21 +629,30 @@ jobs:
               lcfg.mkdir(parents=True)
               tcfg.mkdir(parents=True)
 
-              with sqlite3.connect(lcfg / "library_index.sqlite3") as db:
+              legacy_db = lcfg / "library_index.sqlite3"
+              target_db = tcfg / "library_index.sqlite3"
+
+              db = sqlite3.connect(legacy_db)
+              try:
                   db.execute(schema)
                   db.execute(
                       "INSERT INTO cull_cache VALUES(?,?,?,?,?,?)",
                       ("X:/photo.jpg", 100, 10, 222.0, 88.0, 200.0),
                   )
                   db.commit()
+              finally:
+                  db.close()
 
-              with sqlite3.connect(tcfg / "library_index.sqlite3") as db:
+              db = sqlite3.connect(target_db)
+              try:
                   db.execute(schema)
                   db.execute(
                       "INSERT INTO cull_cache VALUES(?,?,?,?,?,?)",
                       ("X:/photo.jpg", 100, 10, 111.0, 55.0, 100.0),
                   )
                   db.commit()
+              finally:
+                  db.close()
 
               (lcfg / "recents.json").write_text(
                   json.dumps(["X:/archive"]), encoding="utf-8"
@@ -657,11 +666,14 @@ jobs:
               if not migrate_legacy_config(legacy, target):
                   raise SystemExit("legacy config migration did not run")
 
-              with sqlite3.connect(tcfg / "library_index.sqlite3") as db:
+              db = sqlite3.connect(target_db)
+              try:
                   row = db.execute(
                       "SELECT region_s,quality,updated_at FROM cull_cache "
                       "WHERE path='X:/photo.jpg'"
                   ).fetchone()
+              finally:
+                  db.close()
               if row != (222.0, 88.0, 200.0):
                   raise SystemExit(f"newer legacy catalog row was not merged: {row!r}")
 
@@ -676,7 +688,13 @@ jobs:
               if (target / "cache").exists():
                   raise SystemExit("rebuildable cache should not be migrated")
 
-          print("Runtime data path/migration merge OK")
+              # Windows must be able to rename the old DB immediately after
+              # migration. This catches leaked ATTACH/connection handles.
+              released = legacy_db.with_suffix(".released.sqlite3")
+              legacy_db.rename(released)
+              released.rename(legacy_db)
+
+          print("Runtime data path/migration merge + handle release OK")
           '@ | python -
 
       - name: Unicode path and background lifecycle smoke test
