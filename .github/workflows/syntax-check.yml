@@ -472,6 +472,7 @@ jobs:
 
           desktop = Path("desktop_app.py").read_text(encoding="utf-8")
           ui = Path("photo_curator.py").read_text(encoding="utf-8")
+          core = ui
 
           required = (
               'APP_TITLE = "PhotoCurator"',
@@ -522,7 +523,7 @@ jobs:
           )
           missing_ui = [item for item in required_ui if item not in ui]
           if missing_ui:
-              raise SystemExit("v1.5.3 workspace contract missing: " + repr(missing_ui))
+              raise SystemExit("v1.5.4 workspace contract missing: " + repr(missing_ui))
 
           shortcuts = core.split("@app.route('/api/shortcuts')", 1)[1].split(
               "@app.route('/api/sources')", 1
