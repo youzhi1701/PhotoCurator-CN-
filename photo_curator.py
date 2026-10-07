@@ -3598,21 +3598,30 @@ const taskCenter=document.getElementById('taskCenter');
 document.getElementById('taskToggle').onclick=()=>taskCenter.classList.toggle('open');
 document.getElementById('taskClose').onclick=()=>taskCenter.classList.remove('open');
 document.getElementById('appExit').onclick=async()=>{
-  let activeSteps=[];
+  let activeSteps=[],fileTasks=0;
   try{
-    const rows=await Promise.all(['cull','dedup','rank'].map(step=>
-      fetch('/api/progress/'+step).then(r=>r.json()).then(d=>({step,running:!!d.running}))
-    ));
+    const [rows,tasks]=await Promise.all([
+      Promise.all(['cull','dedup','rank'].map(step=>
+        fetch('/api/progress/'+step).then(r=>r.json()).then(d=>({step,running:!!d.running}))
+      )),
+      fetch('/api/tasks').then(r=>r.json()).catch(()=>({active:0}))
+    ]);
     activeSteps=rows.filter(x=>x.running).map(x=>x.step);
+    fileTasks=Math.max(0,Number(tasks.active)||0);
   }catch(_){
     if(coreRunning)activeSteps.push('cull','dedup');
     if(isRunning&&runningStep)activeSteps.push(runningStep);
     activeSteps=[...new Set(activeSteps)];
   }
   const activeAny=activeSteps.length>0;
-  const msg=activeAny
-    ?'当前仍有分析任务在运行。退出前将先发送停止请求；已完成的分析结果和后台文件任务状态会继续保留。'
-    :'确定退出 PhotoCurator 吗？';
+  let msg='确定退出 PhotoCurator 吗？';
+  if(activeAny&&fileTasks){
+    msg='当前仍有分析任务在运行，并有 '+fileTasks+' 个后台文件任务。退出前会先停止分析；未完成的文件任务已持久化，将在下次启动后自动继续。';
+  }else if(activeAny){
+    msg='当前仍有分析任务在运行。退出前将先发送停止请求；已完成的分析结果会继续保留。';
+  }else if(fileTasks){
+    msg='当前还有 '+fileTasks+' 个后台文件任务。未完成任务已持久化，退出后会在下次启动自动继续。确定退出吗？';
+  }
   const ok=await askBatchConfirm('退出 PhotoCurator',msg,activeAny?'停止并退出':'退出');
   if(!ok)return;
   if(activeAny){
