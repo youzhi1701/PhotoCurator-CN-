@@ -59,6 +59,13 @@ def main():
         wait = WebDriverWait(driver, 20)
         driver.get(f"http://127.0.0.1:{photo_curator.PORT}/")
 
+        wait.until(lambda d: d.execute_script(
+            "return document.documentElement.dataset.uiReady || ''"
+        ) == "1")
+        require(driver.execute_script(
+            "return document.documentElement.dataset.uiFatal || ''"
+        ) != "1", "页面初始化期间出现前端致命错误")
+
         start = wait.until(lambda d: d.find_element(By.ID, "startBtn"))
         require(start.get_attribute("disabled") is not None,
                 "未选择文件夹时“开始分析”必须禁用")
