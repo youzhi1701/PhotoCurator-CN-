@@ -773,6 +773,7 @@ IMG_EXTS = {'.jpg', '.jpeg', '.png', '.tif', '.tiff', '.bmp', '.webp'}
 
 RESULT_ROOT_DIR = 'PhotoCurator_Result（照片筛选结果）'
 SOFTWARE_TRASH_DIR = 'PhotoCurator_RecycleBin（软件回收站）'
+TRASH_MANIFEST_NAME = '.photocurator-trash.json'
 RESULT_KIND_DIRS = {
     'Blurred': 'Blurred（模糊照片）',
     'Duplicates': 'Duplicates（重复照片）',
@@ -1173,6 +1174,65 @@ def _move_reviewed_files(paths, kind, root, mode='source', custom_output=''):
     return result
 
 
+def _trash_manifest_file(root):
+    if not root:
+        return None
+    return Path(os.path.realpath(str(root))) / SOFTWARE_TRASH_DIR / TRASH_MANIFEST_NAME
+
+
+def _write_trash_manifest(root):
+    """Keep restore metadata beside trash files so reinstall can recover it."""
+    target = _trash_manifest_file(root)
+    if target is None:
+        return
+    try:
+        root_real = os.path.realpath(str(root))
+        with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=15) as db:
+            rows = db.execute(
+                "SELECT original_path,trash_path,source_step,deleted_at FROM software_trash"
+            ).fetchall()
+        data = []
+        for original, trash_path, source_step, deleted_at in rows:
+            try:
+                if os.path.commonpath([os.path.realpath(str(original)), root_real]) != root_real:
+                    continue
+            except Exception:
+                continue
+            if Path(str(trash_path)).is_file():
+                data.append({'original_path': str(original), 'trash_path': str(trash_path),
+                             'source_step': str(source_step or ''), 'deleted_at': float(deleted_at)})
+        target.parent.mkdir(parents=True, exist_ok=True)
+        tmp = target.with_suffix(target.suffix + '.tmp')
+        tmp.write_text(json.dumps({'version': 1, 'items': data}, ensure_ascii=False, indent=2), encoding='utf-8')
+        os.replace(str(tmp), str(target))
+    except Exception:
+        logger.debug("trash manifest save failed", exc_info=True)
+
+
+def _import_trash_manifest(root):
+    target = _trash_manifest_file(root)
+    if target is None or not target.is_file():
+        return
+    try:
+        doc = json.loads(target.read_text(encoding='utf-8'))
+        rows = []
+        for item in doc.get('items') or []:
+            original = str(item.get('original_path') or '')
+            trash_path = str(item.get('trash_path') or '')
+            if not original or not Path(trash_path).is_file():
+                continue
+            rows.append((original, trash_path, str(item.get('source_step') or ''),
+                         float(item.get('deleted_at') or time.time())))
+        if rows:
+            with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=15) as db:
+                db.executemany(
+                    "INSERT OR IGNORE INTO software_trash "
+                    "(original_path,trash_path,source_step,deleted_at) VALUES(?,?,?,?)", rows
+                )
+                db.commit()
+    except Exception:
+        logger.debug("trash manifest import failed", exc_info=True)
+
 def _trash_destination(src, root):
     """Choose a reversible PhotoCurator-owned trash path on the source drive."""
     src = Path(src).resolve()
@@ -1212,12 +1272,15 @@ def _move_to_software_trash(src, root, source_step):
         except Exception:
             logger.error("software trash rollback failed", exc_info=True)
         raise
+    _write_trash_manifest(root)
     _activity('移入软件回收站', original, trash_path)
     return trash_id, trash_path
 
 
 def _trash_rows(root=None):
     """Return live software-trash rows, pruning records whose files disappeared."""
+    if root:
+        _import_trash_manifest(root)
     root_cmp = os.path.normcase(os.path.realpath(str(root))) if root else None
     stale = []
     rows = []
@@ -1273,6 +1336,7 @@ def _restore_trash_item(trash_id):
     with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=15) as db:
         db.execute("DELETE FROM software_trash WHERE id=?", (int(trash_id),))
         db.commit()
+    _write_trash_manifest(state.get('folder'))
     _activity('从软件回收站恢复', str(restored), original)
     return str(restored)
 
@@ -1290,6 +1354,7 @@ def _purge_trash_item(trash_id):
     with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=15) as db:
         db.execute("DELETE FROM software_trash WHERE id=?", (int(trash_id),))
         db.commit()
+    _write_trash_manifest(state.get('folder'))
     _activity('永久删除', str(target), '软件回收站')
 
 
