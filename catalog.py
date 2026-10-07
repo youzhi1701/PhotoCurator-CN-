@@ -490,10 +490,51 @@ def list_sources(db_path, *, refresh=True):
     return list(grouped.values())
 
 
-def catalog_media_scan(db_path, folder, paths, *, full_scan=True):
+def begin_catalog_scan(db_path, folder):
+    """Start a durable full-scan generation.
+
+    A previous interrupted scan is marked interrupted, never completed.  Only a
+    completed generation is allowed to mark older catalog rows missing.
+    """
     info = register_source(db_path, folder)
     now = time.time()
-    root = os.path.realpath(str(folder))
+    generation = int(time.time_ns())
+    session_id = uuid.uuid4().hex
+    with _connect(db_path) as db:
+        db.execute(
+            """UPDATE scan_session
+               SET state='interrupted',finished_at=?,updated_at=?,
+                   error=CASE WHEN error='' THEN 'previous scan did not complete' ELSE error END
+               WHERE root_id=? AND state='running'""",
+            (now, now, info["root_id"]),
+        )
+        db.execute(
+            """INSERT INTO scan_session
+               (session_id,root_id,source_id,generation,state,started_at,updated_at,
+                files_seen,error_count,error)
+               VALUES(?,?,?,?, 'running', ?, ?, 0, 0, '')""",
+            (
+                session_id, info["root_id"], info["source_id"],
+                generation, now, now,
+            ),
+        )
+        db.commit()
+    return {
+        **info,
+        "session_id": session_id,
+        "generation": generation,
+        "files_seen": 0,
+    }
+
+
+def catalog_scan_batch(db_path, session, paths):
+    """Persist one discovered batch without declaring unseen rows missing."""
+    if not paths:
+        return 0
+    now = time.time()
+    root = os.path.realpath(str(session["root_path"]))
+    root_path = Path(root)
+    generation = int(session["generation"])
     rows = []
     for raw in paths:
         path = Path(raw)
@@ -502,49 +543,160 @@ def catalog_media_scan(db_path, folder, paths, *, full_scan=True):
         except OSError:
             continue
         try:
-            rel = str(path.resolve().relative_to(Path(root).resolve()))
+            rel = str(path.resolve().relative_to(root_path.resolve()))
         except Exception:
             rel = path.name
         media_key = hashlib.sha256(
-            f"{info['root_id']}|{os.path.normcase(rel)}".encode("utf-8", errors="replace")
+            f"{session['root_id']}|{os.path.normcase(rel)}".encode(
+                "utf-8", errors="replace"
+            )
         ).hexdigest()
         rows.append((
-            media_key, info["source_id"], info["root_id"], rel,
+            media_key, session["source_id"], session["root_id"], rel,
             str(path), str(path), int(st.st_size), int(st.st_mtime_ns),
-            "present", now, now,
+            "present", "normal", generation, now, now,
         ))
 
+    if not rows:
+        return 0
     with _connect(db_path) as db:
         db.executemany(
             """INSERT INTO media_catalog
                (media_id,source_id,root_id,relative_path,original_path,current_path,
-                size,mtime_ns,state,first_seen_at,last_seen_at)
-               VALUES(?,?,?,?,?,?,?,?,?,?,?)
+                size,mtime_ns,state,lifecycle,scan_generation,first_seen_at,last_seen_at)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
                ON CONFLICT(root_id,relative_path) DO UPDATE SET
                  current_path=excluded.current_path,
                  size=excluded.size,
                  mtime_ns=excluded.mtime_ns,
                  state='present',
+                 scan_generation=excluded.scan_generation,
                  last_seen_at=excluded.last_seen_at,
                  missing_since=NULL""",
             rows,
         )
+        db.execute(
+            """UPDATE scan_session
+               SET files_seen=files_seen+?,updated_at=?
+               WHERE session_id=? AND state='running'""",
+            (len(rows), now, session["session_id"]),
+        )
+        db.execute(
+            """UPDATE library_root SET last_seen_at=? WHERE root_id=?""",
+            (now, session["root_id"]),
+        )
+        db.commit()
+    session["files_seen"] = int(session.get("files_seen") or 0) + len(rows)
+    return len(rows)
+
+
+def finish_catalog_scan(db_path, session, *, full_scan=True):
+    """Commit a successful generation and only then mark unseen rows missing."""
+    now = time.time()
+    with _connect(db_path) as db:
+        row = db.execute(
+            "SELECT state FROM scan_session WHERE session_id=?",
+            (session["session_id"],),
+        ).fetchone()
+        if not row or str(row["state"]) != "running":
+            raise RuntimeError("scan session is not active")
         if full_scan:
             db.execute(
                 """UPDATE media_catalog
                    SET state='missing',missing_since=COALESCE(missing_since,?)
-                   WHERE root_id=? AND last_seen_at<? AND state='present'""",
-                (now, info["root_id"], now - 0.000001),
+                   WHERE root_id=? AND scan_generation<>? AND state='present'""",
+                (now, session["root_id"], int(session["generation"])),
             )
+        present = int(db.execute(
+            """SELECT COUNT(*) FROM media_catalog
+               WHERE root_id=? AND state='present'""",
+            (session["root_id"],),
+        ).fetchone()[0])
+        analyzed = int(db.execute(
+            """SELECT COUNT(*) FROM media_catalog m
+               WHERE m.root_id=? AND EXISTS(
+                 SELECT 1 FROM cull_cache c
+                 WHERE c.path=m.current_path AND c.size=m.size AND c.mtime_ns=m.mtime_ns
+               )""",
+            (session["root_id"],),
+        ).fetchone()[0])
         db.execute(
             """UPDATE library_root
-               SET photo_count=?,last_scan_at=?,last_seen_at=?
+               SET photo_count=?,analyzed_count=?,last_scan_at=?,last_seen_at=?
                WHERE root_id=?""",
-            (len(rows), now, now, info["root_id"]),
+            (present, analyzed, now, now, session["root_id"]),
+        )
+        db.execute(
+            """UPDATE scan_session
+               SET state='completed',finished_at=?,updated_at=?,files_seen=?
+               WHERE session_id=?""",
+            (now, now, int(session.get("files_seen") or present), session["session_id"]),
         )
         db.commit()
-    info["photo_count"] = len(rows)
-    return info
+    session["photo_count"] = present
+    session["analyzed_count"] = analyzed
+    return session
+
+
+def abort_catalog_scan(db_path, session, error=""):
+    """Record an interrupted scan without changing existing missing/present state."""
+    now = time.time()
+    try:
+        with _connect(db_path) as db:
+            db.execute(
+                """UPDATE scan_session
+                   SET state='interrupted',finished_at=?,updated_at=?,
+                       error_count=error_count+1,error=?
+                   WHERE session_id=? AND state='running'""",
+                (now, now, str(error or "")[:2000], session["session_id"]),
+            )
+            db.commit()
+    except Exception:
+        pass
+
+
+def catalog_media_scan(db_path, folder, paths, *, full_scan=True):
+    """Compatibility wrapper for callers that already own a complete path list."""
+    session = begin_catalog_scan(db_path, folder)
+    try:
+        for i in range(0, len(paths), 512):
+            catalog_scan_batch(db_path, session, paths[i:i + 512])
+        return finish_catalog_scan(db_path, session, full_scan=full_scan)
+    except Exception as exc:
+        abort_catalog_scan(db_path, session, str(exc))
+        raise
+
+
+def update_media_lifecycle(db_path, original_path, current_path, lifecycle):
+    """Keep Media Catalog path/lifecycle aligned with accepted file operations."""
+    original = os.path.realpath(str(original_path))
+    current = os.path.realpath(str(current_path or original_path))
+    with _connect(db_path) as db:
+        db.execute(
+            """UPDATE media_catalog
+               SET current_path=?,lifecycle=?,last_seen_at=?
+               WHERE original_path=? OR current_path=?""",
+            (current, str(lifecycle), time.time(), original, original),
+        )
+        db.commit()
+
+
+def recent_scan_sessions(db_path, root_id=None, limit=20):
+    init_catalog_schema(db_path)
+    limit = max(1, min(100, int(limit or 20)))
+    with _connect(db_path) as db:
+        if root_id:
+            rows = db.execute(
+                """SELECT * FROM scan_session WHERE root_id=?
+                   ORDER BY started_at DESC LIMIT ?""",
+                (str(root_id), limit),
+            ).fetchall()
+        else:
+            rows = db.execute(
+                "SELECT * FROM scan_session ORDER BY started_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+    return [dict(row) for row in rows]
 
 
 def root_snapshot(db_path, root_id, limit=2000, offset=0):
