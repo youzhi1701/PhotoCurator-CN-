@@ -86,6 +86,7 @@ app = Flask(__name__)
 
 INDEX_DB = DATA_ROOT / 'config' / 'library_index.sqlite3'
 _DB_LOCK = threading.Lock()
+_STATE_LOCK = threading.RLock()
 _GEOCODE_LOCK = threading.Lock()
 _GEOCODE_LAST_AT = 0.0
 CULL_METRICS_VERSION = 1
@@ -1112,6 +1113,130 @@ def _purge_trash_item(trash_id):
         db.execute("DELETE FROM software_trash WHERE id=?", (int(trash_id),))
         db.commit()
     _activity('永久删除', str(target), '软件回收站')
+
+
+def _find_original_for_path(path):
+    """Resolve a current/trash path back to the stable original identity."""
+    raw = os.path.realpath(str(path))
+    try:
+        with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=10) as db:
+            row = db.execute(
+                "SELECT original_path FROM media_state WHERE current_path=? OR original_path=? "
+                "ORDER BY updated_at DESC LIMIT 1", (raw, raw)
+            ).fetchone()
+        return str(row[0]) if row else raw
+    except Exception:
+        return raw
+
+
+def _apply_media_lifecycle(original_path, current_path, lifecycle, source_step='', trash_id=None):
+    """Synchronize one file lifecycle change into every in-memory view."""
+    original = os.path.realpath(str(original_path))
+    current = os.path.realpath(str(current_path or original_path))
+    _media_state_set(original, current, lifecycle, source_step,
+                     detail=str(trash_id or ''))
+    with _STATE_LOCK:
+        cull = state['cull']
+        for p in cull.get('photos', []):
+            identity = os.path.realpath(str(p.get('original_path') or p.get('path') or ''))
+            if identity == original:
+                p['original_path'] = original
+                p['path'] = current
+                p['thumb'] = thumb_url(current) if Path(current).is_file() else ''
+                p['lifecycle'] = lifecycle
+                p['trash_id'] = trash_id
+                p['move_selected'] = False
+        cull['sharp_paths'] = [p for p in cull.get('sharp_paths', [])
+                               if os.path.realpath(str(p)) != original]
+        cull.setdefault('removed_paths', set()).add(original)
+        active_cull = [p for p in cull.get('photos', [])
+                       if p.get('lifecycle') not in ('pending_trash','trashed','permanently_deleted')]
+        cull['sharp'] = sum(1 for p in active_cull if p.get('tier') == 'sharp')
+        cull['soft'] = sum(1 for p in active_cull if p.get('tier') == 'soft')
+        cull['blurry'] = sum(1 for p in active_cull if p.get('tier') == 'blurry')
+
+        dedup = state['dedup']
+        for group in dedup.get('groups_data', []):
+            changed = False
+            for m in group.get('members', []):
+                identity = os.path.realpath(str(m.get('original_path') or m.get('path') or ''))
+                if identity == original:
+                    m['original_path'] = original
+                    m['path'] = current
+                    m['thumb'] = thumb_url(current) if Path(current).is_file() else ''
+                    m['lifecycle'] = lifecycle
+                    m['trash_id'] = trash_id
+                    m['selected'] = False
+                    changed = True
+            if changed:
+                group['selected_paths'] = [
+                    p for p in (group.get('selected_paths') or [])
+                    if os.path.realpath(str(p)) != original
+                ]
+                active = [m for m in group.get('members', [])
+                          if m.get('lifecycle') not in ('pending_trash','trashed','permanently_deleted')]
+                if len(active) == 1:
+                    active[0]['selected'] = True
+                    group['selected_paths'] = [active[0].get('path')]
+                    group['status'] = 'reviewed'
+                elif len(active) > 1:
+                    group['status'] = group.get('status') or 'pending'
+                else:
+                    group['status'] = 'reviewed'
+                group['active_count'] = len(active)
+                group['deleted_count'] = sum(
+                    1 for m in group.get('members', [])
+                    if m.get('lifecycle') in ('pending_trash','trashed','permanently_deleted')
+                )
+        dedup['photos'] = [g for g in dedup.get('groups_data', []) if g.get('count', 0) > 1]
+        dedup['groups'] = len(dedup['photos'])
+        dedup['kept_paths'] = [
+            p for g in dedup.get('groups_data', [])
+            for p in (g.get('selected_paths') or [])
+            if p and Path(p).is_file()
+        ]
+        rank = state['rank']
+        rank['scores'] = [sc for sc in rank.get('scores', [])
+                          if os.path.realpath(str(getattr(sc, 'path', ''))) != original]
+        rank['total'] = len(rank['scores'])
+        rank['preview_at'] = 0.0
+
+
+def _background_move_to_trash(payload):
+    original = os.path.realpath(str(payload['path']))
+    folder = os.path.realpath(str(payload['folder']))
+    source_step = str(payload.get('step') or '')
+    target = _safe_image_path(original)
+    if target is None or not Path(target).is_file():
+        row = _media_state_get(original)
+        if row and row.get('state') == 'trashed':
+            return {'ok': True, 'already_done': True, 'path': row.get('current_path')}
+        raise FileNotFoundError("待删除照片已不存在")
+    trash_id, trash_path = _move_to_software_trash(target, folder, source_step)
+    _delete_review_override(original)
+    _apply_media_lifecycle(original, trash_path, 'trashed', source_step, trash_id)
+    return {'ok': True, 'original_path': original, 'trash_path': trash_path,
+            'trash_id': trash_id}
+
+
+def _background_permanent_delete(payload):
+    path = os.path.realpath(str(payload['path']))
+    original = _find_original_for_path(path)
+    target = Path(path)
+    if target.is_file():
+        target.unlink()
+    with _DB_LOCK, sqlite3.connect(str(INDEX_DB), timeout=15) as db:
+        db.execute("DELETE FROM software_trash WHERE trash_path=? OR original_path=?",
+                   (path, original))
+        db.commit()
+    _apply_media_lifecycle(original, path, 'permanently_deleted',
+                           str(payload.get('step') or ''))
+    _activity('永久删除', original, path)
+    return {'ok': True, 'original_path': original, 'deleted_path': path}
+
+
+TASK_MANAGER.register('move_to_trash', _background_move_to_trash)
+TASK_MANAGER.register('permanent_delete', _background_permanent_delete)
 
 
 def _thumb_cache_path(image_path):
