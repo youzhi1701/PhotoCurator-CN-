@@ -22,5 +22,6 @@
   "replace": [
     "app"
   ],
-  "notes": "v1.5.0 可直接覆盖 v1.4.2 / v1.4.1 / v1.4.0 / v1.3.0；仅替换 app。运行数据固定在 %LOCALAPPDATA%/PhotoCurator/data，首次启动会从旧 {app}/data/config 安全迁移持久化状态；缓存与日志可重建，用户照片、筛选结果、自定义输出目录及 PhotoCurator 软件回收站不受程序升级影响。"
+  "notes": "v1.5.0 可直接覆盖 v1.4.2 / v1.4.1 / v1.4.0 / v1.3.0；仅替换 app。运行数据固定在 %LOCALAPPDATA%/PhotoCurator/data，首次启动会从旧 {app}/data/config 安全迁移持久化状态；缓存与日志可重建，用户照片、筛选结果、自定义输出目录及 PhotoCurator 软件回收站不受程序升级影响。",
+  "release_date": "2026-10-07"
 }
