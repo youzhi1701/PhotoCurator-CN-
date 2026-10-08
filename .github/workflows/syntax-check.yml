@@ -930,6 +930,7 @@ jobs:
         run: |
           python -m unittest -v test_background_task_history
           python -m unittest -v test_catalog_unique_count
+          python -m unittest -v test_missing_delete_safety
 
       - name: Performance architecture regression gate
         run: |
