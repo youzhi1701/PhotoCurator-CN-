@@ -90,5 +90,65 @@ class SafeMoveTests(unittest.TestCase):
             self.assertEqual(list(dst.parent.glob('*.photocurator-part')), [])
 
 
+
+class ReviewedSidecarTests(unittest.TestCase):
+    def test_changed_sidecar_blocks_photo_move(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp)
+            photo=root/'photo.jpg'
+            aux=root/'photo.xmp'
+            photo.write_bytes(b'photo')
+            aux.write_bytes(b'original')
+            record=photo_curator._sidecar_review_snapshot(photo)
+            aux.unlink()
+            aux.write_bytes(b'replaced')
+            with self.assertRaises(RuntimeError):
+                photo_curator._move_photo_bundle(
+                    photo, root/'bin'/'photo.jpg', sidecar_records=record)
+            self.assertTrue(photo.is_file())
+            self.assertEqual(aux.read_bytes(), b'replaced')
+
+    def test_new_sidecar_after_queue_blocks_photo_move(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp)
+            photo=root/'photo.jpg'
+            photo.write_bytes(b'photo')
+            record=photo_curator._sidecar_review_snapshot(photo)
+            (root/'photo.xmp').write_bytes(b'later')
+            with self.assertRaisesRegex(RuntimeError, '发生变化'):
+                photo_curator._move_photo_bundle(
+                    photo, root/'bin'/'photo.jpg', sidecar_records=record)
+            self.assertTrue(photo.is_file())
+
+    def test_resume_sidecar_after_photo_crash(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp)
+            photo=root/'photo.jpg'
+            aux=root/'photo.xmp'
+            photo.write_bytes(b'photo')
+            aux.write_bytes(b'metadata')
+            record=photo_curator._sidecar_review_snapshot(photo)
+            dst=root/'bin'
+            dst.mkdir()
+            photo.rename(dst/'photo.jpg')
+            photo_curator._resume_sidecar_bundle(photo,dst/'photo.jpg',record)
+            self.assertEqual((dst/'photo.xmp').read_bytes(),b'metadata')
+            photo_curator._resume_sidecar_bundle(photo,dst/'photo.jpg',record)
+
+    def test_symlink_sidecar_not_transferred(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp)
+            photo=root/'photo.jpg'
+            other=root/'other.txt'
+            photo.write_bytes(b'photo')
+            other.write_bytes(b'secret')
+            try:
+                (root/'photo.xmp').symlink_to(other)
+            except (OSError,NotImplementedError):
+                self.skipTest('symlink unavailable')
+            self.assertEqual(photo_curator._sidecar_review_snapshot(photo),[])
+            self.assertEqual(other.read_bytes(),b'secret')
+
+
 if __name__ == '__main__':
     unittest.main()
