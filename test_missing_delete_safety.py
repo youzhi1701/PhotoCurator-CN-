@@ -63,5 +63,16 @@ class MissingFileDeleteSafetyTests(unittest.TestCase):
         remove.assert_called_once()
         clear.assert_not_called()
 
+    def test_catalog_failure_never_silently_scans_unindexed_photos(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "library"
+            root.mkdir()
+            with patch.object(photo_curator, "begin_catalog_scan",
+                              side_effect=OSError("database unavailable")), \
+                 patch.object(photo_curator, "iter_images") as walker:
+                with self.assertRaisesRegex(RuntimeError, "图库索引无法建立"):
+                    photo_curator._shared_list_images(root, recursive=True)
+                walker.assert_not_called()
+
 if __name__ == "__main__":
     unittest.main()
