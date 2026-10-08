@@ -1834,6 +1834,36 @@ def _restore_group_status_for_member(original_path, status):
                 break
 
 
+def _file_action_signature(path):
+    """Small source identity snapshot, captured only for approved file actions."""
+    st = Path(path).stat()
+    if not Path(path).is_file():
+        raise FileNotFoundError(str(path))
+    return [int(st.st_dev), int(st.st_ino), int(st.st_size), int(st.st_mtime_ns)]
+
+
+def _verify_file_action_source(path, expected, *, moved_to=None):
+    """Fail closed when a queued task outlives the reviewed source identity.
+
+    A recovered same-volume rename can be reconciled only if its destination
+    still has the *same* identity. Cross-volume interrupted copies intentionally
+    require manual reconciliation; never claim an unrelated file as recovered.
+    """
+    if not isinstance(expected, (list, tuple)) or len(expected) != 4 or any(
+            not isinstance(n, int) for n in expected):
+        raise RuntimeError('旧版文件任务未记录原片身份，请重新复核后提交')
+    source = Path(path)
+    if source.is_file():
+        if _file_action_signature(source) != list(expected):
+            raise RuntimeError('照片在提交后台任务后已变化，操作已阻止，请重新复核')
+        return True
+    if moved_to and Path(moved_to).is_file():
+        if _file_action_signature(moved_to) != list(expected):
+            raise RuntimeError('恢复目标的文件身份与原始任务不符，操作已阻止')
+        return False
+    raise FileNotFoundError('照片或设备不可用，未执行文件操作')
+
+
 def _background_move_to_trash(payload):
     original = os.path.realpath(str(payload['path']))
     folder = os.path.realpath(str(payload['folder']))
@@ -1841,6 +1871,8 @@ def _background_move_to_trash(payload):
     planned_trash = str(payload.get('trash_path') or '').strip()
     target = _safe_image_path(original)
     try:
+        if target is not None and Path(target).is_file():
+            _verify_file_action_source(target, payload.get('source_identity'))
         if target is None or not Path(target).is_file():
             row = _media_state_get(original)
             if row and row.get('state') == 'trashed':
@@ -1849,6 +1881,8 @@ def _background_move_to_trash(payload):
             # Crash-safe continuation: the same-drive rename may already have
             # completed even though SQLite/lifecycle updates did not.
             if planned_trash and Path(planned_trash).is_file():
+                _verify_file_action_source(original, payload.get('source_identity'),
+                                           moved_to=planned_trash)
                 trash_id = _ensure_software_trash_record(
                     original, planned_trash, source_step
                 )
@@ -1899,6 +1933,7 @@ def _background_permanent_delete(payload):
             raise FileNotFoundError(
                 "无法确认照片已永久删除：文件不可访问或设备离线，状态已保留"
             )
+        _verify_file_action_source(target, payload.get('source_identity'))
         sidecars = _photo_sidecars(target)
         target.unlink()
         for sidecar in sidecars:
@@ -1938,6 +1973,9 @@ def _background_restore_trash(payload):
         # If a prior attempt already committed the trash-row deletion, the
         # persisted restore path lets this recovered task finish lifecycle sync.
         if original_hint and restore_hint and Path(restore_hint).is_file():
+            _verify_file_action_source(str(payload.get('trash_path') or ''),
+                                       payload.get('source_identity'),
+                                       moved_to=restore_hint)
             _apply_media_lifecycle(
                 original_hint, restore_hint, 'normal',
                 str(payload.get('source_step') or '')
@@ -1956,12 +1994,16 @@ def _background_restore_trash(payload):
         restored_file = Path(planned_restore)
 
         if trash_file.is_file():
+            _verify_file_action_source(trash_file, payload.get('source_identity'))
             restored_file.parent.mkdir(parents=True, exist_ok=True)
             if restored_file.exists():
                 raise FileExistsError("计划的恢复目标已存在，未覆盖任何文件")
             _move_photo_bundle(trash_file, restored_file)
         elif not restored_file.is_file():
             raise FileNotFoundError("回收站中的照片和计划恢复目标均不存在")
+        else:
+            _verify_file_action_source(trash_file, payload.get('source_identity'),
+                                       moved_to=restored_file)
 
         with _DB_LOCK, connect_db(INDEX_DB, timeout=15) as db:
             db.execute("DELETE FROM software_trash WHERE id=?", (trash_id,))
@@ -1990,6 +2032,7 @@ def _background_purge_trash(payload):
         return {'ok': True, 'already_done': True}
     original, trash_path, source_step = map(str, row)
     try:
+        _verify_file_action_source(trash_path, payload.get('source_identity'))
         _purge_trash_item(trash_id)
         _apply_media_lifecycle(original, trash_path, 'permanently_deleted', source_step)
         return {'ok': True, 'original_path': original, 'deleted_path': trash_path}
@@ -8340,7 +8383,8 @@ def api_dedup_apply():
         submitted = TASK_MANAGER.enqueue_many([
             {'kind': 'move_to_trash',
              'payload': {'path': path, 'folder': str(folder), 'step': 'dedup',
-                         'trash_path': trash_path},
+                         'trash_path': trash_path,
+                         'source_identity': _file_action_signature(path)},
              'priority': 12,
              'idempotency_key': f"move_to_trash:{original}"}
             for path, original, trash_path in prepared
@@ -8424,7 +8468,8 @@ def api_trash_restore():
              'original_path': row['original_path'],
              'trash_path': row['path'],
              'source_step': row.get('source_step') or '',
-             'restore_path': restore_path},
+             'restore_path': restore_path,
+             'source_identity': _file_action_signature(row['path'])},
             priority=8,
             idempotency_key=f"restore_trash:{trash_id}"
         )
@@ -8455,7 +8500,9 @@ def api_trash_purge():
     if data.get('all'):
         try:
             submitted = TASK_MANAGER.enqueue_many([
-                {'kind': 'purge_trash', 'payload': {'trash_id': row['id']},
+                {'kind': 'purge_trash', 'payload': {
+                    'trash_id': row['id'],
+                    'source_identity': _file_action_signature(row['path'])},
                  'priority': 12, 'idempotency_key': f"purge_trash:{row['id']}"}
                 for row in rows
             ])
@@ -8477,7 +8524,7 @@ def api_trash_purge():
         return jsonify({'error': '回收站文件暂不可用，请重连设备后再复核'}), 409
     try:
         task_id, created = TASK_MANAGER.enqueue(
-            'purge_trash', {'trash_id': trash_id}, priority=7,
+            'purge_trash', {'trash_id': trash_id, 'source_identity': _file_action_signature(candidate['path'])}, priority=7,
             idempotency_key=f"purge_trash:{trash_id}"
         )
     except Exception:
@@ -8511,7 +8558,8 @@ def api_trash_restore_all():
                              'original_path': row['original_path'],
                              'trash_path': row['path'],
                              'source_step': row.get('source_step') or '',
-                             'restore_path': restore_path},
+                             'restore_path': restore_path,
+                             'source_identity': _file_action_signature(row['path'])},
                  'priority': 15,
                  'idempotency_key': f"restore_trash:{row['id']}"}
                 for row, restore_path in planned_rows
@@ -8612,10 +8660,15 @@ def api_delete_photo():
 
     kind = 'move_to_trash' if mode == 'trash' else 'permanent_delete'
     priority = 10 if mode == 'trash' else 5
+    try:
+        source_identity = _file_action_signature(target)
+    except OSError:
+        return jsonify({'error': '照片已离线或发生变化，请重新复核'}), 409
     task_payload = {
         'path': str(target), 'folder': str(folder), 'step': step,
         'previous_lifecycle': previous_lifecycle,
         'previous_group_status': previous_group_status,
+        'source_identity': source_identity,
     }
     if mode == 'trash':
         task_payload['trash_path'] = str(
@@ -8987,7 +9040,8 @@ def api_move_blurry():
             {
                 'kind': 'move_to_trash',
                 'payload': {'path': path, 'folder': str(folder), 'step': 'cull',
-                            'trash_path': planned_trash},
+                            'trash_path': planned_trash,
+                            'source_identity': _file_action_signature(path)},
                 'priority': 12,
                 'idempotency_key': f"move_to_trash:{original}",
             }
