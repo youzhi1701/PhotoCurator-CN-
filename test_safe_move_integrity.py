@@ -72,10 +72,10 @@ class SafeMoveTests(unittest.TestCase):
                     raise OSError(errno.EXDEV, 'simulate different volume')
                 return real_rename(a, b)
 
-            with patch.object(photo_curator, '_rename_no_replace',
-                              side_effect=cross_volume_only), \\
+            with (patch.object(photo_curator, '_rename_no_replace',
+                              side_effect=cross_volume_only),,
                  patch.object(photo_curator.shutil, 'copy2',
-                              side_effect=replace_after_copy):
+                              side_effect=replace_after_copy)):
                 with self.assertRaisesRegex(RuntimeError, '原照片发生变化'):
                     photo_curator._safe_move_file(src, dst)
             self.assertEqual(src.read_bytes(), b'unrelated-data')
