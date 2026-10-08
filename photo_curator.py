@@ -8595,9 +8595,26 @@ def api_move_blurry():
         ('pending_trash','pending_permanent_delete','trashed','permanently_deleted')
         and pp.get('path')
     ]
-    task_ids = []
+    # Validate the complete selection before changing any lifecycle state.
+    # A disconnected volume, replaced symlink or stale result must never
+    # enqueue partial destructive operations against an unrelated path.
+    source_root = os.path.normcase(os.path.realpath(str(folder)))
+    checked = []
     for pp in rows:
         path = str(pp['path'])
+        real = os.path.normcase(os.path.realpath(path))
+        try:
+            inside = os.path.commonpath([source_root, real]) == source_root
+        except (ValueError, OSError):
+            inside = False
+        if not inside or not Path(real).is_file():
+            return jsonify({
+                'error': '待处理照片已移走、离线或不属于当前图库，请重新扫描后复核',
+                'path': path,
+            }), 409
+        checked.append((pp, path))
+    task_ids = []
+    for pp, path in checked:
         original = _find_original_for_path(path)
         planned_trash = str(_trash_destination(Path(path), folder).resolve())
         _apply_media_lifecycle(original, path, 'pending_trash', 'cull')
