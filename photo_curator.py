@@ -4037,6 +4037,107 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
 
   @media(max-width:1050px){.library-sidebar{width:270px!important;flex-basis:270px!important}}
   @media(max-width:900px){.library-sidebar{width:250px!important;flex-basis:250px!important}.source-pill{display:none}}
+
+  /* Aurora Bubble Glass vNext: single final design layer.
+     Apply blur only to fixed chrome, never to scrolling media cards. */
+  :root{
+    --aurora-ink:#203052;--aurora-line:rgba(116,137,202,.22);
+    --aurora-top:rgba(251,253,255,.88);--aurora-side:rgba(249,252,255,.80);
+    --aurora-lilac:#d8d2ff;--aurora-cyan:#b8f0fb;
+  }
+  body{
+    background:
+      radial-gradient(ellipse 48% 40% at 14% 5%,rgba(93,213,247,.32),transparent 100%),
+      radial-gradient(ellipse 44% 48% at 92% 9%,rgba(177,129,248,.31),transparent 100%),
+      radial-gradient(ellipse 35% 35% at 54% 94%,rgba(126,232,193,.18),transparent 100%),
+      linear-gradient(125deg,#f2f8ff 0%,#f9f7ff 51%,#f3fbff 100%)!important;
+    color:var(--aurora-ink)
+  }
+  .appbar{
+    height:54px!important;gap:14px!important;padding:0 15px!important;
+    border-bottom:1px solid rgba(255,255,255,.84)!important;
+    background:var(--aurora-top)!important;
+    box-shadow:0 5px 22px rgba(72,91,150,.08),inset 0 1px rgba(255,255,255,.98)!important;
+    backdrop-filter:blur(14px) saturate(145%)!important
+  }
+  body{grid-template-rows:54px minmax(0,1fr) 34px!important}
+  .app-brand-mark{
+    border-radius:13px!important;background:linear-gradient(138deg,#62c5f6 2%,#9b8cfd 57%,#cf99e9 100%)!important;
+    box-shadow:0 4px 12px rgba(111,124,231,.27),inset 0 1px 2px rgba(255,255,255,.6)!important
+  }
+  .workspace-tabs{
+    border-radius:17px!important;padding:4px!important;gap:3px!important;
+    border-color:rgba(159,171,218,.22)!important;
+    background:linear-gradient(160deg,rgba(246,250,255,.88),rgba(229,236,254,.69))!important;
+    box-shadow:inset 0 1px 3px rgba(112,125,173,.09)!important
+  }
+  .workspace-tabs .step{height:32px!important;border-radius:13px!important;font-weight:650}
+  .workspace-tabs .step.active{
+    background:linear-gradient(130deg,#fff,rgba(231,239,255,.98))!important;
+    box-shadow:0 3px 11px rgba(70,98,157,.13),inset 0 1px 1px #fff!important
+  }
+  .library-sidebar{
+    width:286px!important;flex:0 0 286px!important;padding:13px 13px 12px!important;
+    gap:6px!important;background:var(--aurora-side)!important;
+    border-right:1px solid rgba(255,255,255,.92)!important;
+    box-shadow:6px 0 28px rgba(72,103,167,.065),inset -1px 0 rgba(126,151,211,.11)!important;
+    backdrop-filter:blur(12px) saturate(135%)!important
+  }
+  .library-head{padding:1px 2px 8px;margin-bottom:3px!important}
+  .library-head b{font-size:14px!important;letter-spacing:-.02em}
+  .source-card{
+    border-radius:16px!important;
+    border:1px solid rgba(164,184,228,.29)!important;
+    background:linear-gradient(145deg,rgba(255,255,255,.9),rgba(239,246,255,.76))!important;
+    box-shadow:inset 0 1px rgba(255,255,255,.9),0 5px 15px rgba(78,108,157,.055)!important
+  }
+  .source-card>summary{min-height:48px}
+  .sidebar-primary-action .sidebar-start{
+    min-height:44px!important;height:44px!important;border-radius:15px!important;font-size:13px!important;
+    background:linear-gradient(110deg,#547fef,#947de9)!important;
+    box-shadow:0 7px 19px rgba(94,111,215,.22),inset 0 1px rgba(255,255,255,.25)!important
+  }
+  .sidebar-utility-host .inspector-drawer,
+  .sidebar-utility-host .toolbox-panel,
+  .sidebar-utility-host .task-center,
+  .sidebar-utility-host .activity-panel-sidebar{
+    border:1px solid rgba(169,188,232,.25)!important;
+    border-radius:17px!important;
+    background:linear-gradient(150deg,rgba(255,255,255,.87),rgba(241,247,255,.77))!important;
+    box-shadow:0 7px 17px rgba(93,113,175,.065),inset 0 1px rgba(255,255,255,.85)!important
+  }
+  .main{padding:16px 17px 22px!important}
+  .content-head{
+    border-radius:16px!important;
+    border:1px solid rgba(153,177,228,.23)!important;
+    background:rgba(255,255,255,.70)!important;
+    box-shadow:0 5px 20px rgba(81,101,151,.045)!important
+  }
+  .gallery,.folder-grid,.dedup-choices{
+    justify-content:space-evenly!important;column-gap:14px!important;row-gap:17px!important
+  }
+  .photo-card,.dedup-choice{
+    border-radius:15px!important;overflow:hidden;
+    border:1px solid rgba(177,193,229,.28)!important;
+    background:rgba(255,255,255,.94)!important;
+    box-shadow:0 4px 13px rgba(70,91,138,.065)!important;
+    backdrop-filter:none!important
+  }
+  .photo-card:hover,.dedup-choice:hover{
+    box-shadow:0 7px 20px rgba(66,98,160,.13)!important;
+    border-color:rgba(121,151,227,.38)!important
+  }
+  @media(max-width:1080px){
+    .library-sidebar{width:258px!important;flex-basis:258px!important}
+    .main{padding:12px!important}
+  }
+  @media(max-width:850px){
+    .library-sidebar{width:232px!important;flex-basis:232px!important}
+    .appbar{padding:0 8px!important;gap:7px!important}
+  }
+  @media(prefers-reduced-motion:reduce){
+    .photo-card,.dedup-choice,.workspace-tabs .step{transition:none!important;animation:none!important}
+  }
 </style></head><body>
 <header class="appbar pywebview-drag-region">
   <div class="app-brand" aria-label="PhotoCurator">
