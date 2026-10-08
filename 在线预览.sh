@@ -16,7 +16,7 @@ find_python() {
     if command -v "$candidate" >/dev/null 2>&1; then
       if "$candidate" - <<'PY' >/dev/null 2>&1
 import struct, sys
-ok = (3, 9) <= sys.version_info[:2] <= (3, 12) and struct.calcsize("P") * 8 == 64
+ok = (3, 10) <= sys.version_info[:2] <= (3, 12) and struct.calcsize("P") * 8 == 64
 raise SystemExit(0 if ok else 1)
 PY
       then
