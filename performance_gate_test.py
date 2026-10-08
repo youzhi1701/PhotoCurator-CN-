@@ -27,7 +27,9 @@ def block(start, end):
     return SOURCE[a:b]
 
 
-require('APP_VERSION = "1.7.2"' in SOURCE, "expected v1.7.2 source version")
+# Version changes must not break performance checks unrelated to the version.
+version = re.search(r'^APP_VERSION\\s*=\\s*"(\\d+\\.\\d+\\.\\d+)"', SOURCE, re.M)
+require(version is not None, "core version must use numeric semver x.y.z")
 
 # 1) Task center: one lightweight heartbeat, adaptive cadence, no idle
 #    fan-out to the three result-bearing progress endpoints.
