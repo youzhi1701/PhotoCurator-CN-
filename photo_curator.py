@@ -8646,7 +8646,10 @@ def api_move_blurry():
         return jsonify({'error': '未选择有效的照片文件夹'}), 400
     rows = _pending_review_rows()
     preview_token = (request.get_json(silent=True) or {}).get('review_token')
-    if preview_token is not None and preview_token != _pending_review_token(rows):
+    # File moves require a confirmation bound to the exact reviewed set.
+    # Missing tokens must not bypass the safety gate (legacy clients must
+    # explicitly fetch the non-destructive review preview first).
+    if not isinstance(preview_token, str) or preview_token != _pending_review_token(rows):
         return jsonify({
             'error': '待删除照片列表已发生变化，请重新集中复核后确认',
         }), 409
