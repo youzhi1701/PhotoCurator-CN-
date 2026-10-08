@@ -37,6 +37,24 @@ class BackgroundTaskHistoryTests(unittest.TestCase):
             finally:
                 manager.shutdown(timeout=3)
 
+    def test_deferred_start_waits_for_handler_registration(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = BackgroundTaskManager(Path(tmp) / "deferred.sqlite", workers=1, autostart=False)
+            try:
+                task_id, created = manager.enqueue(
+                    "late-handler", {"value": 7}, idempotency_key="late-handler-key"
+                )
+                self.assertTrue(created)
+                self.assertEqual(manager.get(task_id)["state"], "queued")
+                manager.register("late-handler", lambda payload: payload["value"])
+                manager.start()
+                manager.start()  # Repeated startup must never spawn extra workers.
+                self._wait_for_state(manager, task_id, "done")
+                self.assertEqual(manager.get(task_id)["result"], 7)
+                self.assertEqual(len(manager._threads), 1)
+            finally:
+                manager.shutdown(timeout=3)
+
     @staticmethod
     def _wait_for_state(manager, task_id, state):
         deadline = time.monotonic() + 5
