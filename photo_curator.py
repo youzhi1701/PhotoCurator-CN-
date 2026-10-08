@@ -4171,7 +4171,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
           <button class="workspace-action" id="exportBtn" style="display:none">⬇ 导出</button>
           <button class="workspace-action" id="exportPbgBtn" style="display:none">📱 壁纸</button>
           <button class="workspace-action danger-soft" id="moveBlurryBtn" style="display:none">🗑 移入回收站</button>
-          <button class="workspace-action" id="dedupApplyBtn" style="display:none!important" aria-hidden="true">旧版批量处理</button>
+          <button class="workspace-action" id="dedupApplyBtn" style="display:none" disabled>🗑 执行待删除照片</button>
         </div>
       </section>
 
@@ -6173,6 +6173,16 @@ function dedupGroupStatusLabel(status){
   if(status==='updated')return ['已筛选 · 有新增','updated'];
   return ['待筛选','pending'];
 }
+function updateDedupApplyButton(){
+  const button=document.getElementById('dedupApplyBtn');
+  if(!button)return;
+  const n=Array.from(dedupLiveStore.values()).reduce(
+    (total,group)=>total+(group.members||[]).filter(
+      m=>m.marked_delete&&visibleInReview(m)).length,0);
+  button.style.display=currentStep==='dedup'?'inline-flex':'none';
+  button.disabled=n===0;
+  button.textContent=n?'🗑 执行 '+n+' 张待删除照片':'尚未标记待删除照片';
+}
 function dedupMemberState(group,p){
   const life=p.lifecycle||'normal';
   if(life==='pending_trash')return ['正在移入回收站','state-pending','pending-delete'];
@@ -6190,6 +6200,7 @@ function renderDedupGroups(groups){
   );
   const g=document.getElementById('gallery');
   document.getElementById('sShowing').textContent=reviewGroups.length;
+  updateDedupApplyButton();
   const dedupSig=reviewGroups.map(group=>String(group.group_id)+':'+String(group.status||'pending')+':'
     +(group.members||[]).filter(visibleInReview).map(p=>p.path+':'+(p.marked_delete?1:0)+':'+(p.lifecycle||'normal')+':'+String(p.score??'')+':'+String(p.name||'')).join(',')).join('|');
   if(dedupSig===lastDedupSig&&lastStep===currentStep){updateResultTools();return;}
@@ -6288,6 +6299,7 @@ function selectDedupPhoto(groupId,path){
         counter.textContent='待删除 '+current.filter(p=>p.marked_delete).length+' · 共 '+current.length+' 张';
       }
       // Leave the card in place; other status partitions refresh on demand.
+      updateDedupApplyButton();
       lastDedupSig='';
     }).catch(err=>toast('标记未保存：'+(err.message||'未知错误'),'bad'));
 }
