@@ -14,4 +14,6 @@ tabs=source.split("document.querySelectorAll('.step').forEach(t=>t.onclick=",1)[
 assert "requestedStep=currentStep, requestedFolder=folder" in tabs
 assert "currentStep!==requestedStep" in tabs
 assert "!sameFolder(requestedFolder,folder)" in tabs
-print("Stale navigation response guard OK")
+cull=source.split("function renderCullStep(items){",1)[1].split("function cullMoveCounts()",1)[0]
+assert "cullType==='standard'?(!p.raw&&!p.heic)" in cull
+print("Stale navigation and standard format filter guards OK")
