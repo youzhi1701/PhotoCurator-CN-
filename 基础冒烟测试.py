@@ -662,9 +662,17 @@ def main():
         photo_curator.state["cull"]["photos"] = [
             {"path": str(direct_src), "tier": "sharp", "lifecycle": "normal"}
         ]
+        permanent_preview = client.post(
+            "/api/review-permanent",
+            json={"step": "cull", "path": str(direct_src)},
+            headers={"Host": f"127.0.0.1:{photo_curator.PORT}"},
+        )
+        assert_true(permanent_preview.status_code == 200,
+                    "永久删除复核凭证获取失败")
         permanent = client.post(
             "/api/delete-photo",
-            json={"step": "cull", "path": str(direct_src), "mode": "permanent"},
+            json={"step": "cull", "path": str(direct_src), "mode": "permanent",
+                  "review_token": permanent_preview.get_json()["review_token"]},
             headers={"Host": f"127.0.0.1:{photo_curator.PORT}"},
         )
         assert_true(permanent.status_code == 202, "直接彻底删除没有进入后台队列")

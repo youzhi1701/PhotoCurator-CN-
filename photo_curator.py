@@ -6910,9 +6910,19 @@ async function deletePhoto(step,path,fromLightbox=false){
     if(!confirmed)return;
   }
   try{
+    let review_token='';
+    if(mode==='permanent'){
+      const preview=await fetch('/api/review-permanent',{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({step,path})
+      });
+      const grant=await preview.json();
+      if(!preview.ok||grant.error)throw new Error(grant.error||('HTTP '+preview.status));
+      review_token=grant.review_token;
+    }
     const r=await fetch('/api/delete-photo',{
       method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({step,path,mode})
+      body:JSON.stringify({step,path,mode,review_token})
     });
     const d=await r.json();
     if(!r.ok)throw new Error(d.error||('HTTP '+r.status));
@@ -8374,6 +8384,39 @@ def api_trash_restore_all():
                     'count': len(task_ids)}), 202
 
 
+def _permanent_review_rows(step, target):
+    """Bind one irreversible action to source, identity, and file fingerprint."""
+    stat = Path(target).stat()
+    return [{
+        'path': 'permanent|{}|{}|{}|{}|{}|{}'.format(
+            step, os.path.realpath(str(target)),
+            int(stat.st_dev), int(stat.st_ino),
+            int(stat.st_size), int(stat.st_mtime_ns)
+        )
+    }]
+
+
+@app.route('/api/review-permanent', methods=['POST'])
+def api_review_permanent():
+    """Read-only preparation for irreversible deletion of exactly one file."""
+    data = request.get_json(silent=True) or {}
+    step = str(data.get('step') or '')
+    path = str(data.get('path') or '')
+    if step not in ('cull', 'dedup', 'rank'):
+        return jsonify({'error': '无效板块'}), 400
+    if path not in _known_step_paths(step):
+        return jsonify({'error': '照片已不在当前结果中，请重新复核'}), 404
+    target = _safe_image_path(path)
+    if target is None:
+        return jsonify({'error': '照片路径无效或不属于当前图库'}), 400
+    try:
+        rows = _permanent_review_rows(step, target)
+    except OSError:
+        return jsonify({'error': '照片已移走或设备离线，请重新复核'}), 409
+    return jsonify({'review_token': _issue_pending_review_grant(rows),
+                    'path': str(target), 'mode': 'permanent'})
+
+
 @app.route('/api/delete-photo', methods=['POST'])
 def api_delete_photo():
     """Queue one file lifecycle operation and return immediately.
@@ -8399,6 +8442,13 @@ def api_delete_photo():
     folder = state.get('folder')
     if not folder or not Path(folder).is_dir():
         return jsonify({'error': '请先选择有效的照片文件夹'}), 400
+    if mode == 'permanent':
+        try:
+            reviewed = _permanent_review_rows(step, target)
+        except OSError:
+            return jsonify({'error': '照片已移走或设备离线，请重新复核'}), 409
+        if not _consume_pending_review_grant(data.get('review_token'), reviewed):
+            return jsonify({'error': '永久删除必须重新人工确认，复核凭证缺失或失效'}), 409
 
     original = _find_original_for_path(str(target))
     previous_state = _media_state_get(original) or {}
