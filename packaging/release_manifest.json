@@ -1,8 +1,8 @@
 {
   "product": "PhotoCurator",
   "channel": "candidate",
-  "version": "1.7.8",
-  "installer": "PhotoCurator-Setup-v1.7.8.exe",
+  "version": "1.7.9",
+  "installer": "PhotoCurator-Setup-v1.7.9.exe",
   "upgrade_mode": "in_place",
   "same_app_id": true,
   "data_root": "%LOCALAPPDATA%/PhotoCurator/data",
@@ -24,8 +24,8 @@
   "replace": [
     "app"
   ],
-  "notes": "v1.7.8 Candidate：跨盘移动改为单次专用临时文件，复制后进行 SHA-256 内容校验；原片只在校验和目标提交后才删除。新增复制损坏、重复临时文件回归。仍有跨盘中断恢复、文件生命周期、筛选审阅、19000张图库等未完成项目。",
-  "release_date": "2026-10-08",
+  "notes": "v1.7.9 Candidate：延续精确哈希去重、集中人工复核、原片设备/文件身份防错，强化后台执行时的文件变更保护及扫描期间换盘/拔盘保护；辅件 XMP/AAE 的身份安全仍以独立 PR / CI 验证为准。仍需 4TB/19,000+ 实盘长时性能、完整格式、断电、覆盖升级与签名验收。",
+  "release_date": "2026-10-09",
   "published_version": "1.5.0",
   "published_installer": "PhotoCurator-Setup-v1.5.0.exe"
 }
