@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """Regression: retrying an idempotent task must not destroy audit history."""
-import sqlite3
 import tempfile
 import time
 import unittest
 from pathlib import Path
 
 from background_tasks import BackgroundTaskManager
+from db_runtime import connect_db
 
 
 class BackgroundTaskHistoryTests(unittest.TestCase):
@@ -29,7 +29,7 @@ class BackgroundTaskHistoryTests(unittest.TestCase):
                 self._wait_for_state(manager, second, "done")
                 self.assertEqual(manager.get(first)["result"], 1)
                 self.assertEqual(manager.get(second)["result"], 2)
-                with sqlite3.connect(manager.db_path) as db:
+                with connect_db(manager.db_path) as db:
                     rows = db.execute(
                         "SELECT id, idempotency_key FROM background_task ORDER BY id"
                     ).fetchall()
