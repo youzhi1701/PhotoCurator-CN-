@@ -205,6 +205,70 @@ class MissingFileDeleteSafetyTests(unittest.TestCase):
             lifecycle.assert_not_called()
             self.assertTrue(photo.exists())
 
+    def test_direct_permanent_requires_fresh_single_use_file_review(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            photo = Path(tmp) / "precious.jpg"
+            photo.write_bytes(b"original")
+            with patch.dict(photo_curator.state, {"folder": tmp}), \
+                 patch.object(photo_curator, "_known_step_paths",
+                              return_value={str(photo)}), \
+                 patch.object(photo_curator, "_safe_image_path",
+                              return_value=photo), \
+                 patch.object(photo_curator, "_find_original_for_path",
+                              return_value=str(photo)), \
+                 patch.object(photo_curator, "_media_state_get",
+                              return_value={"state": "normal"}), \
+                 patch.object(photo_curator, "_apply_media_lifecycle") as lifecycle, \
+                 patch.object(photo_curator, "_activity"), \
+                 patch.object(photo_curator.TASK_MANAGER, "enqueue",
+                              return_value=(555, True)) as queued, \
+                 patch.object(photo_curator.TASK_MANAGER, "get",
+                              return_value=None):
+                client = photo_curator.app.test_client()
+                original = {"step": "cull", "path": str(photo), "mode": "permanent"}
+                for invalid in ({}, {"review_token": "fake"}):
+                    denied = client.post("/api/delete-photo", json={**original, **invalid})
+                    self.assertEqual(denied.status_code, 409, denied.get_json())
+                queued.assert_not_called()
+                lifecycle.assert_not_called()
+                review = client.post("/api/review-permanent",
+                                     json={"step": "cull", "path": str(photo)})
+                self.assertEqual(review.status_code, 200, review.get_json())
+                token = review.get_json()["review_token"]
+                accepted = client.post("/api/delete-photo",
+                                       json={**original, "review_token": token})
+                self.assertEqual(accepted.status_code, 202, accepted.get_json())
+                replayed = client.post("/api/delete-photo",
+                                       json={**original, "review_token": token})
+                self.assertEqual(replayed.status_code, 409, replayed.get_json())
+                queued.assert_called_once()
+                lifecycle.assert_not_called()
+            self.assertTrue(photo.exists())
+
+    def test_direct_permanent_refuses_file_replaced_after_review(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            photo = Path(tmp) / "replace.jpg"
+            photo.write_bytes(b"original")
+            with patch.dict(photo_curator.state, {"folder": tmp}), \
+                 patch.object(photo_curator, "_known_step_paths",
+                              return_value={str(photo)}), \
+                 patch.object(photo_curator, "_safe_image_path",
+                              return_value=photo), \
+                 patch.object(photo_curator.TASK_MANAGER, "enqueue") as queued:
+                client = photo_curator.app.test_client()
+                token = client.post("/api/review-permanent",
+                                    json={"step": "cull", "path": str(photo)}
+                                    ).get_json()["review_token"]
+                photo.write_bytes(b"substituted file content")
+                denied = client.post(
+                    "/api/delete-photo",
+                    json={"step": "cull", "path": str(photo),
+                          "mode": "permanent", "review_token": token}
+                )
+                self.assertEqual(denied.status_code, 409, denied.get_json())
+                queued.assert_not_called()
+            self.assertEqual(photo.read_bytes(), b"substituted file content")
+
     def test_offline_trash_listing_keeps_every_device_record(self):
         with tempfile.TemporaryDirectory() as tmp:
             a_root = Path(tmp) / "device_A"
