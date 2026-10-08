@@ -751,7 +751,7 @@ def _prune_index_db():
 threading.Thread(target=_prune_index_db, daemon=True,
                  name='photocurator-index-prune').start()
 
-APP_VERSION = "1.7.3-dev.1"
+APP_VERSION = "1.7.3-dev.2"
 IS_CODESPACES = os.environ.get('CODESPACES', '').strip().lower() == 'true'
 CODESPACE_NAME = os.environ.get('CODESPACE_NAME', '').strip()
 _CODESPACES_DOMAIN_RAW = os.environ.get(
@@ -4865,9 +4865,14 @@ function activateStep(step){
 document.querySelectorAll('.step').forEach(t=>t.onclick=()=>{
   const requestedStep=t.dataset.step;
   activateStep(requestedStep);
+  const requestSource=folder;
+  const cullRequestEpoch=cullChunkToken;
+  const dedupRequestEpoch=dedupChunkToken;
   if(requestedStep==='trash'){loadTrash();return;}
   fetch('/api/progress/'+requestedStep).then(r=>r.json()).then(d=>{
-    if(currentStep!==requestedStep)return; // Ignore responses from abandoned tabs.
+    if(currentStep!==requestedStep||folder!==requestSource)return; // Ignore abandoned source/tab responses.
+    if(requestedStep==='cull'&&cullChunkToken!==cullRequestEpoch)return;
+    if(requestedStep==='dedup'&&dedupChunkToken!==dedupRequestEpoch)return;
     if(d.src_folder && folder && !sameFolder(d.src_folder,folder)){
       showPhotoView();
       document.getElementById('gallery').innerHTML=emptyHTML(currentStep);
@@ -5856,11 +5861,12 @@ function cullRowsForPayload(d){
 async function loadCullPage(reset=false){
   if(currentStep!=='cull')return;
   const token=++cullChunkToken;
+  const sourceAtRequest=folder;
   const offset=reset?0:cullLiveStore.size;
   try{
     const d=await fetch('/api/results/cull?offset='+offset+'&limit=200')
       .then(async r=>{const x=await r.json();if(!r.ok)throw new Error(x.error||('HTTP '+r.status));return x;});
-    if(token!==cullChunkToken||currentStep!=='cull')return;
+    if(token!==cullChunkToken||currentStep!=='cull'||folder!==sourceAtRequest)return;
     if(reset)cullLiveStore.clear();
     (d.photos||[]).forEach(p=>{if(p&&p.path)cullLiveStore.set(p.path,p);});
     cullVisibleTotal=Number(d.total||0);
@@ -6493,7 +6499,7 @@ function renderCullStep(items){
       :('ext:'+String(p.fmt||'').toLowerCase())===cullType)));
 
   gItems=filtered;
-  gPage=0;
+  // Preserve browsing position when live analysis delivers new results.
   cullView=filtered;
 
   const g=document.getElementById('gallery');
