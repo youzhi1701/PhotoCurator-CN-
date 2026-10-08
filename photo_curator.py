@@ -1810,7 +1810,7 @@ def _background_move_to_trash(payload):
                     original, planned_trash, source_step
                 )
                 _delete_review_override(original)
-                _clear_review_delete_mark(original)
+                _clear_review_delete_mark(str(payload['path']))
                 _apply_media_lifecycle(
                     original, planned_trash, 'trashed', source_step, trash_id
                 )
@@ -1828,7 +1828,7 @@ def _background_move_to_trash(payload):
             planned_trash_path=(planned_trash or None)
         )
         _delete_review_override(original)
-        _clear_review_delete_mark(original)
+        _clear_review_delete_mark(str(payload['path']))
         _apply_media_lifecycle(original, trash_path, 'trashed', source_step, trash_id)
         return {'ok': True, 'original_path': original, 'trash_path': trash_path,
                 'trash_id': trash_id}
