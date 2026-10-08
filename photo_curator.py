@@ -34,7 +34,7 @@ from urllib.parse import quote
 
 import cv2
 import numpy as np
-from flask import Flask, render_template_string, request, jsonify, send_file, abort
+from flask import Flask, render_template_string, request, jsonify, send_file, abort, make_response
 from PIL import Image, ImageOps
 
 from raw_loader import (RAW_EXTS, HAS_RAWPY, is_raw,
@@ -7035,12 +7035,18 @@ document.documentElement.dataset.uiReady='1';
 # --------------------------------------------------------------------------- #
 @app.route('/')
 def index():
-    return render_template_string(
+    # The interface is rendered from the executable's bundled source. Never
+    # reuse an older WebView HTML response after installing a newer build.
+    response = make_response(render_template_string(
         HTML,
         map_style_light=MAP_STYLE_LIGHT,
         map_style_dark=MAP_STYLE_DARK,
         app_version=APP_VERSION,
-    )
+    ))
+    response.headers['Cache-Control'] = 'no-store, max-age=0'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['X-PhotoCurator-Version'] = APP_VERSION
+    return response
 
 
 @app.route('/api/shortcuts')
