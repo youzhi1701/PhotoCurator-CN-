@@ -453,14 +453,14 @@ def _rebase_persisted_paths(db, root_id, old_root, new_root):
     ).fetchall()
     path_map = {}
     for row in media_rows:
-        old_original = str(row["original_path"] or "")
-        old_current = str(row["current_path"] or "")
+        old_original = str(row[1] or "")
+        old_current = str(row[2] or "")
         new_original = _rebase_path(old_original, old_root, new_root)
         new_current = _rebase_path(old_current, old_root, new_root)
         db.execute(
             """UPDATE media_catalog SET original_path=?,current_path=?
                WHERE media_id=?""",
-            (new_original, new_current, row["media_id"]),
+            (new_original, new_current, row[0]),
         )
         if old_original != new_original:
             path_map[old_original] = new_original
@@ -468,7 +468,7 @@ def _rebase_persisted_paths(db, root_id, old_root, new_root):
             path_map[old_current] = new_current
 
     tables = {
-        str(row["name"])
+        str(row[0])
         for row in db.execute(
             "SELECT name FROM sqlite_master WHERE type='table'"
         ).fetchall()
@@ -853,7 +853,7 @@ def finish_catalog_scan(db_path, session, *, full_scan=True):
         # Finalization is serialized with cancellation and new scans.
         db.execute("BEGIN IMMEDIATE")
         row = db.execute(
-            """SELECT state,error_count,generation,root_id FROM scan_session
+            """SELECT state,error_count,generation,root_id,files_seen FROM scan_session
                WHERE session_id=?""",
             (session["session_id"],),
         ).fetchone()
@@ -862,6 +862,24 @@ def finish_catalog_scan(db_path, session, *, full_scan=True):
                 or str(row["root_id"]) != str(session["root_id"])):
             raise RuntimeError("scan session is not active")
         error_count = int(row["error_count"] or 0)
+        seen = int(row["files_seen"] or 0)
+        # An unexpectedly empty traversal must never mark every historical
+        # photo missing. A powered-down external drive can appear as an empty
+        # directory on some Windows/virtualized mounts without a scandir error.
+        prior = int(db.execute(
+            """SELECT COUNT(*) FROM media_catalog
+               WHERE root_id=? AND state='present'""",
+            (session["root_id"],),
+        ).fetchone()[0])
+        suspect_empty = bool(full_scan and seen == 0 and prior > 0)
+        if suspect_empty:
+            error_count += 1
+            db.execute(
+                """UPDATE scan_session SET error_count=error_count+1,
+                          error='empty scan refused: preserved existing media'
+                   WHERE session_id=?""",
+                (session["session_id"],),
+            )
         reconcile_missing = bool(full_scan and error_count == 0)
         if reconcile_missing:
             db.execute(
@@ -902,7 +920,7 @@ def finish_catalog_scan(db_path, session, *, full_scan=True):
                WHERE session_id=?""",
             (
                 terminal_state, now, now,
-                int(session.get("files_seen") or present),
+                seen,
                 session["session_id"],
             ),
         )

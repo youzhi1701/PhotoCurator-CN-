@@ -697,7 +697,15 @@ def main():
         cached = photo_curator._load_cull_metrics_map([cache_img])
         assert_true(str(cache_img) in cached and cached[str(cache_img)] == (123.0, 66.0),
                     f"增量清晰度缓存读取失败：{cached}")
+        # Windows runners can produce identical JPEG byte lengths, while a
+        # very fast overwrite may retain coarse filesystem timestamps.
+        # Advance mtime explicitly to test the actual (size,mtime_ns) key.
+        original_mtime_ns = cache_img.stat().st_mtime_ns
         Image.new("RGB", (45, 33), "white").save(cache_img)
+        changed_stat = cache_img.stat()
+        os.utime(cache_img, ns=(changed_stat.st_atime_ns,
+                                max(changed_stat.st_mtime_ns,
+                                    original_mtime_ns + 1_000_000_000)))
         invalidated = photo_curator._load_cull_metrics_map([cache_img])
         assert_true(str(cache_img) not in invalidated,
                     "照片内容变化后不应继续复用旧清晰度缓存")

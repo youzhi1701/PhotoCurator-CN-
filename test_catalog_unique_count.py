@@ -121,8 +121,8 @@ class CatalogRelinkCollisionTests(unittest.TestCase):
             new_root.mkdir()
             db_path = Path(tmp) / "catalog.sqlite"
             init_catalog_schema(db_path)
-            old_path = str(old_root / "a.jpg")
-            new_path = str(new_root / "a.jpg")
+            old_path = catalog._canonical_path(old_root / "a.jpg")
+            new_path = catalog._canonical_path(new_root / "a.jpg")
             with connect_db(db_path) as db:
                 db.execute(
                     "INSERT INTO data_source(source_id,identity_key,kind,display_name,created_at) "
@@ -179,7 +179,7 @@ class CatalogPhysicalSourceGuardTest(unittest.TestCase):
             with connect_db(db_path) as db:
                 media_state = db.execute(
                     "SELECT state FROM media_catalog WHERE original_path=?",
-                    (str(old_photo),)).fetchone()
+                    (catalog._canonical_path(old_photo),)).fetchone()
                 scan_state = db.execute(
                     "SELECT state FROM scan_session WHERE session_id=?",
                     (session["session_id"],)).fetchone()
@@ -247,7 +247,44 @@ class CatalogBatchVolumeIdentityTests(unittest.TestCase):
                 rows = db.execute(
                     "SELECT original_path,state FROM media_catalog").fetchall()
             self.assertEqual([(r[0], r[1]) for r in rows],
-                             [(str(original), "present")])
+                             [(catalog._canonical_path(original), "present")])
+
+
+class EmptyScanCatalogGuardTests(unittest.TestCase):
+    def test_zero_file_rescan_retains_offline_history_instead_of_marking_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)/"photos"
+            root.mkdir()
+            photo=root/"historical.jpg"
+            photo.write_bytes(b"original")
+            db=Path(tmp)/"catalog.sqlite"
+            catalog.catalog_media_scan(db,root,[photo])
+            session=begin_catalog_scan(db,root)
+            result=finish_catalog_scan(db,session,full_scan=True)
+            self.assertEqual(result["state"],"partial")
+            self.assertFalse(result["missing_reconciled"])
+            self.assertEqual(result["files_seen"],0)
+            with connect_db(db) as conn:
+                row=conn.execute(
+                    "SELECT state FROM media_catalog WHERE original_path=?",
+                    (str(photo),)).fetchone()
+                recorded=conn.execute(
+                    "SELECT state,error_count,error FROM scan_session WHERE session_id=?",
+                    (session["session_id"],)).fetchone()
+            self.assertEqual(row[0],"present")
+            self.assertEqual(recorded[0],"partial")
+            self.assertGreater(recorded[1],0)
+            self.assertIn("empty scan",recorded[2])
+
+    def test_new_empty_library_can_complete_without_false_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)/"empty"
+            root.mkdir()
+            db=Path(tmp)/"catalog.sqlite"
+            result=catalog.catalog_media_scan(db,root,[],full_scan=True)
+            self.assertEqual(result["state"],"completed")
+            self.assertEqual(result["photo_count"],0)
+            self.assertTrue(result["missing_reconciled"])
 
 if __name__ == "__main__":
     unittest.main()
