@@ -42,10 +42,17 @@ def annotate_quality(score, weighted_score=None):
         tier = '优质候选'
     else:
         tier = '一般候选'
+    meta = getattr(score, 'meta', None) or {}
+    hint = meta.get('scene_hint') or {}
+    scene = hint.get('label') if isinstance(hint, dict) else '未识别'
+    if scene != '人像候选':
+        scene = '未识别'
+    else:
+        flags.append('画面中检测到人脸（可能漏检）')
     return {
         'tier': tier,
         'tags': (flags or ['技术指标较均衡' if tier == '优质候选' else '未发现明显技术缺陷'])[:4],
-        'scene': '未识别',
+        'scene': scene,
         'manual_only': True,
         'method': '传统技术指标规则；不等于场景语义或可信概率',
     }
