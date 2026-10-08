@@ -66,6 +66,8 @@ require("'fingerprints': fingerprints" in scan,
         "shared scan must publish one reusable file-metadata snapshot")
 require("def _shared_scan_fingerprints(" in SOURCE,
         "shared scan fingerprint accessor missing")
+require("threading.Timer(" in scan and "_release_heavy_scan_snapshot" in SOURCE,
+        "large shared scan snapshots must release heavy RAM after startup")
 
 # 4) Rendering: unchanged recursive Cull / similarity payloads must not
 #    rebuild the whole gallery.
@@ -112,6 +114,12 @@ require("if validate_files and not Path(it['path']).is_file()" in live_classify,
         "Cull must avoid per-photo is_file checks during live reclassification")
 require("'rel_dir': it['rel_dir']" in live_classify and "'raw': it['raw']" in live_classify,
         "Cull live reclassification must reuse static per-photo display metadata")
+require("current_paths = {str(p) for p in images}" not in cull,
+        "unused full-library current_paths set must not return")
+require("np.fromiter(" in cull,
+        "Cull adaptive thresholds must avoid Python-list plus NumPy double allocation")
+require("photos[::-1]" not in cull and "photos.reverse()" in cull,
+        "Cull result reversal must stay in-place")
 dedup = block("def run_dedup(", "# --------------------------------------------------------------------------- #\n#  RANK")
 require("_shared_scan_fingerprints(folder, recursive)" in dedup,
         "Dedup must consume shared scan fingerprints")
