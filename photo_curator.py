@@ -3937,6 +3937,8 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   #gallery.view-list .dedup-choice img{width:180px;height:110px;aspect-ratio:auto;object-fit:cover}
   #gallery.view-list .dedup-choice-meta{align-self:center;padding:10px 12px}
   .source-path{font-size:10px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:3px}
+  .rank-hints{display:flex;align-items:center;gap:4px;flex-wrap:wrap;margin-top:4px;max-height:39px;overflow:hidden}
+  .rank-hints span{font-size:10px;line-height:1.35;padding:2px 6px;border:1px solid var(--border);border-radius:999px;background:var(--panel2);color:var(--text);white-space:nowrap}
   .settings-subtitle{font-size:11px;font-weight:700;color:var(--muted);margin:11px 0 5px}
   body.processing .photo-card{cursor:default}
 
@@ -6697,13 +6699,15 @@ function updatePager(){
 }
 function rankCard(p,idx){const path=escHtml(p.path);
   const on=p.phonebg?' on':'';
+  const review=p.review||{};
+  const rankHints=review.tier? `<div class="rank-hints" title="${escHtml((review.tags||[]).join(' · '))}"><span>${escHtml(review.tier)}</span>${review.scene==='人像候选'?'<span>人像候选</span>':''}</div>` : '';
   return `<div class="photo-card kept${p.phonebg?' pbg':''}" data-i="${idx}" data-path="${path}"><div class="rank-num">${p.rank!=null?p.rank:idx+1}</div>
     <button class="pbg-toggle${on}" data-path="${path}" title="${p.phonebg?'已设为手机壁纸，点击取消':'设为手机壁纸'}">📱</button>
     <img class="photo-img" src="${p.thumb}" loading="lazy" decoding="async">
     <div class="photo-info"><div class="pi-row"><span class="photo-name">${escHtml(p.name)}</span>
       <button class="remove-btn" data-path="${path}" title="从优选结果中移除（不会删除原文件）">✕ 移除</button>
       <button class="delete-btn" data-step="rank" data-path="${path}" title="移入软件回收站">🗑 删除</button></div>
-      <div class="source-path">${escHtml(p.rel_dir||'当前文件夹')}</div></div></div>`;}
+      <div class="source-path">${escHtml(p.rel_dir||'当前文件夹')}</div>${rankHints}</div></div>`;}
 function renderRank(items){
   showPhotoView();
   photos=items;const g=document.getElementById('gallery');
@@ -7300,7 +7304,7 @@ function showLb(){
     const metrics=CATS.map(([k,lab])=>({label:lab,value:(p.scores&&p.scores[k])||0}));
     let html=`<div style="text-align:center">${radarSVG(metrics,150)}</div><h3>分类评分</h3>`;
     const rv=p.review||{};
-    if(rv.tier){html+=`<h3>智能质量建议</h3><div style="font-size:13px;line-height:1.6"><strong>${escHtml(rv.tier)}</strong><div>${(rv.tags||[]).map(x=>escHtml(x)).join(' · ')}</div><div style="font-size:11px;opacity:.7">依据技术指标，仅供人工判断，不自动删除；场景尚未语义识别。</div></div>`;}
+    if(rv.tier){html+=`<h3>智能质量建议</h3><div style="font-size:13px;line-height:1.6"><strong>${escHtml(rv.tier)}</strong><div>场景线索：${escHtml(rv.scene||'未识别')}</div><div>${(rv.tags||[]).map(x=>escHtml(x)).join(' · ')}</div><div style="font-size:11px;opacity:.7">依据技术评分与本地人脸线索，仅供人工判断，不自动删除；不等于完整场景语义识别。</div></div>`;}
     CATS.forEach(([k,lab],ci)=>html+=barRow(lab,(p.scores&&p.scores[k])||0,CATINFO[k],true,CATCOLORS[ci]));
     const d=p.detail||{};GROUPS.forEach(([k,lab,keys])=>{const cv=(p.scores&&p.scores[k]);html+=`<h3>${lab}<span>${cv!=null?cv:''}</span></h3>`;keys.forEach(key=>{if(key in d)html+=barRow(key,d[key],SUBINFO[key]);});});
     html+=`<div style="font-size:10px;opacity:.5;margin-top:14px">将鼠标停留在任意评分项上，可查看该指标的含义。</div>`;
