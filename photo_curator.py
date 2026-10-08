@@ -500,7 +500,16 @@ def _query_cache_rows(table, columns, path_keys, chunk_size=400):
 
 def _load_cull_metrics_map(paths, fingerprints=None):
     """Bulk-load valid clear/quality metrics without opening SQLite per photo."""
-    fps = fingerprints if fingerprints is not None else _fingerprints(paths)
+    if fingerprints is None:
+        fps = _fingerprints(paths)
+    else:
+        # A shared scan snapshot may contain the whole source while this
+        # consumer uses only a filtered subset. Keep cache queries bounded to
+        # exactly the requested paths without touching the filesystem again.
+        fps = {
+            str(p): fingerprints[str(p)]
+            for p in paths if str(p) in fingerprints
+        }
     out = {}
     try:
         rows = _query_cache_rows(
@@ -517,7 +526,16 @@ def _load_cull_metrics_map(paths, fingerprints=None):
 
 def _load_rank_scores_map(paths, fingerprints=None):
     """Bulk-load valid rank scores; stale file versions are ignored."""
-    fps = fingerprints if fingerprints is not None else _fingerprints(paths)
+    if fingerprints is None:
+        fps = _fingerprints(paths)
+    else:
+        # A shared scan snapshot may contain the whole source while this
+        # consumer uses only a filtered subset. Keep cache queries bounded to
+        # exactly the requested paths without touching the filesystem again.
+        fps = {
+            str(p): fingerprints[str(p)]
+            for p in paths if str(p) in fingerprints
+        }
     out = {}
     try:
         rows = _query_cache_rows(
@@ -541,7 +559,16 @@ def _load_rank_scores_map(paths, fingerprints=None):
 
 def _load_review_overrides(paths, fingerprints=None):
     """Load valid manual decisions only for this scan, never the whole table."""
-    fps = fingerprints if fingerprints is not None else _fingerprints(paths)
+    if fingerprints is None:
+        fps = _fingerprints(paths)
+    else:
+        # A shared scan snapshot may contain the whole source while this
+        # consumer uses only a filtered subset. Keep cache queries bounded to
+        # exactly the requested paths without touching the filesystem again.
+        fps = {
+            str(p): fingerprints[str(p)]
+            for p in paths if str(p) in fingerprints
+        }
     out = {}
     try:
         rows = _query_cache_rows(
@@ -2551,6 +2578,30 @@ _SCAN_SNAPSHOT_CV = threading.Condition()
 _SCAN_SNAPSHOTS = {}
 
 
+def _scan_snapshot_key(folder, recursive=True):
+    scan_cfg = state.get('scan') or {}
+    output_mode = str(scan_cfg.get('output_mode') or 'source')
+    custom_output = ''
+    if output_mode == 'custom' and scan_cfg.get('custom_output'):
+        custom_output = os.path.normcase(os.path.realpath(
+            os.path.expanduser(str(scan_cfg.get('custom_output')))
+        ))
+    return (
+        os.path.normcase(os.path.realpath(str(folder))),
+        bool(recursive),
+        output_mode,
+        custom_output,
+    )
+
+
+def _shared_scan_fingerprints(folder, recursive=True):
+    """Return immutable-scan file metadata without re-statting the source."""
+    key = _scan_snapshot_key(folder, recursive)
+    with _SCAN_SNAPSHOT_CV:
+        entry = _SCAN_SNAPSHOTS.get(key) or {}
+        return entry.get('fingerprints') or {}
+
+
 def _shared_list_images(folder, recursive=True, max_age=2.0):
     """Enumerate a source once and persist discovery in crash-safe batches.
 
@@ -2559,19 +2610,7 @@ def _shared_list_images(folder, recursive=True, max_age=2.0):
     If the process or disk disappears mid-scan, the scan session remains
     interrupted and no older media rows are marked missing.
     """
-    scan_cfg = state.get('scan') or {}
-    output_mode = str(scan_cfg.get('output_mode') or 'source')
-    custom_output = ''
-    if output_mode == 'custom' and scan_cfg.get('custom_output'):
-        custom_output = os.path.normcase(os.path.realpath(
-            os.path.expanduser(str(scan_cfg.get('custom_output')))
-        ))
-    key = (
-        os.path.normcase(os.path.realpath(str(folder))),
-        bool(recursive),
-        output_mode,
-        custom_output,
-    )
+    key = _scan_snapshot_key(folder, recursive)
     now = time.time()
     with _SCAN_SNAPSHOT_CV:
         entry = _SCAN_SNAPSHOTS.get(key)
@@ -2586,7 +2625,7 @@ def _shared_list_images(folder, recursive=True, max_age=2.0):
                 break
         _SCAN_SNAPSHOTS[key] = {
             'state': 'scanning', 'at': time.time(), 'paths': (),
-            'discovered': 0,
+            'fingerprints': {}, 'discovered': 0,
         }
 
     scan_session = None
@@ -2662,10 +2701,14 @@ def _shared_list_images(folder, recursive=True, max_age=2.0):
 
     paths.sort(key=lambda p: os.path.normcase(str(p)))
     snapshot = tuple(paths)
+    # One post-walk metadata pass is shared by Cull + Dedup. Previously both
+    # engines independently stat()'d the same source after sharing the path
+    # scan, wasting I/O on large external drives.
+    fingerprints = _fingerprints(snapshot)
     with _SCAN_SNAPSHOT_CV:
         _SCAN_SNAPSHOTS[key] = {
             'state': 'ready', 'at': time.time(), 'paths': snapshot,
-            'discovered': len(snapshot),
+            'fingerprints': fingerprints, 'discovered': len(snapshot),
         }
         if len(_SCAN_SNAPSHOTS) > 8:
             stale = sorted(
@@ -2729,7 +2772,7 @@ def run_cull(folder, strictness, adaptive, rescue_on, recursive=True):
         current_paths = {str(p) for p in images}
         # One metadata pass feeds every path-keyed cache lookup. On external
         # HDD/USB libraries, repeated stat() passes are measurable latency.
-        fingerprints = _fingerprints(images)
+        fingerprints = _shared_scan_fingerprints(folder, recursive) or _fingerprints(images)
         cull_cache = _load_cull_metrics_map(images, fingerprints)
         s['overrides'] = _load_review_overrides(images, fingerprints)
         total = len(images) or 1
@@ -3053,12 +3096,17 @@ def run_dedup(folder, threshold, ftype='all', pair='both',
         else:
             by_parent = {}
             for p in paths:
-                by_parent.setdefault(os.path.normcase(str(p.parent.resolve())), []).append(p)
+                # p is already absolute from the shared scan; avoid a
+                # filesystem-resolving call for every photo just to group by
+                # parent directory.
+                parent_key = os.path.normcase(os.path.abspath(str(p.parent)))
+                by_parent.setdefault(parent_key, []).append(p)
             batches = [(relative_folder(ps[0], folder), ps)
                        for _, ps in sorted(by_parent.items(), key=lambda kv: kv[0])]
 
         total = len(paths)
-        cull_metric_cache = _load_cull_metrics_map(paths)
+        shared_fingerprints = _shared_scan_fingerprints(folder, recursive)
+        cull_metric_cache = _load_cull_metrics_map(paths, shared_fingerprints or None)
         processed = 0
         all_groups = []
         singleton_paths = []
@@ -7235,7 +7283,7 @@ def _raw_preview_file(image_path):
         mtime = os.path.getmtime(image_path)
     except OSError:
         return None
-    key = hashlib.md5(f"{image_path}:{mtime}:preview-v1".encode()).hexdigest()
+    key = hashlib.md5(f"{image_path}:{mtime}:preview-v2".encode()).hexdigest()
     out = THUMB_DIR / f"{key}_full.jpg"
     if out.exists():
         return out
