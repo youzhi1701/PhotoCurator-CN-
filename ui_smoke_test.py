@@ -102,7 +102,7 @@ def main():
         """)
         require(visual["topHeight"] >= 53,
                 f"Aurora 顶栏高度未生效: {visual}")
-        require(260 <= visual["sidebarWidth"] <= 310,
+        require(220 <= visual["sidebarWidth"] <= 260,
                 f"Aurora 侧栏布局未生效: {visual}")
         require("blur(" in visual["glass"],
                 f"Aurora 固定侧栏玻璃材质未生效: {visual}")
