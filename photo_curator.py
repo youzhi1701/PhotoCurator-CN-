@@ -3428,6 +3428,33 @@ def weighted_overall(score, weights):
                for k in CATEGORIES) / wsum
 
 
+def _top_ranked_available(scores, weights, topn):
+    """Rank a small window in O(n log k), expanding only for offline paths.
+
+    Keep the original stable full-score ordering for tied weighted scores,
+    including when the best-ranked photos have been moved or disconnected.
+    """
+    import heapq
+    amount = max(1, int(topn))
+    if not scores:
+        return []
+    key = lambda score: weighted_overall(score, weights)
+    limit = min(len(scores), max(2 * amount, amount + 16))
+    candidates = heapq.nlargest(limit, scores, key=key)
+    available = [score for score in candidates if Path(score.path).is_file()]
+    if len(available) >= amount or limit == len(scores):
+        return available[:amount]
+    # Unusual case: most of the strongest photos are unavailable. Fall back
+    # to a full stable order once, rather than scanning a disk indefinitely.
+    result = []
+    for score in sorted(scores, key=key, reverse=True):
+        if Path(score.path).is_file():
+            result.append(score)
+            if len(result) >= amount:
+                break
+    return result
+
+
 def build_topn(weights=None, topn=None):
     weights = weights or state['weights']
     topn = topn or state['topn']
@@ -3462,14 +3489,7 @@ def build_topn(weights=None, topn=None):
         if allowed is not None and p not in allowed:
             continue
         scores.append(score)
-    candidates = sorted(scores, key=lambda s: weighted_overall(s, weights), reverse=True)
-    ranked = []
-    for score in candidates:
-        if not Path(score.path).is_file():
-            continue
-        ranked.append(score)
-        if len(ranked) >= topn:
-            break
+    ranked = _top_ranked_available(scores, weights, topn)
     out = []
     for rank, s in enumerate(ranked, 1):
         ov = weighted_overall(s, weights)
