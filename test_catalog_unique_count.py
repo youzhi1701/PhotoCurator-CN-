@@ -249,5 +249,42 @@ class CatalogBatchVolumeIdentityTests(unittest.TestCase):
             self.assertEqual([(r[0], r[1]) for r in rows],
                              [(str(original), "present")])
 
+
+class EmptyScanCatalogGuardTests(unittest.TestCase):
+    def test_zero_file_rescan_retains_offline_history_instead_of_marking_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)/"photos"
+            root.mkdir()
+            photo=root/"historical.jpg"
+            photo.write_bytes(b"original")
+            db=Path(tmp)/"catalog.sqlite"
+            catalog.catalog_media_scan(db,root,[photo])
+            session=begin_catalog_scan(db,root)
+            result=finish_catalog_scan(db,session,full_scan=True)
+            self.assertEqual(result["state"],"partial")
+            self.assertFalse(result["missing_reconciled"])
+            self.assertEqual(result["files_seen"],0)
+            with connect_db(db) as conn:
+                row=conn.execute(
+                    "SELECT state FROM media_catalog WHERE original_path=?",
+                    (str(photo),)).fetchone()
+                recorded=conn.execute(
+                    "SELECT state,error_count,error FROM scan_session WHERE session_id=?",
+                    (session["session_id"],)).fetchone()
+            self.assertEqual(row[0],"present")
+            self.assertEqual(recorded[0],"partial")
+            self.assertGreater(recorded[1],0)
+            self.assertIn("empty scan",recorded[2])
+
+    def test_new_empty_library_can_complete_without_false_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)/"empty"
+            root.mkdir()
+            db=Path(tmp)/"catalog.sqlite"
+            result=catalog.catalog_media_scan(db,root,[],full_scan=True)
+            self.assertEqual(result["state"],"completed")
+            self.assertEqual(result["photo_count"],0)
+            self.assertTrue(result["missing_reconciled"])
+
 if __name__ == "__main__":
     unittest.main()
