@@ -64,7 +64,7 @@ class SafeMoveTests(unittest.TestCase):
             def replace_after_copy(a, b):
                 result = real_copy(a, b)
                 src.rename(root / 'moved-original.jpg')
-                src.write_bytes(b'unrelated-data')
+                src.write_bytes(b'original-data')
                 return result
 
             def cross_volume_only(a, b):
@@ -78,7 +78,7 @@ class SafeMoveTests(unittest.TestCase):
                               side_effect=replace_after_copy)):
                 with self.assertRaisesRegex(RuntimeError, '原照片发生变化'):
                     photo_curator._safe_move_file(src, dst)
-            self.assertEqual(src.read_bytes(), b'unrelated-data')
+            self.assertEqual(src.read_bytes(), b'original-data')
             self.assertFalse(dst.exists())
             self.assertEqual((root / 'moved-original.jpg').read_bytes(),
                              b'original-data')
