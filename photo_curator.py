@@ -4836,6 +4836,10 @@ function renderSettings(){
 
 /* Switch the visible step (used by tab clicks AND God mode). */
 function activateStep(step){
+  if(currentStep!==step){
+    cullChunkToken++;
+    dedupChunkToken++; // Late page fetches cannot overwrite a different workspace.
+  }
   currentStep=step;
   document.querySelectorAll('.step').forEach(x=>x.classList.toggle('active',x.dataset.step===step));
   updateWorkspaceHeading();
@@ -4859,9 +4863,11 @@ function activateStep(step){
 }
 /* step tabs (blocked while a step is running) */
 document.querySelectorAll('.step').forEach(t=>t.onclick=()=>{
-  activateStep(t.dataset.step);
-  if(currentStep==='trash'){loadTrash();return;}
-  fetch('/api/progress/'+currentStep).then(r=>r.json()).then(d=>{
+  const requestedStep=t.dataset.step;
+  activateStep(requestedStep);
+  if(requestedStep==='trash'){loadTrash();return;}
+  fetch('/api/progress/'+requestedStep).then(r=>r.json()).then(d=>{
+    if(currentStep!==requestedStep)return; // Ignore responses from abandoned tabs.
     if(d.src_folder && folder && !sameFolder(d.src_folder,folder)){
       showPhotoView();
       document.getElementById('gallery').innerHTML=emptyHTML(currentStep);
@@ -4964,6 +4970,7 @@ function normalizedFolder(p){
 function sameFolder(a,b){return normalizedFolder(a)===normalizedFolder(b);}
 function resetWorkspaceForFolder(){
   cullChunkToken++;
+  dedupChunkToken++; // Invalidate pending requests for the previous data source.
   cullLiveStore.clear();dedupLiveStore.clear();
   cullReady=false;
   photos=[];lbList=[];folderStatus={};
@@ -5883,10 +5890,14 @@ function dedupRowsForPayload(d){
 }
 async function loadDedupPage(reset=false){
   if(currentStep!=='dedup')return;
+  const token=++dedupChunkToken;
+  const sourceAtRequest=folder;
+  const filterAtRequest=dedupStatusFilter;
   const offset=reset?0:dedupLiveStore.size;
   try{
-    const d=await fetch('/api/results/dedup?offset='+offset+'&limit=200&status='+encodeURIComponent(dedupStatusFilter))
+    const d=await fetch('/api/results/dedup?offset='+offset+'&limit=200&status='+encodeURIComponent(filterAtRequest))
       .then(async r=>{const x=await r.json();if(!r.ok)throw new Error(x.error||('HTTP '+r.status));return x;});
+    if(token!==dedupChunkToken||currentStep!=='dedup'||folder!==sourceAtRequest||dedupStatusFilter!==filterAtRequest)return;
     if(reset)dedupLiveStore.clear();
     (d.photos||[]).forEach(g=>dedupLiveStore.set(String(g.group_id),g));
     dedupVisibleTotal=Number(d.total||0);dedupStatusCounts=d.counts||dedupStatusCounts;
