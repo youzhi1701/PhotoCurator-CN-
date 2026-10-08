@@ -205,6 +205,61 @@ class MissingFileDeleteSafetyTests(unittest.TestCase):
             lifecycle.assert_not_called()
             self.assertTrue(photo.exists())
 
+    def test_offline_trash_listing_keeps_every_device_record(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            a_root = Path(tmp) / "device_A"
+            b_root = Path(tmp) / "device_B"
+            a_root.mkdir()
+            b_root.mkdir()
+            a_missing = a_root / ".PhotoCuratorTrash" / "missing.jpg"
+            b_online = b_root / ".PhotoCuratorTrash" / "present.jpg"
+            b_online.parent.mkdir()
+            b_online.write_bytes(b"test")
+            db_path = Path(tmp) / "trash.sqlite"
+            with patch.object(photo_curator, "INDEX_DB", db_path):
+                photo_curator._db_init()
+                with connect_db(db_path) as db:
+                    for path, root in ((a_missing, a_root), (b_online, b_root)):
+                        db.execute(
+                            "INSERT INTO software_trash "
+                            "(original_path, trash_path, source_step, deleted_at) "
+                            "VALUES(?,?,?,?)",
+                            (str(root / "original.jpg"), str(path), "cull", 1.0)
+                        )
+                    db.commit()
+                with patch.object(photo_curator, "thumb_url", return_value="/thumb"):
+                    online = photo_curator._trash_rows(b_root)
+                    offline = photo_curator._trash_rows(a_root)
+                with connect_db(db_path) as db:
+                    retained = db.execute("SELECT COUNT(*) FROM software_trash").fetchone()[0]
+            self.assertEqual(retained, 2, "离线文件记录不得被删除")
+            self.assertEqual(len(online), 1)
+            self.assertTrue(online[0]["available"])
+            self.assertEqual(len(offline), 1)
+            self.assertFalse(offline[0]["available"])
+
+    def test_offline_trash_items_cannot_be_purged_or_restored(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            missing = Path(tmp) / "missing-trash.jpg"
+            rows = [{"id": 89, "path": str(missing),
+                     "original_path": str(Path(tmp) / "original.jpg"),
+                     "source_step": "cull", "available": False}]
+            with patch.dict(photo_curator.state, {"folder": tmp}), \
+                 patch.object(photo_curator, "_trash_rows", return_value=rows), \
+                 patch.object(photo_curator.TASK_MANAGER, "enqueue_many") as bulk, \
+                 patch.object(photo_curator.TASK_MANAGER, "enqueue") as single:
+                client = photo_curator.app.test_client()
+                token = client.get("/api/trash").get_json()["purge_token"]
+                for endpoint, payload in (
+                    ("/api/trash-purge", {"all": True, "purge_token": token}),
+                    ("/api/trash-restore-all", {}),
+                    ("/api/trash-restore", {"id": 89})
+                ):
+                    resp = client.post(endpoint, json=payload)
+                    self.assertEqual(resp.status_code, 409, resp.get_json())
+                bulk.assert_not_called()
+                single.assert_not_called()
+
     def test_trash_purge_requires_current_grant_and_enqueues_all_atomically(self):
         with tempfile.TemporaryDirectory() as tmp:
             deleted = Path(tmp) / "trash.jpg"
