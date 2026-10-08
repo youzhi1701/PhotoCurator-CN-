@@ -472,7 +472,6 @@ jobs:
               "custom_output = ''",
               "output_mode,",
               "custom_output,",
-              "def _scan_snapshot_key(",
               "key = _scan_snapshot_key(folder, recursive)",
           ):
               if required_key_part not in scan_region:
