@@ -719,7 +719,7 @@ try:
 except Exception:
     logger.warning("library index unavailable", exc_info=True)
 
-TASK_MANAGER = BackgroundTaskManager(INDEX_DB, workers=1)
+TASK_MANAGER = BackgroundTaskManager(INDEX_DB, workers=1, autostart=False)
 
 def _prune_index_db():
     """Keep indexes bounded without doing multi-million-row DELETE work every launch."""
@@ -2063,6 +2063,8 @@ def _background_build_offline_previews(payload):
 
 
 TASK_MANAGER.register('build_offline_previews', _background_build_offline_previews)
+# All durable file handlers now exist; recovered tasks may begin safely.
+TASK_MANAGER.start()
 
 
 def thumb_url(image_path):
