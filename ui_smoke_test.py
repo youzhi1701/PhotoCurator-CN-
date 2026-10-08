@@ -148,34 +148,54 @@ def main():
         require("发生错误" not in str(photo_curator.state["dedup"].get("status") or ""),
                 f"UI Dedup 错误：{photo_curator.state['dedup'].get('status')}")
 
-        # Release layout contract: all auxiliary panels belong to the one left
-        # control column.  Nothing may reopen as a fixed right/bottom drawer.
+        # High-frequency progress is a compact header capsule with a floating,
+        # non-reflowing details panel. Low-frequency tools stay in left sidebar.
         driver.find_element(By.CSS_SELECTOR, ".step[data-step='dedup']").click()
         wait.until(lambda d: "相似照片" in d.find_element(By.ID, "workspaceTitle").text)
 
         panels = driver.execute_script("""
-          const host=document.getElementById('sidebarUtilityHost');
-          const ids=['inspector','taskCenter','activityPanel','toolboxPanel'];
-          const result={};
-          for(const id of ids){
-            const el=document.getElementById(id);
-            const cs=getComputedStyle(el);
-            result[id]={
-              parent:el.parentElement&&el.parentElement.id,
-              position:cs.position,
-              display:cs.display,
-              width:el.getBoundingClientRect().width
-            };
+          const host=document.getElementById('sidebarUtilityHost'),result={};
+          for(const id of ['inspector','taskCenter','activityPanel','toolboxPanel']){
+            const el=document.getElementById(id),cs=getComputedStyle(el);
+            result[id]={parent:el.parentElement&&el.parentElement.id,
+              position:cs.position,display:cs.display};
           }
           return result;
         """)
-        for panel_id, info in panels.items():
-            require(info["parent"] == "sidebarUtilityHost",
-                    f"{panel_id} 没有归入左侧控制栏：{info}")
-            require(info["position"] != "fixed",
-                    f"{panel_id} 仍然是浮动窗口：{info}")
-            require(info["display"] != "none",
-                    f"{panel_id} 在左侧控制栏中不可见：{info}")
+        for panel_id in ("inspector", "activityPanel", "toolboxPanel"):
+            require(panels[panel_id]["parent"] == "sidebarUtilityHost",
+                    f"{panel_id} 应仍位于左侧工具区：{panels}")
+        require(panels["taskCenter"]["parent"] != "sidebarUtilityHost"
+                and panels["taskCenter"]["position"] == "fixed"
+                and panels["taskCenter"]["display"] == "none",
+                f"任务详情应默认关闭并使用浮层：{panels}")
+
+        task_btn = driver.find_element(By.ID, "taskToggle")
+        require(task_btn.get_attribute("aria-expanded") == "false",
+                "顶部任务卡片默认应收起")
+        task_btn.click()
+        wait.until(lambda d: d.find_element(By.ID, "taskCenter").is_displayed())
+        require(task_btn.get_attribute("aria-expanded") == "true",
+                "点击顶部任务卡片没有打开详情浮层")
+        geometry = driver.execute_script("""
+          const el=document.getElementById('taskCenter');
+          const main=document.querySelector('.main');
+          return {top:el.getBoundingClientRect().top,
+                  width:el.getBoundingClientRect().width,
+                  visible:getComputedStyle(el).display!=='none',
+                  mainTop:main.getBoundingClientRect().top};
+        """)
+        require(geometry["visible"] and geometry["width"] >= 300
+                and geometry["top"] >= 0,
+                f"任务详情面板尺寸/位置不合理：{geometry}")
+        driver.find_element(By.ID, "taskClose").click()
+        require(not driver.find_element(By.ID, "taskCenter").is_displayed(),
+                "任务详情关闭按钮无效")
+        # Heartbeat reports real counts, not percentages alone.
+        driver.execute_script("refreshTaskCenter()")
+        wait.until(lambda d: '/' in d.find_element(By.ID, "taskCull").text)
+        require('/' in driver.find_element(By.ID, "taskDedup").text,
+                "相似任务详情未包含已处理/总数")
 
         # One global thumbnail size must materially change duplicate-card width.
         cards = driver.find_elements(By.CSS_SELECTOR, "#gallery .dedup-choice")
@@ -191,7 +211,7 @@ def main():
             require(after > before + 40,
                     f"相似照片缩放没有改变真实卡片宽度：before={before}, after={after}")
 
-        print("UI 冒烟测试通过：启动 / 分析 / 左侧控制栏 / 相似照片真实缩放均符合 v1.7.3 契约")
+        print("UI 冒烟测试通过：启动 / 分析 / 顶部进度浮层 / 任务数量 / 相似照片真实缩放均符合 v1.7.3 契约")
     finally:
         try:
             if driver is not None:
