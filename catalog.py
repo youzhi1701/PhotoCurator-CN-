@@ -734,6 +734,17 @@ def catalog_scan_batch(db_path, session, paths):
     root = _canonical_path(session["root_path"])
     root_path = Path(root)
     generation = int(session["generation"])
+    # Validate the physical device before each durable 512-file checkpoint.
+    # Finalization still validates again before marking old paths missing.
+    try:
+        observed = volume_info_for_path(root)
+        if (not Path(root).is_dir() or
+                str(observed.get("identity_key") or "") !=
+                str(session.get("identity_key") or "")):
+            raise RuntimeError("扫描期间磁盘身份发生变化")
+    except Exception as exc:
+        abort_catalog_scan(db_path, session, f"source changed mid-scan: {exc}")
+        raise RuntimeError("原始图库磁盘已断开或更换，扫描批次未写入") from exc
     rows = []
     errors = []
     for raw in paths:
