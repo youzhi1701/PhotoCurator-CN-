@@ -1,7 +1,7 @@
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(1, 7, 8, 0),
-    prodvers=(1, 7, 8, 0),
+    filevers=(1, 7, 9, 0),
+    prodvers=(1, 7, 9, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -16,11 +16,11 @@ VSVersionInfo(
         [
           StringStruct('CompanyName', 'PhotoCurator-CN'),
           StringStruct('FileDescription', 'PhotoCurator 中文版'),
-          StringStruct('FileVersion', '1.7.8'),
+          StringStruct('FileVersion', '1.7.9'),
           StringStruct('InternalName', 'PhotoCurator'),
           StringStruct('OriginalFilename', 'PhotoCurator.exe'),
           StringStruct('ProductName', 'PhotoCurator'),
-          StringStruct('ProductVersion', '1.7.8')
+          StringStruct('ProductVersion', '1.7.9')
         ]
       )
     ]),
