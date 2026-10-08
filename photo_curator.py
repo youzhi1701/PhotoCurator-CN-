@@ -2795,14 +2795,16 @@ def run_cull(folder, strictness, adaptive, rescue_on, recursive=True):
             q_rescue = float(np.percentile(qs, 70)) if qs else 65.0
             return blur_lo, sharp_hi, q_rescue
 
-        def classify_all():
+        def classify_all(validate_files=False):
             blur_lo, sharp_hi, q_rescue = thresholds()
             photos, kept = [], []
             sharp = soft = blurry = 0
             overrides = s.get('overrides', {})
             removed = s.get('removed_paths', set())
             for it in items:
-                if it['path'] in removed or not Path(it['path']).is_file():
+                if it['path'] in removed:
+                    continue
+                if validate_files and not Path(it['path']).is_file():
                     continue
                 tier, star = classify_sharpness(it['region_s'], it['q'],
                                                 blur_lo, sharp_hi, q_rescue, rescue_on)
@@ -2820,10 +2822,10 @@ def run_cull(folder, strictness, adaptive, rescue_on, recursive=True):
                 badge, bt = _badge_for(tier, star)
                 photos.append({'name': it['name'], 'path': it['path'],
                                'thumb': thumb_url(it['path']), 'score': f"{it['region_s']:.0f}",
-                               'rel_dir': relative_folder(it['path'], folder),
+                               'rel_dir': it['rel_dir'],
                                'badge': badge, 'badgeType': bt, 'tier': tier,
-                               'raw': is_raw(it['path']), 'fmt': fmt_of(it['path']),
-                               'heic': is_heif(it['path']),
+                               'raw': it['raw'], 'fmt': it['fmt'],
+                               'heic': it['heic'],
                                'kept': tier != 'blurry', 'rejected': tier == 'blurry',
                                # File-action selection is separate from the
                                # classification itself. Blurry frames start
@@ -2863,7 +2865,7 @@ def run_cull(folder, strictness, adaptive, rescue_on, recursive=True):
             if s.get('cancel'):
                 _save_cull_metrics_batch(cache_buffer)
                 cache_buffer.clear()
-                classify_all()
+                classify_all(validate_files=True)
                 s['status'] = (f"已停止：{idx}/{total} · {_tiers(idx)} · "
                                f"已用时 {_fmt(time.time()-t0)}")
                 return
@@ -2889,20 +2891,22 @@ def run_cull(folder, strictness, adaptive, rescue_on, recursive=True):
                 if len(cache_buffer) >= 64:
                     _save_cull_metrics_batch(cache_buffer)
                     cache_buffer.clear()
-            items.append({'name': p.name, 'path': str(p),
-                          'region_s': region_s, 'q': quality})
+            items.append({
+                'name': p.name, 'path': str(p), 'region_s': region_s, 'q': quality,
+                'rel_dir': rel, 'raw': is_raw(p), 'fmt': fmt_of(p), 'heic': is_heif(p),
+            })
             # Reclassification is for live UI only; final output is still
             # classified once more below. Throttle it so very large folders do
             # not repeatedly rescan the entire processed list every five files.
             now = time.time()
             classify_interval = 1.0 if idx < 1000 else (3.0 if idx < 10000 else 8.0)
-            if (idx < 20 and idx % 5 == 0) or idx == len(images) - 1 \
+            if (idx < 20 and idx % 5 == 0) \
                     or now - s.get('_last_classify_at', 0.0) >= classify_interval:
                 classify_all()
                 s['_last_classify_at'] = now
         _save_cull_metrics_batch(cache_buffer)
         cache_buffer.clear()
-        classify_all()
+        classify_all(validate_files=True)
         if last_rel is not None:
             s['folder_status'][last_rel] = '已完成'
         s['current_folder'] = ''
