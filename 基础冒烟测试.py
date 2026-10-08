@@ -534,6 +534,7 @@ def main():
             "trash_path": str(planned_trash),
             "previous_lifecycle": "normal",
             "source_identity": expected_move_identity,
+            "sidecar_records": [],
         })
         assert_true(recovered_move.get("recovered") is True,
                     f"中断后的回收站移动没有被任务恢复：{recovered_move}")
@@ -552,6 +553,7 @@ def main():
             "trash_path": str(planned_trash),
             "restore_path": str(interrupted_src),
             "source_identity": expected_restore_identity,
+            "sidecar_records": [],
             "source_step": "cull",
         })
         assert_true(recovered_restore.get("restored_path") == str(interrupted_src.resolve()),
