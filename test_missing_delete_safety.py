@@ -181,6 +181,30 @@ class MissingFileDeleteSafetyTests(unittest.TestCase):
             lifecycle.assert_not_called()
             self.assertTrue(photo.exists())
 
+    def test_single_file_enqueue_failure_never_marks_photo_pending(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            photo = Path(tmp) / "one.jpg"
+            photo.write_bytes(b"test")
+            with patch.dict(photo_curator.state, {"folder": tmp}), \
+                 patch.object(photo_curator, "_known_step_paths",
+                              return_value={str(photo)}), \
+                 patch.object(photo_curator, "_safe_image_path",
+                              return_value=photo), \
+                 patch.object(photo_curator, "_find_original_for_path",
+                              return_value=str(photo)), \
+                 patch.object(photo_curator, "_media_state_get",
+                              return_value={"state": "normal"}), \
+                 patch.object(photo_curator, "_apply_media_lifecycle") as lifecycle, \
+                 patch.object(photo_curator.TASK_MANAGER, "enqueue",
+                              side_effect=OSError("queue unavailable")):
+                response = photo_curator.app.test_client().post(
+                    "/api/delete-photo",
+                    json={"step": "cull", "path": str(photo), "mode": "trash"}
+                )
+            self.assertEqual(response.status_code, 503, response.get_json())
+            lifecycle.assert_not_called()
+            self.assertTrue(photo.exists())
+
     def test_review_pending_is_read_only_and_supports_all_quality_tiers(self):
         with tempfile.TemporaryDirectory() as tmp:
             sharp = str(Path(tmp) / "clear.jpg")
