@@ -1,7 +1,7 @@
 # PhotoCurator-CN 项目进度与断点续接
 
 > 本文件用于记录**已合并、已验证和未完成**状态，避免聊天中断造成重复修改或错误宣称。
-> 日期：2026-10-08。当前代码基线：`main` / `5b1a7085`，测试候选版本：**v1.7.6**。
+> 日期：2026-10-08。当前代码基线：`main` / `3e4687b5`，测试候选版本：**v1.7.7**。
 > 实际恢复时必须重新查询 GitHub 最新主分支提交、PR、工作流和 Artifacts；本文件是检查点，不是自动更新的实时状态，也不能替代实测。
 
 ## 已完成并合并
@@ -12,10 +12,11 @@
 | v1.7.4 / #16 | Aurora Bubble Glass 初阶段视觉：导航、侧栏、工具区与照片卡片；加入浏览器真实样式断言 | Source + Windows UI + 安装包成功；run 37748712307 |
 | v1.7.5 / #17 | 同设备父子扫描目录按设备相对路径去重，降低单目录查询开销 | Source + Windows + 安装包成功；run 37750147339 |
 | v1.7.6 / #18 | 离线/缺失文件不能误报永久删除，回收站记录安全保留 | Source + Windows + 安装包成功；run 37750948838 |
+| v1.7.7 / #20 | 从 v1.8.0 分支隔离移植 WAL 初始化优化，补充并发 SQLite 测试 | Source + Windows + 安装包成功；run 37755336082 |
 
 最新验证通过的候选测试包：
-https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37750948838
-Artifact：`PhotoCurator-v1.7.6-test-installer`（可能在 GitHub 保留期后过期，必须现场核对）。
+https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37755336082
+Artifact：`PhotoCurator-v1.7.7-test-installer`（可能在 GitHub 保留期后过期，必须现场核对）。
 
 ## 尚未完整实现或验收
 
