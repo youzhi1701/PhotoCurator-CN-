@@ -6274,21 +6274,31 @@ function applyDedupSelection(){
   fetch('/api/dedup-apply',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})
     .then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;})
     .then(d=>{
-      const first=(d.photos||[]);
-      dedupLiveStore.clear();first.forEach(g=>{if(g&&g.group_id!=null)dedupLiveStore.set(String(g.group_id),g);});
-      const remain=Number(d.result_total!=null?d.result_total:first.length);
-      renderDedupGroups(first);
-      if(d.truncated)loadRemainingDedup(remain,first.length);
-      if(remain===0){
-        btn.style.display='none';
-        document.getElementById('gallery').innerHTML='<div class="empty"><div class="icon">✓</div><div class="title">相似照片处理完成</div><p>未保留照片已按当前设置处理。</p></div>';
-        document.getElementById('resultTools').style.display='none';
+      // /api/dedup-apply acknowledges queued jobs, not completed file moves.
+      // Preserve existing cards while background workers process the queue.
+      const queued=Math.max(0,Number(d.queued)||0);
+      if(queued){
+        toast('已提交 '+queued+' 张相似照片到后台回收站任务','info');
+        document.getElementById('progressText').textContent='已提交 '+queued+' 项后台文件任务 · 可继续筛选照片';
+        refreshTaskCenter();
+        // Refresh lifecycle badges without replacing user-loaded pagination.
+        const sourceAtRequest=folder,filterAtRequest=dedupStatusFilter;
+        fetch('/api/results/dedup?offset=0&limit=200&status='+encodeURIComponent(filterAtRequest))
+          .then(r=>{if(!r.ok)throw new Error('HTTP '+r.status);return r.json();})
+          .then(result=>{
+            if(currentStep!=='dedup'||folder!==sourceAtRequest||dedupStatusFilter!==filterAtRequest)return;
+            (result.photos||[]).forEach(g=>{
+              if(g&&g.group_id!=null)dedupLiveStore.set(String(g.group_id),g);
+            });
+            dedupVisibleTotal=Number(result.total||dedupVisibleTotal);
+            dedupStatusCounts=result.counts||dedupStatusCounts;
+            lastDedupSig='';
+            renderDedupGroups(Array.from(dedupLiveStore.values()));
+            updateDedupLoadMore();
+          }).catch(()=>{/* The task center remains the source of file-operation status. */});
       }else{
-        btn.style.display='block';
+        toast('目前没有需要提交的相似照片','info');
       }
-      const extra=(d.failed||0)?('，'+d.failed+' 张处理失败，可再次尝试'):'';
-      toast('已处理 '+(d.moved||0)+' 张相似照片'+extra,(d.failed||0)?'bad':'good');
-      document.getElementById('progressText').textContent=(remain===0?'处理完成':'部分处理完成')+' · 已移动 '+(d.moved||0)+' 张未保留照片'+extra;
     })
     .catch(err=>toast('处理失败：'+(err.message||'未知错误'),'bad'))
     .finally(()=>{btn.disabled=false;btn.textContent='✓ 确认处理未保留照片';});
