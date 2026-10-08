@@ -1116,13 +1116,16 @@ def collapse_raw_jpg_pairs(paths, prefer):
     groups = defaultdict(list)
     for p in paths:
         pp = Path(p)
-        groups[(str(pp.parent), pp.stem.lower())].append(p)
+        groups[(os.path.normcase(str(pp.parent)), pp.stem.lower())].append(p)
     keep, collapsed = set(), 0
     for g in groups.values():
         raws = [p for p in g if is_raw(p)]
-        others = [p for p in g if not is_raw(p)]
-        if raws and others:
-            keep.update(map(str, raws if prefer == 'raw' else others))
+        # A RAW + PNG / TIFF / HEIF with the same stem is not a verified
+        # RAW+JPG pair. Never hide non-JPEG formats from the review list.
+        jpegs = [p for p in g if Path(p).suffix.lower() in ('.jpg', '.jpeg')]
+        if raws and jpegs:
+            hide = jpegs if prefer == 'raw' else raws
+            keep.update(str(p) for p in g if p not in hide)
             collapsed += 1
         else:
             keep.update(map(str, g))
