@@ -24,6 +24,8 @@ catalog = Path("catalog.py").read_text(encoding="utf-8")
 optional = Path("requirements-optional.txt").read_text(encoding="utf-8")
 candidate = Path(".github/workflows/candidate-windows.yml").read_text(encoding="utf-8")
 release = Path(".github/workflows/build-release.yml").read_text(encoding="utf-8")
+codespaces = Path("在线预览.sh").read_text(encoding="utf-8")
+installer_cmd = Path("PhotoCurator-Install.cmd").read_text(encoding="utf-8")
 
 require('APP_VERSION = "1.7.2"' in core, "source version must be v1.7.2")
 
@@ -91,5 +93,11 @@ require("Verify real in-place upgrade from published Stable" in candidate
         "real Stable-to-candidate installer upgrade test missing")
 require('manifest["channel"] = "stable"' in release,
         "successful publication does not transition manifest channel to stable")
+
+# Runtime dependency compatibility: Pillow 12.x no longer supports Python 3.9.
+require("python3.9" not in codespaces and "Python 3.9" not in codespaces,
+        "Codespaces bootstrap still advertises unsupported Python 3.9")
+require("py -3.9" not in installer_cmd and "Python 3.9" not in installer_cmd,
+        "Windows source installer still advertises unsupported Python 3.9")
 
 print("Release hardening gate OK")
