@@ -525,6 +525,7 @@ def main():
         photo_curator._media_state_set(
             interrupted_src, interrupted_src, "pending_trash", "cull"
         )
+        expected_move_identity = photo_curator._file_action_signature(interrupted_src)
         interrupted_src.rename(planned_trash)
         recovered_move = photo_curator._background_move_to_trash({
             "path": str(interrupted_src),
@@ -532,6 +533,7 @@ def main():
             "step": "cull",
             "trash_path": str(planned_trash),
             "previous_lifecycle": "normal",
+            "source_identity": expected_move_identity,
         })
         assert_true(recovered_move.get("recovered") is True,
                     f"中断后的回收站移动没有被任务恢复：{recovered_move}")
@@ -542,12 +544,14 @@ def main():
         photo_curator._media_state_set(
             interrupted_src, planned_trash, "pending_restore", "cull"
         )
+        expected_restore_identity = photo_curator._file_action_signature(planned_trash)
         planned_trash.rename(interrupted_src)
         recovered_restore = photo_curator._background_restore_trash({
             "trash_id": interrupted_trash_id,
             "original_path": str(interrupted_src),
             "trash_path": str(planned_trash),
             "restore_path": str(interrupted_src),
+            "source_identity": expected_restore_identity,
             "source_step": "cull",
         })
         assert_true(recovered_restore.get("restored_path") == str(interrupted_src.resolve()),
