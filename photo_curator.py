@@ -751,7 +751,7 @@ def _prune_index_db():
 threading.Thread(target=_prune_index_db, daemon=True,
                  name='photocurator-index-prune').start()
 
-APP_VERSION = "1.7.3-dev.9"
+APP_VERSION = "1.7.3-dev.10"
 IS_CODESPACES = os.environ.get('CODESPACES', '').strip().lower() == 'true'
 CODESPACE_NAME = os.environ.get('CODESPACE_NAME', '').strip()
 _CODESPACES_DOMAIN_RAW = os.environ.get(
@@ -5748,14 +5748,18 @@ function snapshotPipelineConfig(){
 async function startStep(step,config=null){
   const cfg=config||snapshotPipelineConfig();
   runningStep=step;
-  if(step==='cull'){cullReady=false;cullLiveStore.clear();}
-  if(step==='dedup')dedupLiveStore.clear();
+  // A new background run does not revoke the reviewer's existing decisions
+  // or browsing window. Fresh authoritative results will reconcile later.
+  if(step==='cull')cullReady=false;
   pollFailures=0;largeResultWarned=false;
   document.getElementById('progressWrap').style.display='block';
   if(step===currentStep){
-    document.getElementById('gallery').innerHTML='';
-    lastRankSig='';lastStep=step;
-    gPage=0;lastGallerySig='';document.getElementById('pager').style.display='none';
+    const gallery=document.getElementById('gallery');
+    if(!gallery.querySelector('.photo-card,.dedup-choice,.catalog-card')){
+      gallery.innerHTML='';
+      lastRankSig='';lastStep=step;
+    }
+    document.getElementById('pager').style.display='none';
     document.getElementById('exportBtn').style.display='none';
     document.getElementById('exportPbgBtn').style.display='none';
     {const mb=document.getElementById('moveBlurryBtn');mb.style.display='none';mb.classList.remove('cta');}
