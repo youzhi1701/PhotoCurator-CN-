@@ -8,17 +8,17 @@
 [**点击下载 PhotoCurator-Setup-v1.5.0.exe**](https://github.com/youzhi1701/PhotoCurator-CN-/releases/download/v1.5.0/PhotoCurator-Setup-v1.5.0.exe)
 
 > Windows 10 / 11 x64 · 正式安装版 EXE  
-> 当前源码为 **v1.7.1 Candidate**；只有 Windows Candidate、数据完整性、安装/升级与发布验证全部通过，并且新的 EXE 真正发布后，这里的正式下载链接才会切到 v1.7.1。
+> 当前源码为 **v1.7.2 Candidate**；只有 Windows Candidate、数据完整性、安装/升级与发布验证全部通过，并且新的 EXE 真正发布后，这里的正式下载链接才会切到 v1.7.2。
 <!-- LATEST_RELEASE_END -->
 
-> 面向大图库的 Windows 照片清理工具。v1.7.1 Candidate 在稳定桌面运行层基础上继续收口持久 Catalog、扫描会话与缺失判定、离线图库与设备识别、文件生命周期、数据库升级保护和 Windows 发布门禁；当前仍处于 Candidate 验证阶段，不等同于已发布 Stable。
+> 面向大图库的 Windows 照片清理工具。v1.7.2 Candidate 在稳定桌面运行层基础上继续收口持久 Catalog、扫描会话与缺失判定、离线图库与设备识别、文件生命周期、数据库升级保护和 Windows 发布门禁；当前仍处于 Candidate 验证阶段，不等同于已发布 Stable。
 
 | 项目 | 信息 |
 | --- | --- |
-| 当前源码版本 | **v1.7.1 Candidate** |
+| 当前源码版本 | **v1.7.2 Candidate** |
 | 项目类型 | Windows 照片筛选桌面应用 |
 | 上游基线 | Photo Curator v7.0 |
-| 当前状态 | **v1.7.1 发布候选版 / Windows Candidate 与 Release Gate 验证中** |
+| 当前状态 | **v1.7.2 发布候选版 / Windows Candidate 与 Release Gate 验证中** |
 
 ## 产品定位
 
@@ -31,7 +31,7 @@ PhotoCurator 的两个核心任务：
 
 图片扫描不再只依赖固定短名单：运行时会自动纳入当前 Pillow 实际可解码的全部扩展格式，并在可用时加入 HEIC/HEIF/HIF 与 RAW（CR2/CR3/NEF/ARW/DNG/RAF/ORF/RW2/PEF 等）支持。
 
-## v1.7.1 运行与界面架构
+## v1.7.2 运行与界面架构
 
 ### 前台优先
 
@@ -197,13 +197,13 @@ GitHub Actions：
 
 发布目标由 `packaging/release_manifest.json` 驱动。当前目标为 **1.7.1 Candidate**；只有全部 Release Gate 通过后，才允许创建正式标签：
 
-`v1.7.1`
+`v1.7.2`
 
 发布工作流接受 `v*` 标签，但会在构建开始时强制检查：**Git 标签必须与 manifest 中的版本完全一致**。标签不一致会直接失败，避免误把旧代码发布成新版本或把新代码挂到旧标签。
 
 当前 Candidate 安装包目标名称：
 
-`PhotoCurator-Setup-v1.7.1.exe`
+`PhotoCurator-Setup-v1.7.2.exe`
 
 当前已经公开可下载的 Stable 安装包仍为 **v1.5.0**。
 
@@ -300,7 +300,7 @@ PhotoCurator-CN-/
 
 许可证保持原项目 **MIT License**。
 
-## v1.7.1 Stable 发布门槛
+## v1.7.2 Stable 发布门槛
 
 正式发布前必须同时满足：
 - Python / 嵌入式 JavaScript / HTML / CSS 自动检查通过
@@ -322,4 +322,4 @@ PhotoCurator-CN-/
 - 覆盖升级不破坏用户数据库、索引、设置、日志、任务状态和用户照片
 - GitHub Release 中真实存在与版本一致、非空且校验通过的 Windows 安装包
 
-在上述门槛没有全部满足前，v1.7.1 只能保持 **Candidate**，不能标记为 Stable。
+在上述门槛没有全部满足前，v1.7.2 只能保持 **Candidate**，不能标记为 Stable。
