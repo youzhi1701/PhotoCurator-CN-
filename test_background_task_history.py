@@ -117,6 +117,36 @@ class BackgroundTaskHistoryTests(unittest.TestCase):
                 first_manager.shutdown()
                 second_manager.shutdown()
 
+    def test_restart_preserves_interruption_audit_until_completion(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "recovery.sqlite"
+            original = BackgroundTaskManager(db_path, autostart=False)
+            try:
+                task_id, created = original.enqueue(
+                    "recover-me", {"value": 9}, idempotency_key="recover-9"
+                )
+                self.assertTrue(created)
+                with connect_db(db_path) as db:
+                    db.execute(
+                        "UPDATE background_task SET state='running' WHERE id=?",
+                        (task_id,),
+                    )
+                    db.commit()
+            finally:
+                original.shutdown()
+            recovered = BackgroundTaskManager(db_path, autostart=False)
+            try:
+                item = recovered.get(task_id)
+                self.assertEqual(item["state"], "queued")
+                self.assertIn("意外中断", item["error"])
+                recovered.register("recover-me", lambda payload: payload["value"])
+                recovered.start()
+                self._wait_for_state(recovered, task_id, "done")
+                self.assertEqual(recovered.get(task_id)["result"], 9)
+                self.assertEqual(recovered.get(task_id)["error"], "")
+            finally:
+                recovered.shutdown()
+
     @staticmethod
     def _wait_for_state(manager, task_id, state):
         deadline = time.monotonic() + 5
