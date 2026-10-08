@@ -6,6 +6,15 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $installer = (Resolve-Path ("release\\PhotoCurator-Setup-v" + $Version + ".exe")).Path
+# Test an actual previously shipped release, not just the same candidate twice.
+$priorVersion = '1.5.0'
+$priorSha256 = 'ac31a260b09f31c5578dd397c075817df0a560c25b681a70f3932e327d3a1b5c'
+$priorInstaller = Join-Path $env:RUNNER_TEMP ("PhotoCurator-Setup-v" + $priorVersion + ".exe")
+$priorUrl = "https://github.com/youzhi1701/PhotoCurator-CN-/releases/download/v$priorVersion/PhotoCurator-Setup-v$priorVersion.exe"
+Invoke-WebRequest -Uri $priorUrl -OutFile $priorInstaller -UseBasicParsing
+if ((Get-FileHash -LiteralPath $priorInstaller -Algorithm SHA256).Hash.ToLowerInvariant() -ne $priorSha256) {
+    throw 'Previously published installer SHA256 verification failed; refusing to execute download'
+}
 $installRoot = Join-Path $env:RUNNER_TEMP 'PhotoCurator-Candidate-Upgrade-Probe'
 $dataRoot = Join-Path $env:LOCALAPPDATA 'PhotoCurator\\data'
 $configDir = Join-Path $dataRoot 'config'
@@ -24,13 +33,13 @@ $externalMarker = Join-Path $externalPhotos 'original-user-photo.jpg'
 [IO.File]::WriteAllBytes($externalMarker,$probeData)
 $externalHash = (Get-FileHash $externalMarker -Algorithm SHA256).Hash
 
-function AssertPreserved($pass) {
+function AssertPreserved($pass, $expectedVersion) {
     $exe = Join-Path $installRoot 'app\\PhotoCurator.exe'
     if (!(Test-Path -LiteralPath $exe -PathType Leaf)) {
         throw "Pass $pass: installed PhotoCurator.exe missing"
     }
     $actual = (Get-Item -LiteralPath $exe).VersionInfo.ProductVersion
-    if (!$actual.StartsWith($Version)) {
+    if (!$actual.StartsWith($expectedVersion)) {
         throw "Pass $pass: wrong installed version $actual"
     }
     foreach($file in @($probeConfig, $probeOffline)) {
@@ -51,13 +60,15 @@ function AssertPreserved($pass) {
 for ($pass=1; $pass -le 2; $pass++) {
     $args = @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/NOICONS',
               ('/DIR="' + $installRoot + '"'),('/LOG="' + $logPath + '"'))
-    $process = Start-Process -FilePath $installer -ArgumentList $args -PassThru -Wait
+    $chosenInstaller = if ($pass -eq 1) { $priorInstaller } else { $installer }
+    $expectedVersion = if ($pass -eq 1) { $priorVersion } else { $Version }
+    $process = Start-Process -FilePath $chosenInstaller -ArgumentList $args -PassThru -Wait
     if ($process.ExitCode -ne 0) {
         if (Test-Path $logPath) {
             Get-Content $logPath -Tail 35 | Out-Host
         }
         throw "Installer pass $pass failed with exit code $($process.ExitCode)"
     }
-    AssertPreserved $pass
+    AssertPreserved $pass $expectedVersion
 }
-Write-Host "Windows candidate fresh install + same-AppId upgrade both passed."
+Write-Host "Windows v$priorVersion shipped installer -> v$Version candidate in-place upgrade both passed."
