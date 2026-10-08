@@ -694,6 +694,9 @@ def begin_catalog_scan(db_path, folder):
     generation = int(time.time_ns())
     session_id = uuid.uuid4().hex
     with _connect(db_path) as db:
+        # Atomically replace an earlier running scan.  This serializes scan
+        # starts with batch writes and finalization on the same SQLite file.
+        db.execute("BEGIN IMMEDIATE")
         db.execute(
             """UPDATE scan_session
                SET state='interrupted',finished_at=?,updated_at=?,
