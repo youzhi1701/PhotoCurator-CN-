@@ -1,3 +1,7 @@
+# Signed Stable gate: repo variable PHOTOCURATOR_RELEASE_APPROVED_VERSION
+# is set only after physical Windows/USB and in-place-upgrade validation.
+# GitHub Secrets PHOTOCURATOR_SIGNING_PFX_BASE64 and
+# PHOTOCURATOR_SIGNING_PFX_PASSWORD are mandatory. Never commit the PFX.
 name: Build Windows Release
 
 on:
@@ -45,6 +49,21 @@ jobs:
           "published_installer=PhotoCurator-Setup-v$published.exe" >> $env:GITHUB_OUTPUT
           Write-Host "Target PhotoCurator version: $version"
           Write-Host "Currently published version: $published"
+
+      - name: Reject release without real-device QA approval
+        shell: powershell
+        env:
+          APPROVED_VERSION: ${{ vars.PHOTOCURATOR_RELEASE_APPROVED_VERSION }}
+          SIGN_PFX: ${{ secrets.PHOTOCURATOR_SIGNING_PFX_BASE64 }}
+          SIGN_PASS: ${{ secrets.PHOTOCURATOR_SIGNING_PFX_PASSWORD }}
+        run: |
+          $expected = "${{ steps.release_meta.outputs.version }}"
+          if ($env:APPROVED_VERSION -ne $expected) {
+            throw "No explicit QA approval for version $expected (Windows device, USB, upgrade)."
+          }
+          if (!$env:SIGN_PFX -or !$env:SIGN_PASS) {
+            throw "Stable releases require configured Authenticode signing secrets."
+          }
 
       - name: Verify README still points to the last actually published installer
         shell: powershell
@@ -120,6 +139,15 @@ jobs:
           $expected = "${{ steps.release_meta.outputs.version }}"
           if ($v -notlike "$expected*") { throw "Wrong EXE version: $v (expected $expected)" }
 
+      - name: Sign and verify packaged EXE
+        shell: powershell
+        env:
+          PHOTOCURATOR_SIGNING_PFX_BASE64: ${{ secrets.PHOTOCURATOR_SIGNING_PFX_BASE64 }}
+          PHOTOCURATOR_SIGNING_PFX_PASSWORD: ${{ secrets.PHOTOCURATOR_SIGNING_PFX_PASSWORD }}
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File "packaging\\sign_release.ps1" -Target "dist\\PhotoCurator\\PhotoCurator.exe"
+          if ($LASTEXITCODE -ne 0) { throw "Authenticode signing or verification failed" }
+
       - name: Smoke test packaged executable
         shell: powershell
         run: |
@@ -145,6 +173,15 @@ jobs:
           & $iscc "/DMyAppVersion=${{ steps.release_meta.outputs.version }}" "packaging\PhotoCurator.iss"
           $installer = "release\${{ steps.release_meta.outputs.installer }}"
           if (!(Test-Path $installer)) { throw "Installer not built: $installer" }
+
+      - name: Sign and verify Windows installer
+        shell: powershell
+        env:
+          PHOTOCURATOR_SIGNING_PFX_BASE64: ${{ secrets.PHOTOCURATOR_SIGNING_PFX_BASE64 }}
+          PHOTOCURATOR_SIGNING_PFX_PASSWORD: ${{ secrets.PHOTOCURATOR_SIGNING_PFX_PASSWORD }}
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File "packaging\\sign_release.ps1" -Target "release\\${{ steps.release_meta.outputs.installer }}"
+          if ($LASTEXITCODE -ne 0) { throw "Authenticode signing or verification failed" }
 
       - name: Generate installer SHA256
         id: checksum
