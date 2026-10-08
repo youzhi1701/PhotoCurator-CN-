@@ -2865,7 +2865,7 @@ def run_cull(folder, strictness, adaptive, rescue_on, recursive=True):
                                # classification itself. Blurry frames start
                                # selected, but the user may uncheck any of them
                                # before the explicit Move action.
-                               'move_selected': (overrides.get(it['path']) or {}).get('move_selected', tier == 'blurry')})
+                               'move_selected': (overrides.get(it['path']) or {}).get('move_selected', False)})
             # Newest-processed first in the live grid (no scrolling to bottom).
             # Only the display order is reversed; `kept` stays in capture order
             # so Dedup/Rank still receive survivors in their natural sequence.
@@ -4076,6 +4076,16 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
     .workspace-tabs .step,.source-card>summary,.workspace-action,.sidebar-actions button{transition:none!important;transform:none!important}
   }
 
+
+  /* Binary human review: normal / explicitly marked for deletion. */
+  .photo-card.review-marked{outline:3px solid #dd3545!important;outline-offset:-3px;
+    background:rgba(255,234,238,.95)!important}
+  .photo-card.review-marked .move-select{background:#dc263d!important;color:#fff!important;
+    border-color:#dc263d!important;box-shadow:0 3px 11px rgba(202,39,63,.22)}
+  .photo-card .move-select{min-width:94px;min-height:29px;white-space:nowrap;
+    transition:background-color .15s ease,color .15s ease,box-shadow .15s ease}
+  @media(prefers-reduced-motion:reduce){.photo-card .move-select{transition:none!important}}
+
 </style></head><body>
 <header class="appbar pywebview-drag-region">
   <div class="app-brand" aria-label="PhotoCurator">
@@ -4973,7 +4983,7 @@ function setupFilterBar(){
     if(!types.some(([k])=>k===cullType))cullType='all';
     bar.style.display='flex';
     const blurry=photos.filter(p=>p.tier==='blurry'&&!['pending_trash','pending_permanent_delete','trashed','permanently_deleted'].includes(p.lifecycle));
-    const moveSelected=blurry.filter(p=>p.move_selected!==false).length;
+    const moveSelected=blurry.filter(p=>!!p.move_selected).length;
     bar.innerHTML=opts.map(([k,l])=>`<button class="chip${k===cullFilter?' active':''}" data-f="${k}">${l}</button>`).join('')
       +`<span class="chip-sep"></span>`
       +types.map(([k,l])=>`<button class="chip${k===cullType?' active':''}" data-t="${k}">${l}</button>`).join('')
@@ -6557,10 +6567,10 @@ function cullLifecycleInfo(p){
 }
 function cullCardHtml(p,idx){const path=escHtml(p.path);
   const life=cullLifecycleInfo(p),deleted=!!life;
-  const cls=(p.tier==='sharp'?'kept':p.tier==='soft'?'soft':'rejected')+(life?' '+life[1]:'');
-  const moveOn=p.move_selected!==false;
+  const moveOn=!!p.move_selected;
+  const cls=(p.tier==='sharp'?'kept':p.tier==='soft'?'soft':'rejected')+(life?' '+life[1]:'')+(moveOn&&p.tier==='blurry'&&!deleted?' review-marked':'');
   const moveSel=!deleted&&p.tier==='blurry'
-    ?`<button class="move-select${moveOn?'':' off'}" data-path="${path}" data-selected="${moveOn?'1':'0'}" title="${moveOn?'已加入本次删除，点击保留在原位置':'保留在原位置，点击重新加入本次删除'}">${moveOn?'✓':'□'}</button>`
+    ?`<button class="move-select${moveOn?'':' off'}" data-path="${path}" data-selected="${moveOn?'1':'0'}" title="${moveOn?'撤销待删除标记':'标记为待删除'}">${moveOn?'↶ 撤销待删除':'🗑 标记待删除'}</button>`
     :'';
   const stateBadge=life
     ?((p.lifecycle==='trashed'&&p.trash_id)
@@ -6573,9 +6583,10 @@ function cullCardHtml(p,idx){const path=escHtml(p.path);
   return `<div class="photo-card ${cls}" data-i="${idx}" data-path="${path}" data-tier="${p.tier}" data-life="${p.lifecycle||'normal'}" data-move-selected="${moveOn?'1':'0'}">
     ${moveSel}${tierBadge}${stateBadge}
     ${p.thumb?`<img class="photo-img" src="${p.thumb}" loading="lazy" decoding="async">`:'<div class="photo-img" style="display:grid;place-items:center;background:var(--panel2)">文件已删除</div>'}
-    <div class="photo-info"><div class="pi-row"><span class="photo-name">${escHtml(p.name)}</span><span class="ftype${p.raw?'':(p.heic?' heic':' jpg')}">${p.fmt||(p.raw?'RAW':p.heic?'HEIC':'JPG')}</span>${deleted?'':`<button class="delete-btn" data-step="cull" data-path="${path}" title="删除">🗑 删除</button>`}</div><div class="source-path">${escHtml(p.rel_dir||'当前文件夹')}</div></div></div>`;}
+    <div class="photo-info"><div class="pi-row"><span class="photo-name">${escHtml(p.name)}</span><span class="ftype${p.raw?'':(p.heic?' heic':' jpg')}">${p.fmt||(p.raw?'RAW':p.heic?'HEIC':'JPG')}</span></div><div class="source-path">${escHtml(p.rel_dir||'当前文件夹')}</div></div></div>`;}
 function syncCullCardNode(node,p,idx){
-  const moveOn=p.move_selected!==false,life=cullLifecycleInfo(p),deleted=!!life;
+  const moveOn=!!p.move_selected,life=cullLifecycleInfo(p),deleted=!!life;
+  node.classList.toggle('review-marked',moveOn&&p.tier==='blurry'&&!deleted);
   node.dataset.i=idx;node.dataset.tier=p.tier;node.dataset.life=p.lifecycle||'normal';
   node.dataset.moveSelected=moveOn?'1':'0';
   node.classList.toggle('kept',p.tier==='sharp');
@@ -6595,7 +6606,8 @@ function syncCullCardNode(node,p,idx){
   const ms=node.querySelector('.move-select');
   if(p.tier==='blurry'&&ms&&!deleted){
     ms.dataset.selected=moveOn?'1':'0';ms.classList.toggle('off',!moveOn);
-    ms.textContent=moveOn?'✓':'□';
+    ms.textContent=moveOn?'↶ 撤销待删除':'🗑 标记待删除';
+    ms.title=moveOn?'撤销待删除标记':'标记为待删除';
   }
 }
 
@@ -6626,9 +6638,9 @@ function renderCullStep(items){
   }
 
   const moveSig=items.filter(p=>p.tier==='blurry')
-    .map(p=>p.path+':'+(p.move_selected===false?'0':'1')).join('|');
+    .map(p=>p.path+':'+(p.move_selected?'1':'0')).join('|');
   if(moveSig!==lastCullMoveSig){lastCullMoveSig=moveSig;setupFilterBar();}
-  const sig=gPage+'#'+cullView.map(p=>p.path+':'+p.tier+':'+(p.lifecycle||'normal')+':'+(p.move_selected===false?'0':'1')).join('|');
+  const sig=gPage+'#'+cullView.map(p=>p.path+':'+p.tier+':'+(p.lifecycle||'normal')+':'+(p.move_selected?'1':'0')).join('|');
   if(recursiveScan){
     if(sig===lastCullSig&&lastStep===currentStep){
       document.getElementById('sShowing').textContent=filtered.length;
@@ -6670,7 +6682,7 @@ function renderCullStep(items){
 }
 function cullMoveCounts(){
   const blurry=photos.filter(p=>p.tier==='blurry'&&!['pending_trash','pending_permanent_delete','trashed','permanently_deleted'].includes(p.lifecycle));
-  return {total:blurry.length,selected:blurry.filter(p=>p.move_selected!==false).length};
+  return {total:blurry.length,selected:blurry.filter(p=>!!p.move_selected).length};
 }
 function updateCullMoveButton(){
   const mb=document.getElementById('moveBlurryBtn');if(!mb)return;
@@ -6908,7 +6920,7 @@ function showLb(){
   ms.style.display=(currentStep==='cull'&&p.tier==='blurry')?'inline-block':'none';
   if(currentStep==='cull')tg.textContent='⇄ '+(TIER_NAME[p.tier]||'清晰')+' → '+(TIER_NAME[NEXT_TIER[p.tier||'sharp']]);
   if(currentStep==='cull'&&p.tier==='blurry'){
-    const on=p.move_selected!==false;
+    const on=!!p.move_selected;
     ms.textContent=on?'☑ 本次移动':'☐ 保留原位';
     ms.classList.toggle('toggle',on);ms.classList.toggle('restore',!on);
   }
@@ -7107,7 +7119,7 @@ document.getElementById('moveBlurryBtn').onclick=async function(){
     const d=await r.json();
     if(!r.ok||d.error)throw new Error(d.error||('HTTP '+r.status));
     (photos||[]).forEach(p=>{
-      if(p&&p.tier==='blurry'&&p.move_selected!==false&&visibleInReview(p)){
+      if(p&&p.tier==='blurry'&&!!p.move_selected&&visibleInReview(p)){
         p.lifecycle='pending_trash';
         p.move_selected=false;
       }
@@ -7766,7 +7778,7 @@ def api_progress(step):
                                   'soft': s['soft'], 'blurry': s['blurry'],
                                   'move_selected': sum(
                                       1 for p in all_photos
-                                      if p.get('tier') == 'blurry' and p.get('move_selected', True)
+                                      if p.get('tier') == 'blurry' and p.get('move_selected', False)
                                   ),
                                   'cache_hits': s.get('cache_hits',0),
                                   'folder_status': s.get('folder_status',{})}})
@@ -8334,8 +8346,8 @@ def api_toggle_status():
         return jsonify({'error': '未找到照片'}), 404
     now_kept = tier != 'blurry'
     s.setdefault('overrides', {}).setdefault(path, {})['tier'] = tier
-    s['overrides'][path]['move_selected'] = (tier == 'blurry')
-    _save_review_overrides([(path, tier, tier == 'blurry')])
+    s['overrides'][path]['move_selected'] = False
+    _save_review_overrides([(path, tier, False)])
     _activity('人工分类', path, tier)
     # Manual review is classification-only. Never move a file merely because
     # its badge was changed; disk changes happen only via an explicit Move action.
@@ -8347,7 +8359,7 @@ def api_toggle_status():
                   # Moving is a separate user choice. Entering Blurry selects
                   # the photo by default; leaving Blurry removes it from the
                   # pending-move set.
-                  'move_selected': tier == 'blurry'})
+                  'move_selected': False})
     sp = s['sharp_paths']
     for old in (path, new_path):
         if old in sp:
@@ -8364,7 +8376,7 @@ def api_toggle_status():
     move_total = sum(1 for p in s['photos'] if p.get('tier') == 'blurry')
     move_selected = sum(
         1 for p in s['photos']
-        if p.get('tier') == 'blurry' and p.get('move_selected', True)
+        if p.get('tier') == 'blurry' and p.get('move_selected', False)
     )
     return jsonify({'ok': True, 'tier': tier, 'kept': now_kept, 'badge': badge,
                     'badgeType': bt, 'path': new_path, 'thumb': photo['thumb'],
@@ -8376,7 +8388,7 @@ def api_toggle_status():
 def _blurry_move_counts():
     photos = state['cull'].get('photos', [])
     blurry = [p for p in photos if p.get('tier') == 'blurry']
-    selected = [p for p in blurry if p.get('move_selected', True)]
+    selected = [p for p in blurry if p.get('move_selected', False)]
     return len(selected), len(blurry)
 
 
@@ -8398,7 +8410,7 @@ def api_select_blurry():
                 photo['move_selected'] = selected
                 state['cull'].setdefault('overrides', {}).setdefault(photo.get('path'), {})['move_selected'] = selected
         _save_review_overrides([
-            (p.get('path'), p.get('tier'), p.get('move_selected', True))
+            (p.get('path'), p.get('tier'), p.get('move_selected', False))
             for p in photos if p.get('tier') == 'blurry' and p.get('path')
         ])
         count, total = _blurry_move_counts()
@@ -8434,7 +8446,7 @@ def api_move_blurry():
     rows = [
         pp for pp in state['cull'].get('photos', [])
         if pp.get('tier') == 'blurry'
-        and pp.get('move_selected', True)
+        and pp.get('move_selected', False)
         and pp.get('lifecycle') not in
         ('pending_trash','pending_permanent_delete','trashed','permanently_deleted')
         and pp.get('path')
