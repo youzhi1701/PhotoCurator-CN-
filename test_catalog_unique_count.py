@@ -88,5 +88,26 @@ class CatalogFinalizationGuardTests(unittest.TestCase):
                 row = db.execute("SELECT state FROM scan_session WHERE session_id=?", (session["session_id"],)).fetchone()
             self.assertEqual(row[0], "interrupted")
 
+class CatalogScanStartTests(unittest.TestCase):
+    def test_new_scan_supersedes_old_session(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "photos"
+            root.mkdir()
+            sample = root / "example.jpg"
+            sample.write_bytes(b"example")
+            db_path = Path(tmp) / "catalog.sqlite"
+            first = begin_catalog_scan(db_path, root)
+            second = begin_catalog_scan(db_path, root)
+            self.assertNotEqual(first["session_id"], second["session_id"])
+            with self.assertRaisesRegex(RuntimeError, "no longer active"):
+                catalog_scan_batch(db_path, first, [sample])
+            self.assertEqual(catalog_scan_batch(db_path, second, [sample]), 1)
+            with connect_db(db_path) as db:
+                states = dict(db.execute(
+                    "SELECT session_id,state FROM scan_session"
+                ).fetchall())
+            self.assertEqual(states[first["session_id"]], "interrupted")
+            self.assertEqual(states[second["session_id"]], "running")
+
 if __name__ == "__main__":
     unittest.main()
