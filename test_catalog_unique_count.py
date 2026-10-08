@@ -267,7 +267,7 @@ class EmptyScanCatalogGuardTests(unittest.TestCase):
             with connect_db(db) as conn:
                 row=conn.execute(
                     "SELECT state FROM media_catalog WHERE original_path=?",
-                    (str(photo),)).fetchone()
+                    (catalog._canonical_path(photo),)).fetchone()
                 recorded=conn.execute(
                     "SELECT state,error_count,error FROM scan_session WHERE session_id=?",
                     (session["session_id"],)).fetchone()
