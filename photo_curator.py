@@ -116,6 +116,8 @@ _RUN_GATE_LOCK = threading.Lock()
 _FILE_PLAN_LOCK = threading.Lock()
 _GEOCODE_LOCK = threading.Lock()
 _GEOCODE_LAST_AT = 0.0
+_ACTIVITY_TRIM_EVERY = 64
+_activity_write_count = 0
 CULL_METRICS_VERSION = 1
 RUNTIME_SCHEMA_VERSION = 2
 
@@ -423,12 +425,20 @@ def _set_similarity_group_status(group_key, status):
 
 
 def _activity(action, path='', detail=''):
+    global _activity_write_count
     try:
         with _DB_LOCK, connect_db(INDEX_DB, timeout=10) as db:
             db.execute("INSERT INTO activity_log(ts,action,path,detail) VALUES(?,?,?,?)",
                        (time.time(), str(action), str(path or ''), str(detail or '')))
-            db.execute("""DELETE FROM activity_log
-                          WHERE id NOT IN (SELECT id FROM activity_log ORDER BY id DESC LIMIT 5000)""")
+            _activity_write_count += 1
+            # Trimming on every click/file action turns a tiny append into a
+            # repeated 5k-row maintenance query. Keep the same bound but prune
+            # only periodically.
+            if _activity_write_count % _ACTIVITY_TRIM_EVERY == 0:
+                db.execute("""DELETE FROM activity_log
+                              WHERE id <= COALESCE(
+                                (SELECT MAX(id) - 5000 FROM activity_log), 0
+                              )""")
             db.commit()
     except Exception:
         logger.debug("activity log write failed", exc_info=True)
@@ -8011,7 +8021,7 @@ def api_task_center():
             'status': str(step.get('status') or ''),
             'src_folder': step.get('src_folder'),
         }
-    return jsonify({'analysis': analysis, 'files': TASK_MANAGER.summary()})
+    return jsonify({'analysis': analysis, 'files': TASK_MANAGER.heartbeat()})
 
 
 @app.route('/api/tasks/<int:task_id>')
