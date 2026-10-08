@@ -100,4 +100,18 @@ require("python3.9" not in codespaces and "Python 3.9" not in codespaces,
 require("py -3.9" not in installer_cmd and "Python 3.9" not in installer_cmd,
         "Windows source installer still advertises unsupported Python 3.9")
 
+# GitHub Actions used by the release chain are pinned to immutable commits.
+for workflow in (candidate, release):
+    require("actions/checkout@v" not in workflow, "checkout action uses a movable version tag")
+    require("actions/setup-python@v" not in workflow, "setup-python action uses a movable version tag")
+    require("actions/upload-artifact@v" not in workflow, "upload-artifact action uses a movable version tag")
+require("softprops/action-gh-release@v" not in release,
+        "release publishing action uses a movable version tag")
+require("3d3c42e5aac5ba805825da76410c181273ba90b1" in candidate
+        and "3d3c42e5aac5ba805825da76410c181273ba90b1" in release,
+        "verified checkout v7 commit pin missing")
+require("5fda3b95a4ea91299a34e894583c3862153e4b97" in candidate
+        and "5fda3b95a4ea91299a34e894583c3862153e4b97" in release,
+        "verified setup-python v7 commit pin missing")
+
 print("Release hardening gate OK")
