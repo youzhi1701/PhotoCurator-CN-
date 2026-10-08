@@ -72,7 +72,18 @@ class BackgroundTaskManager:
     def _recover_interrupted(self):
         now = time.time()
         with self._connect() as db:
-            db.execute("UPDATE background_task SET state='queued',updated_at=?,error=NULL WHERE state='running'", (now,))
+            # Preserve an audit clue when a previously running task is
+            # recovered. The task is retryable, but not falsely presented as
+            # never having been interrupted.
+            db.execute(
+                """UPDATE background_task
+                   SET state='queued', updated_at=?,
+                       error=CASE WHEN error IS NULL OR error=''
+                                  THEN '上次运行意外中断，等待恢复'
+                                  ELSE error || '；上次运行意外中断，等待恢复' END
+                   WHERE state='running'""",
+                (now,),
+            )
             rows = db.execute("SELECT id,priority FROM background_task WHERE state='queued' ORDER BY priority,id").fetchall()
             db.commit()
         with self._cv:
