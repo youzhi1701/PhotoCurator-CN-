@@ -751,7 +751,7 @@ def _prune_index_db():
 threading.Thread(target=_prune_index_db, daemon=True,
                  name='photocurator-index-prune').start()
 
-APP_VERSION = "1.7.3-dev.8"
+APP_VERSION = "1.7.3-dev.9"
 IS_CODESPACES = os.environ.get('CODESPACES', '').strip().lower() == 'true'
 CODESPACE_NAME = os.environ.get('CODESPACE_NAME', '').strip()
 _CODESPACES_DOMAIN_RAW = os.environ.get(
@@ -5887,7 +5887,12 @@ async function coreRun(){
   const coreSteps=['cull','dedup'];
   coreRunning=true;setStartBtn(true);
   showPhotoView();
-  document.getElementById('gallery').innerHTML='<div class="empty"><div class="icon">◌</div><div class="title">正在分析照片</div><p>模糊筛选与相似照片分析正在后台并行启动，结果会持续进入当前工作区。</p></div>';
+  // Starting analysis must not replace the review cards a person is editing.
+  // Only show the startup placeholder when the workspace has no photo content.
+  const activeGallery=document.getElementById('gallery');
+  if(!activeGallery.querySelector('.photo-card,.dedup-choice,.catalog-card')){
+    activeGallery.innerHTML='<div class="empty"><div class="icon">◌</div><div class="title">正在分析照片</div><p>模糊筛选与相似照片分析正在后台并行启动，结果会持续进入当前工作区。</p></div>';
+  }
   document.getElementById('progressWrap').style.display='block';
   document.getElementById('progressText').textContent='正在启动模糊分析与相似分析…';
   try{
