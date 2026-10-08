@@ -19,6 +19,8 @@ import json
 import time
 import shutil
 import hashlib
+import hmac
+import secrets
 import logging
 import sqlite3
 import urllib.request
@@ -114,6 +116,9 @@ _DB_LOCK = threading.Lock()
 _STATE_LOCK = threading.RLock()
 _RUN_GATE_LOCK = threading.Lock()
 _FILE_PLAN_LOCK = threading.Lock()
+_REVIEW_GRANT_LOCK = threading.Lock()
+_REVIEW_GRANTS = {}
+_REVIEW_GRANT_TTL_SECONDS = 5 * 60
 _GEOCODE_LOCK = threading.Lock()
 _GEOCODE_LAST_AT = 0.0
 _ACTIVITY_TRIM_EVERY = 64
@@ -8609,6 +8614,7 @@ def _pending_review_rows():
 
 
 def _pending_review_token(rows):
+    """Fingerprint only; this is not a credential and must not be accepted as one."""
     basis = {
         'folder': str(state.get('folder') or ''),
         'paths': sorted(str(p['path']) for p in rows),
@@ -8616,6 +8622,34 @@ def _pending_review_token(rows):
     return hashlib.sha256(
         json.dumps(basis, ensure_ascii=False, sort_keys=True).encode('utf-8')
     ).hexdigest()
+
+
+def _issue_pending_review_grant(rows):
+    """Issue an unpredictable, short-lived, single-use review credential."""
+    now = time.monotonic()
+    with _REVIEW_GRANT_LOCK:
+        for token, (_, deadline) in list(_REVIEW_GRANTS.items()):
+            if deadline <= now:
+                del _REVIEW_GRANTS[token]
+        while len(_REVIEW_GRANTS) >= 64:
+            del _REVIEW_GRANTS[next(iter(_REVIEW_GRANTS))]
+        token = secrets.token_urlsafe(32)
+        _REVIEW_GRANTS[token] = (
+            _pending_review_token(rows), now + _REVIEW_GRANT_TTL_SECONDS
+        )
+    return token
+
+
+def _consume_pending_review_grant(token, rows):
+    """Claim once, even if the same HTTP request is submitted concurrently."""
+    if not isinstance(token, str):
+        return False
+    with _REVIEW_GRANT_LOCK:
+        claim = _REVIEW_GRANTS.pop(token, None)
+    return bool(
+        claim and claim[1] > time.monotonic()
+        and hmac.compare_digest(claim[0], _pending_review_token(rows))
+    )
 
 
 @app.route('/api/review-pending', methods=['GET'])
@@ -8626,7 +8660,7 @@ def api_review_pending():
     # mutation, thumbnails or image decoding occurs on this endpoint.
     return jsonify({
         'total': len(rows),
-        'review_token': _pending_review_token(rows),
+        'review_token': _issue_pending_review_grant(rows),
         'items': [
             {'path': str(p['path']),
              'name': str(p.get('name') or Path(p['path']).name),
@@ -8646,12 +8680,13 @@ def api_move_blurry():
         return jsonify({'error': '未选择有效的照片文件夹'}), 400
     rows = _pending_review_rows()
     preview_token = (request.get_json(silent=True) or {}).get('review_token')
-    # File moves require a confirmation bound to the exact reviewed set.
-    # Missing tokens must not bypass the safety gate (legacy clients must
-    # explicitly fetch the non-destructive review preview first).
-    if not isinstance(preview_token, str) or preview_token != _pending_review_token(rows):
+    # A digest of known paths is guessable: accept only a fresh, server-issued
+    # credential bound to the current reviewed selection, never bare hashes.
+    if not isinstance(preview_token, str):
+        return jsonify({'error': '请先打开集中复核列表并确认'}), 409
+    if not _consume_pending_review_grant(preview_token, rows):
         return jsonify({
-            'error': '待删除照片列表已发生变化，请重新集中复核后确认',
+            'error': '复核凭证已失效、已使用或待删除列表已变化，请重新集中复核',
         }), 409
     # Validate the complete selection before changing any lifecycle state.
     # A disconnected volume, replaced symlink or stale result must never
