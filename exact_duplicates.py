@@ -12,6 +12,7 @@ import hashlib
 import json
 import logging
 import os
+import stat
 from pathlib import Path
 import tempfile
 
@@ -21,12 +22,12 @@ CHUNK = 1024 * 1024
 
 
 def _stat_key(path):
-    stat = os.stat(path)
-    if not os.path.isfile(path):
+    info_stat = os.stat(path)
+    if not stat.S_ISREG(info_stat.st_mode):
         raise OSError("not a regular file")
-    info = (int(stat.st_size), int(stat.st_mtime_ns),
-            int(getattr(stat, "st_ctime_ns", 0)),
-            int(stat.st_dev), int(stat.st_ino))
+    info = (int(info_stat.st_size), int(info_stat.st_mtime_ns),
+            int(getattr(info_stat, "st_ctime_ns", 0)),
+            int(info_stat.st_dev), int(info_stat.st_ino))
     return info, json.dumps([os.path.realpath(str(path)), *info],
                             ensure_ascii=False, separators=(",", ":"))
 
