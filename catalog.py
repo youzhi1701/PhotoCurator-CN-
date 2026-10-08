@@ -453,14 +453,14 @@ def _rebase_persisted_paths(db, root_id, old_root, new_root):
     ).fetchall()
     path_map = {}
     for row in media_rows:
-        old_original = str(row["original_path"] or "")
-        old_current = str(row["current_path"] or "")
+        old_original = str(row[1] or "")
+        old_current = str(row[2] or "")
         new_original = _rebase_path(old_original, old_root, new_root)
         new_current = _rebase_path(old_current, old_root, new_root)
         db.execute(
             """UPDATE media_catalog SET original_path=?,current_path=?
                WHERE media_id=?""",
-            (new_original, new_current, row["media_id"]),
+            (new_original, new_current, row[0]),
         )
         if old_original != new_original:
             path_map[old_original] = new_original
@@ -468,7 +468,7 @@ def _rebase_persisted_paths(db, root_id, old_root, new_root):
             path_map[old_current] = new_current
 
     tables = {
-        str(row["name"])
+        str(row[0])
         for row in db.execute(
             "SELECT name FROM sqlite_master WHERE type='table'"
         ).fetchall()
