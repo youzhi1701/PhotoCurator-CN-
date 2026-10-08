@@ -56,20 +56,31 @@ class BackgroundTaskHistoryTests(unittest.TestCase):
                 manager.shutdown(timeout=3)
 
     def test_missing_handler_requeue_keeps_original_priority(self):
-        import heapq
+        from unittest.mock import patch
+        import background_tasks
+
         with tempfile.TemporaryDirectory() as tmp:
             manager = BackgroundTaskManager(Path(tmp) / "priority.sqlite", workers=1, autostart=False)
+            original_push = background_tasks.heapq.heappush
+            observed = []
+            def record_push(heap, item):
+                if item[2] == delayed:
+                    observed.append(item[0])
+                return original_push(heap, item)
+
             try:
                 delayed, _ = manager.enqueue("not-registered-yet", {"value": 1}, priority=95)
                 ready, _ = manager.enqueue("registered", {"value": 2}, priority=40)
                 manager.register("registered", lambda payload: payload["value"])
-                manager.start()
-                self._wait_for_state(manager, ready, "done")
+                with patch.object(background_tasks.heapq, "heappush", side_effect=record_push):
+                    manager.start()
+                    self._wait_for_state(manager, ready, "done")
+                    deadline = time.monotonic() + 3
+                    while not observed and time.monotonic() < deadline:
+                        time.sleep(0.02)
+                self.assertTrue(observed, "Missing handler was never requeued")
+                self.assertEqual(set(observed), {95})
                 self.assertEqual(manager.get(delayed)["state"], "queued")
-                with manager._cv:
-                    matches = [p for p, _, tid in manager._heap if tid == delayed]
-                self.assertTrue(matches)
-                self.assertTrue(all(priority == 95 for priority in matches))
             finally:
                 manager.shutdown(timeout=3)
 
