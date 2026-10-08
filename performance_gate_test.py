@@ -27,7 +27,12 @@ def block(start, end):
     return SOURCE[a:b]
 
 
-require('APP_VERSION = "1.7.8"' in SOURCE, "expected v1.7.8 source version")
+version_match = re.search(r'^APP_VERSION\\s*=\\s*"(\\d+\\.\\d+\\.\\d+)"', SOURCE, re.M)
+require(version_match is not None, "missing semantic source version")
+version = version_match.group(1)
+desktop_source = Path("desktop_app.py").read_text(encoding="utf-8")
+require(f'APP_VERSION = "{version}"' in desktop_source,
+        "desktop and web source versions must match")
 
 # 1) Task center: one lightweight heartbeat, adaptive cadence, no idle
 #    fan-out to the three result-bearing progress endpoints.
@@ -175,4 +180,4 @@ activity = block("def _activity(", "def _cached_cull_metrics(")
 require("_ACTIVITY_TRIM_EVERY" in SOURCE and "% _ACTIVITY_TRIM_EVERY" in activity,
         "activity-log cleanup must stay amortized")
 
-print("Performance regression gate OK: v1.7.8 hot paths, rendering, scan metadata, thumbnail scheduling, Lightbox prefetch and compact task heartbeat are intact")
+print(f"Performance regression gate OK: v{version} hot paths, rendering, scan metadata, thumbnail scheduling, Lightbox prefetch and compact task heartbeat are intact")
