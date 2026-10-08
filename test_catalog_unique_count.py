@@ -21,21 +21,21 @@ class CatalogUniqueCountTests(unittest.TestCase):
                     db.execute(
                         """INSERT INTO library_root(root_id,source_id,relative_root,original_root,current_root,
                            display_name,created_at,photo_count) VALUES(?,?,?,?,?,?,?,?)""",
-                        (rid, "disk1", "" if rid == "parent" else "trip",
+                        (rid, "disk1", "photos" if rid == "parent" else "photos/trip",
                          root, root, rid, 1.0, 2 if rid == "parent" else 1),
                     )
-                for media_id, rid, path, state in (
-                    ("m1", "parent", "F:/photos/trip/A.JPG", "present"),
-                    ("m2", "child", "f:/photos/trip/a.jpg", "present"),
-                    ("m3", "parent", "F:/photos/other.jpg", "present"),
-                    ("m4", "child", "F:/photos/trip/missing.jpg", "missing"),
+                for media_id, rid, rel, path, state in (
+                    ("m1", "parent", "trip/A.JPG", "F:/photos/trip/A.JPG", "present"),
+                    ("m2", "child", "a.jpg", "G:/photos/trip/a.jpg", "present"),
+                    ("m3", "parent", "other.jpg", "F:/photos/other.jpg", "present"),
+                    ("m4", "child", "missing.jpg", "G:/photos/trip/missing.jpg", "missing"),
                 ):
                     db.execute(
                         """INSERT INTO media_catalog
                            (media_id,source_id,root_id,relative_path,original_path,
                             current_path,state,first_seen_at,last_seen_at)
                            VALUES(?,?,?,?,?,?,?,?,?)""",
-                        (media_id, "disk1", rid, media_id, path, path, state, 1.0, 1.0),
+                        (media_id, "disk1", rid, rel, path, path, state, 1.0, 1.0),
                     )
                 db.commit()
             sources = list_sources(db_path, refresh=False)
