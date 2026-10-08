@@ -4887,6 +4887,7 @@ document.querySelectorAll('.step').forEach(t=>t.onclick=()=>{
     updateVisibleStepStatus(currentStep,d);
     if(currentStep==='cull')maybeLoadAllCull(d);
     requestAnimationFrame(()=>{
+      if(requestedStep==='dedup')return;  // Restored after async group rendering.
       if(currentStep!==requestedStep||!sameFolder(requestedFolder,folder))return;
       const mainScroll=document.querySelector('main.main');
       const oldPosition=workspaceScrollByStep.get(workspaceViewKey(requestedStep,requestedFolder));
@@ -5914,6 +5915,14 @@ async function loadDedupPage(reset=false){
     renderDedupGroups(photos);
     setupFilterBar();
     updateDedupLoadMore();
+    // Similar groups load asynchronously; restore scroll only after cards exist.
+    if(reset)requestAnimationFrame(()=>{
+      if(requestSerial!==dedupRequestSerial||currentStep!=='dedup'||
+         !sameFolder(requestFolder,folder))return;
+      const mainScroll=document.querySelector('main.main');
+      const previous=workspaceScrollByStep.get(workspaceViewKey('dedup',requestFolder));
+      if(mainScroll&&Number.isFinite(previous))mainScroll.scrollTop=previous;
+    });
   }catch(err){toast('载入相似组失败：'+(err.message||'未知错误'),'bad');}
 }
 function updateDedupLoadMore(){
