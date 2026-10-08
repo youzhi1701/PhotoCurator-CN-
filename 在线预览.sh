@@ -12,7 +12,7 @@ fi
 
 find_python() {
   local candidate
-  for candidate in python3.11 python3.12 python3.10 python3.9 python; do
+  for candidate in python3.11 python3.12 python3.10 python; do
     if command -v "$candidate" >/dev/null 2>&1; then
       if "$candidate" - <<'PY' >/dev/null 2>&1
 import struct, sys
@@ -31,7 +31,7 @@ PY
 BASE_PY="$(find_python || true)"
 if [[ -z "$BASE_PY" ]]; then
   echo
-  echo "[无法启动] 当前 Codespace 没有 Python 3.9–3.12 64 位环境。"
+  echo "[无法启动] 当前 Codespace 没有 Python 3.10–3.12 64 位环境。"
   echo "请按 Ctrl+Shift+P，运行：Codespaces: Rebuild Container"
   exit 3
 fi
