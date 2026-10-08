@@ -12,6 +12,23 @@
 - 新增 `performance_gate_test.py`，锁定任务心跳、Rank 预览、共享扫描、增量渲染、缩放节流和卡片合成契约，并接入源码 CI、Windows Candidate 与正式 Release。
 - 版本统一升级为 **v1.7.1 Candidate**；公开 Stable 下载仍保持已实际发布的 v1.5.0，未通过完整发布门禁前不冒充正式版。
 
+
+## v1.7.2 Candidate
+
+### 深层运行性能收口
+- Cull / Rank / 人工复核缓存复用同一轮文件 size + mtime_ns 指纹采集，避免同一批照片反复 stat，机械硬盘与 USB 大图库更明显。
+- 来源文件夹显示改为纯路径运算，不再对每张照片执行 Path.resolve()，减少高频文件系统元数据访问。
+- 缩略图生成增加有限并发调度与原子缓存写入：浏览器一次出现大量懒加载请求时，不再让图片解码线程无上限争抢 CPU / 磁盘。
+- RAW / HEIF 灯箱显示预览限制为 3200px 长边，显著降低高像素 RAW 连续浏览时的解码、传输与 WebView 内存压力，不影响缩放查看的常规细节判断。
+- Lightbox 增加前后相邻照片预取和 256 项 EXIF 有界缓存，左右连续浏览不再反复读取同一元数据。
+- Task Manager 新增 compact heartbeat，只读取状态计数和最近失败项；完整 30 条任务历史只在显式查询时读取。
+- Activity Log 由每次写入都执行 5000 条保留清理，改为每 64 次写入摊销维护，降低大量人工筛选时的 SQLite 写放大。
+- 移除照片卡片、文件夹组、相似组的 backdrop-filter，同时移除 fixed Aurora 背景滚动重绘；顶部、侧栏等少量框架玻璃视觉继续保留。
+- content-visibility 扩展到相似照片与 Catalog 卡片，减少屏幕外卡片的布局 / 绘制工作。
+- GitHub Actions 的 artifact 上传动作升级到 v7，消除旧 Node runtime 维护告警。
+- 性能回归门禁扩展到文件元数据单次采集、路径零触盘、缩略图并发、Lightbox 预取、compact heartbeat、GPU 合成与日志摊销策略。
+- 版本统一升级为 **v1.7.2 Candidate**；Stable 下载仍保持已实际发布的 v1.5.0。
+
 ## v1.7.0 Candidate
 
 ### 发布级数据、文件安全与 Windows Candidate 收口
