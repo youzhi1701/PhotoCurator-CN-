@@ -709,5 +709,64 @@ class MissingFileDeleteSafetyTests(unittest.TestCase):
             self.assertTrue(first.exists())
             self.assertTrue(second.exists())
 
+
+class BackgroundWorkerIdentityTests(unittest.TestCase):
+    def test_matching_source_is_accepted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            image = Path(tmp) / "photo.jpg"
+            image.write_bytes(b"photograph")
+            signature = photo_curator._file_action_signature(image)
+            self.assertTrue(photo_curator._verify_file_action_source(image, signature))
+            self.assertEqual(image.read_bytes(), b"photograph")
+
+    def test_replaced_path_is_rejected_even_if_size_unchanged(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            image = Path(tmp) / "photo.jpg"
+            image.write_bytes(b"original")
+            signature = photo_curator._file_action_signature(image)
+            old = Path(tmp) / "old.jpg"
+            image.rename(old)
+            image.write_bytes(b"replaced")
+            with self.assertRaisesRegex(RuntimeError, "已变化"):
+                photo_curator._verify_file_action_source(image, signature)
+            self.assertEqual(image.read_bytes(), b"replaced")
+
+    def test_unknown_legacy_action_is_not_implicitly_authorized(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            image = Path(tmp) / "photo.jpg"
+            image.write_bytes(b"original")
+            with self.assertRaisesRegex(RuntimeError, "旧版文件任务"):
+                photo_curator._verify_file_action_source(image, None)
+            self.assertTrue(image.exists())
+
+    def test_recovery_refuses_unrelated_destination(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "gone.jpg"
+            source.write_bytes(b"original")
+            signature = photo_curator._file_action_signature(source)
+            source.unlink()
+            destination = Path(tmp) / "trash.jpg"
+            destination.write_bytes(b"stranger")
+            with self.assertRaisesRegex(RuntimeError, "身份"):
+                photo_curator._verify_file_action_source(
+                    source, signature, moved_to=destination)
+            self.assertTrue(destination.exists())
+
+    def test_worker_permanent_delete_cannot_delete_replaced_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            image = Path(tmp) / "photo.jpg"
+            image.write_bytes(b"original")
+            signature = photo_curator._file_action_signature(image)
+            image.unlink()
+            image.write_bytes(b"stranger")
+            with patch.object(photo_curator, "_find_original_for_path",
+                              return_value=str(image)), \\
+                 patch.object(photo_curator, "_apply_media_lifecycle"):
+                with self.assertRaisesRegex(RuntimeError, "已变化"):
+                    photo_curator._background_permanent_delete({
+                        "path": str(image), "source_identity": signature})
+            self.assertEqual(image.read_bytes(), b"stranger")
+
+
 if __name__ == "__main__":
     unittest.main()
