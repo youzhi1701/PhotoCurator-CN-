@@ -4102,6 +4102,8 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
     transition:background-color .14s ease,color .14s ease}
   @media(prefers-reduced-motion:reduce){.dedup-choice .dedup-recommend{transition:none!important}}
 
+.rank-review-mark{font:inherit;font-size:12px;padding:5px 7px;border-radius:9px;border:1px solid var(--border);cursor:pointer;background:var(--panel2);color:var(--text)}
+.photo-card.review-marked .rank-review-mark{background:#db2c43!important;color:white!important;border-color:#db2c43!important}
 </style></head><body>
 <header class="appbar pywebview-drag-region">
   <div class="app-brand" aria-label="PhotoCurator">
@@ -4172,6 +4174,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
           <button class="workspace-action" id="exportPbgBtn" style="display:none">📱 壁纸</button>
           <button class="workspace-action danger-soft" id="moveBlurryBtn" style="display:none">🗑 移入回收站</button>
           <button class="workspace-action" id="dedupApplyBtn" style="display:none" disabled>🗑 执行待删除照片</button>
+          <button class="workspace-action" id="rankApplyBtn" style="display:none" disabled>🗑 执行待删除照片</button>
         </div>
       </section>
 
@@ -4920,6 +4923,7 @@ function activateStep(step){
   document.getElementById('exportPbgBtn').style.display='none';
   {const mb=document.getElementById('moveBlurryBtn');mb.style.display='none';mb.classList.remove('cta');}
   document.getElementById('dedupApplyBtn').style.display='none';
+  document.getElementById('rankApplyBtn').style.display='none';
   document.getElementById('progressWrap').style.display='none';  // clear stale summary
   document.getElementById('resultTools').style.display='none';
   if(!photos.length&&!isRunning&&!coreRunning&&!catalogRootView){
@@ -6372,14 +6376,53 @@ function updatePager(){
   const pager=document.getElementById('pager');
   if(pager)pager.style.display='none';
 }
+
+function updateRankApplyButton(){
+  const btn=document.getElementById('rankApplyBtn');if(!btn)return;
+  const count=(photos||[]).filter(p=>p.marked_delete&&visibleInReview(p)).length;
+  btn.style.display=currentStep==='rank'?'inline-flex':'none';
+  btn.disabled=count===0;
+  btn.textContent=count?'🗑 执行 '+count+' 张待删除照片':'尚未标记待删除照片';
+}
+function toggleRankReviewMark(path){
+  const photo=(photos||[]).find(p=>p.path===path);if(!photo)return;
+  fetch('/api/review-delete-mark',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({step:'rank',path,marked:!photo.marked_delete})})
+   .then(async r=>{const d=await r.json();if(!r.ok)throw Error(d.error||'标记失败');return d;})
+   .then(d=>{
+      photo.marked_delete=!!d.marked;
+      const card=Array.from(document.querySelectorAll('#gallery .photo-card')).find(el=>el.dataset.path===path);
+      if(card){card.classList.toggle('review-marked',photo.marked_delete);
+        const btn=card.querySelector('.rank-review-mark');
+        if(btn)btn.textContent=photo.marked_delete?'↶ 撤销待删除':'🗑 标记待删除';
+      }
+      updateRankApplyButton();lastRankSig='';
+   }).catch(err=>toast('标记未保存：'+(err.message||'未知错误'),'bad'));
+}
+async function applyRankReviewMarks(){
+  const count=(photos||[]).filter(p=>p.marked_delete&&visibleInReview(p)).length;
+  if(!count)return;
+  const yes=await askBatchConfirm('确认处理待删除照片',
+    '将 '+count+' 张已明确标记的照片提交软件回收站；未标记的照片不会处理。','移入软件回收站');
+  if(!yes)return;
+  const btn=document.getElementById('rankApplyBtn');btn.disabled=true;
+  try{
+    const r=await fetch('/api/review-delete-apply',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({step:'rank'})});
+    const d=await r.json();if(!r.ok)throw Error(d.error||'提交失败');
+    toast('已提交 '+d.queued+' 项后台回收站任务','info');refreshTaskCenter();
+  }catch(err){toast('提交失败：'+(err.message||'未知错误'),'bad');}
+  finally{updateRankApplyButton();}
+}
+document.getElementById('rankApplyBtn').onclick=applyRankReviewMarks;
 function rankCard(p,idx){const path=escHtml(p.path);
   const on=p.phonebg?' on':'';
-  return `<div class="photo-card kept${p.phonebg?' pbg':''}" data-i="${idx}" data-path="${path}"><div class="rank-num">${p.rank!=null?p.rank:idx+1}</div>
+  return `<div class="photo-card kept${p.phonebg?' pbg':''}${p.marked_delete?' review-marked':''}" data-i="${idx}" data-path="${path}"><div class="rank-num">${p.rank!=null?p.rank:idx+1}</div>
     <button class="pbg-toggle${on}" data-path="${path}" title="${p.phonebg?'已设为手机壁纸，点击取消':'设为手机壁纸'}">📱</button>
     <img class="photo-img" src="${p.thumb}" loading="lazy" decoding="async">
     <div class="photo-info"><div class="pi-row"><span class="photo-name">${escHtml(p.name)}</span>
       <button class="remove-btn" data-path="${path}" title="从优选结果中移除（不会删除原文件）">✕ 移除</button>
-      <button class="delete-btn" data-step="rank" data-path="${path}" title="移入软件回收站">🗑 删除</button></div>
+      <button class="rank-review-mark" data-path="${path}" title="${p.marked_delete?'撤销待删除标记':'标记为待删除'}">${p.marked_delete?'↶ 撤销待删除':'🗑 标记待删除'}</button></div>
       <div class="source-path">${escHtml(p.rel_dir||'当前文件夹')}</div></div></div>`;}
 function renderRank(items){
   showPhotoView();
@@ -6392,6 +6435,7 @@ function renderRank(items){
   const activeRankItems=items.filter(visibleInReview);
   rankView=(rankFilter==='pbg')?activeRankItems.filter(p=>p.phonebg):activeRankItems;
   gItems=rankView;
+  updateRankApplyButton();
   const pbgN=activeRankItems.filter(p=>p.phonebg).length;
   const pbgChip=document.getElementById('pbgChipCount');if(pbgChip)pbgChip.textContent=pbgN;
   document.getElementById('exportPbgBtn').style.display=(currentStep==='rank'&&pbgN>0)?'block':'none';
@@ -6407,7 +6451,7 @@ function renderRank(items){
   gPage=0;
   const start=0,end=rankView.length;
   const slice=rankView;
-  const sig=rankFilter+'#'+slice.map(p=>p.rank+':'+p.path+':'+(p.phonebg?1:0)).join('|');
+  const sig=rankFilter+'#'+slice.map(p=>p.rank+':'+p.path+':'+(p.phonebg?1:0)+':'+(p.marked_delete?1:0)).join('|');
   if(sig===lastRankSig){updatePager();return;}
   lastRankSig=sig;
 
@@ -6864,6 +6908,8 @@ document.getElementById('gallery').addEventListener('click',e=>{
   const tr=e.target.closest('.trash-restore-btn');if(tr){e.stopPropagation();trashRestoreOne(Number(tr.dataset.id));return;}
   const tp=e.target.closest('.trash-purge-btn');if(tp){e.stopPropagation();trashPurgeOne(Number(tp.dataset.id));return;}
   const ri=e.target.closest('.restore-inline');if(ri){e.stopPropagation();restoreFromReviewCard(Number(ri.dataset.trashId));return;}
+  const rankMark=e.target.closest('.rank-review-mark');
+  if(rankMark&&currentStep==='rank'){e.stopPropagation();toggleRankReviewMark(rankMark.dataset.path);return;}
   const db=e.target.closest('.delete-btn');if(db){e.stopPropagation();deletePhoto(db.dataset.step||currentStep,db.dataset.path);return;}
   const keep=e.target.closest('.dedup-recommend');
   if(keep&&currentStep==='dedup'){
