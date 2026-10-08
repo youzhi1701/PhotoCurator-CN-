@@ -4020,7 +4020,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   .storage-actions .danger-data-action{color:#b91c1c!important;background:rgba(254,226,226,.62)!important;border-color:rgba(185,28,28,.18)!important}
   .activity-item{padding:8px 9px!important;border:1px solid rgba(124,139,192,.10);line-height:1.45;background:rgba(248,250,255,.72)!important}
   .drawer-scrim{display:none!important}
-  #settingsQuick,#taskToggle,#toolboxOpen{display:none!important}
+  #settingsQuick,#toolboxOpen{display:none!important}
   body.sidebar-collapsed .sidebar-primary-action,
   body.sidebar-collapsed .sidebar-utility-host{display:none!important}
   body.sidebar-collapsed .library-sidebar{width:58px!important;flex-basis:58px!important;padding-left:7px!important;padding-right:7px!important}
