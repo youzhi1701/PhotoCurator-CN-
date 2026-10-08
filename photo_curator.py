@@ -488,9 +488,9 @@ def _query_cache_rows(table, columns, path_keys, chunk_size=400):
     return rows
 
 
-def _load_cull_metrics_map(paths):
+def _load_cull_metrics_map(paths, fingerprints=None):
     """Bulk-load valid clear/quality metrics without opening SQLite per photo."""
-    fps = _fingerprints(paths)
+    fps = fingerprints if fingerprints is not None else _fingerprints(paths)
     out = {}
     try:
         rows = _query_cache_rows(
@@ -505,9 +505,9 @@ def _load_cull_metrics_map(paths):
     return out
 
 
-def _load_rank_scores_map(paths):
+def _load_rank_scores_map(paths, fingerprints=None):
     """Bulk-load valid rank scores; stale file versions are ignored."""
-    fps = _fingerprints(paths)
+    fps = fingerprints if fingerprints is not None else _fingerprints(paths)
     out = {}
     try:
         rows = _query_cache_rows(
@@ -529,9 +529,9 @@ def _load_rank_scores_map(paths):
     return out
 
 
-def _load_review_overrides(paths):
+def _load_review_overrides(paths, fingerprints=None):
     """Load valid manual decisions only for this scan, never the whole table."""
-    fps = _fingerprints(paths)
+    fps = fingerprints if fingerprints is not None else _fingerprints(paths)
     out = {}
     try:
         rows = _query_cache_rows(
@@ -714,7 +714,7 @@ def _prune_index_db():
 threading.Thread(target=_prune_index_db, daemon=True,
                  name='photocurator-index-prune').start()
 
-APP_VERSION = "1.7.1"
+APP_VERSION = "1.7.2"
 IS_CODESPACES = os.environ.get('CODESPACES', '').strip().lower() == 'true'
 CODESPACE_NAME = os.environ.get('CODESPACE_NAME', '').strip()
 _CODESPACES_DOMAIN_RAW = os.environ.get(
@@ -891,6 +891,10 @@ THUMB_DIR = DATA_ROOT / 'cache' / 'thumbnails'
 OFFLINE_PREVIEW_DIR = DATA_ROOT / 'offline_previews'
 THUMB_DIR.mkdir(parents=True, exist_ok=True)
 OFFLINE_PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
+# Keep thumbnail decode work below the level where it starves foreground
+# analysis or WebView input. Browser lazy-loading can otherwise fan out many
+# concurrent requests on a large first screen.
+_THUMB_BUILD_SEMAPHORE = threading.Semaphore(2)
 DEDUP_SIGNATURE_VERSION = 1
 DEDUP_CACHE_DIR = DATA_ROOT / 'config' / 'dedup_features'
 DEDUP_CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -1194,11 +1198,21 @@ def list_images(folder, recursive=False):
 
 
 def relative_folder(path, root):
-    """Human-readable source folder relative to the selected scan root."""
+    """Human-readable source folder without filesystem resolution I/O.
+
+    Scan/analysis paths are already absolute. Using resolve() here caused an
+    extra filesystem lookup for every rendered/analyzed photo, which is
+    especially expensive on USB HDDs. Keep this hot path lexical.
+    """
     try:
-        rel = Path(path).resolve().parent.relative_to(Path(root).resolve())
-        txt = str(rel).replace('\\', ' / ')
-        return txt if txt not in ('', '.') else '当前文件夹'
+        parent = os.path.abspath(os.path.dirname(os.path.normpath(str(path))))
+        root_abs = os.path.abspath(os.path.normpath(str(root)))
+        rel = os.path.relpath(parent, root_abs)
+        if rel == os.curdir:
+            return '当前文件夹'
+        if rel == os.pardir or rel.startswith(os.pardir + os.sep):
+            return os.path.basename(parent) or '当前文件夹'
+        return rel.replace('\\', ' / ')
     except Exception:
         return Path(path).parent.name or '当前文件夹'
 
@@ -1927,18 +1941,32 @@ def make_thumb_file(image_path, size=300):
     out = _thumb_cache_path(image_path)
     if out.exists():
         return out
-    try:
-        with open_image_pil(image_path) as src:   # RAW-aware
-            src.draft('RGB', (size * 2, size * 2))
-            # Honor EXIF orientation and fully detach from the source file
-            # before saving, so Windows never keeps the original photo locked.
-            img = ImageOps.exif_transpose(src).convert('RGB')
-            img.thumbnail((size, size), Image.Resampling.BILINEAR)
-            img.save(out, format='JPEG', quality=80)
-        return out
-    except Exception as e:
-        logger.warning(f"thumb fail {image_path}: {e}")
-        return None
+    with _THUMB_BUILD_SEMAPHORE:
+        # Another request may have produced the same thumbnail while this one
+        # waited for a decode slot.
+        if out.exists():
+            return out
+        tmp = out.with_name(
+            out.name + f".{os.getpid()}.{threading.get_ident()}.tmp"
+        )
+        try:
+            with open_image_pil(image_path) as src:   # RAW-aware
+                src.draft('RGB', (size * 2, size * 2))
+                # Honor EXIF orientation and fully detach from the source file
+                # before saving, so Windows never keeps the original photo locked.
+                img = ImageOps.exif_transpose(src).convert('RGB')
+                img.thumbnail((size, size), Image.Resampling.BILINEAR)
+                img.save(tmp, format='JPEG', quality=80)
+            os.replace(tmp, out)
+            return out
+        except Exception as e:
+            try:
+                if tmp.exists():
+                    tmp.unlink()
+            except OSError:
+                pass
+            logger.warning(f"thumb fail {image_path}: {e}")
+            return None
 
 
 def _background_build_offline_previews(payload):
@@ -2689,8 +2717,11 @@ def run_cull(folder, strictness, adaptive, rescue_on, recursive=True):
     try:
         images = _shared_list_images(folder, recursive=recursive)
         current_paths = {str(p) for p in images}
-        cull_cache = _load_cull_metrics_map(images)
-        s['overrides'] = _load_review_overrides(images)
+        # One metadata pass feeds every path-keyed cache lookup. On external
+        # HDD/USB libraries, repeated stat() passes are measurable latency.
+        fingerprints = _fingerprints(images)
+        cull_cache = _load_cull_metrics_map(images, fingerprints)
+        s['overrides'] = _load_review_overrides(images, fingerprints)
         total = len(images) or 1
         items = []   # {name, path, region_s, q}
         cache_buffer = []
@@ -3271,7 +3302,8 @@ def run_rank(folder, ftype='all', pair='both', recursive=True):
         total = len(paths)
         s['total'] = total
         analyzer = AdvancedPhotoAnalyzer()
-        rank_cache_map = _load_rank_scores_map(paths)
+        rank_fingerprints = _fingerprints(paths)
+        rank_cache_map = _load_rank_scores_map(paths, rank_fingerprints)
         rank_cache_buffer = []
 
         t0 = time.time()
@@ -3677,7 +3709,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
       radial-gradient(circle at 12% 4%,rgba(77,208,255,.22),transparent 32%),
       radial-gradient(circle at 88% 12%,rgba(170,118,255,.20),transparent 34%),
       radial-gradient(circle at 60% 95%,rgba(255,142,213,.16),transparent 36%),
-      linear-gradient(145deg,#eef7ff 0%,#f7f5ff 46%,#fff5fb 100%);background-attachment:fixed}
+      linear-gradient(145deg,#eef7ff 0%,#f7f5ff 46%,#fff5fb 100%)}
   .top{background:
        radial-gradient(circle at 18% -80%,rgba(113,222,255,.34),transparent 44%),
        radial-gradient(circle at 78% -120%,rgba(205,148,255,.28),transparent 46%),
@@ -3686,7 +3718,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
        border-bottom:1px solid rgba(255,255,255,.28);box-shadow:0 8px 28px rgba(52,72,140,.15)}
   .sidebar{background:rgba(255,255,255,.58);backdrop-filter:blur(24px) saturate(145%);-webkit-backdrop-filter:blur(24px) saturate(145%);
            border-right:1px solid rgba(255,255,255,.65)}
-  .panel-box,.shortcut,.folder-group,.dedup-group,.photo-card,.btn-ghost,.chip,input[type=text],input[type=number],.wgroup select{
+  .panel-box,.shortcut,.btn-ghost,.chip,input[type=text],input[type=number],.wgroup select{
     backdrop-filter:blur(18px) saturate(135%);-webkit-backdrop-filter:blur(18px) saturate(135%)}
   .folder-group,.dedup-group,.photo-card{background:var(--glass);border-color:rgba(255,255,255,.72);box-shadow:0 8px 26px rgba(66,84,132,.08)}
   .folder-head{background:rgba(244,248,255,.72)}
@@ -3750,7 +3782,9 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   body.sidebar-collapsed .nav-icon{width:auto}
   body.sidebar-collapsed .task-center{left:94px}
   .top button,.top input,.top .title-action,.top .window-controls{position:relative;z-index:2}
-  .folder-grid .photo-card{content-visibility:auto;contain-intrinsic-size:190px 240px}
+  .folder-grid .photo-card,.dedup-choice,.catalog-card{
+    content-visibility:auto;contain-intrinsic-size:190px 240px
+  }
   body.processing #settingsPanel input,
   body.processing #settingsPanel select{opacity:.58;pointer-events:none}
 
@@ -6596,10 +6630,38 @@ function barRow(label,v,info,cat,color){const t=(info||'').replace(/"/g,'&quot;'
   const fillBg=color?color:barColor(v);
   const labStyle=color?` style="color:${color};font-weight:600;border-left:3px solid ${color};padding-left:6px"`:'';
   return `<div class="bar${cat?' cat':''}" title="${label}: ${t}"><span class="lab"${labStyle}>${label}</span><span class="track"><span class="fill" style="width:${v}%;background:${fillBg}"></span></span><span class="num">${v}</span></div>`;}
+const exifCache=new Map(),EXIF_CACHE_LIMIT=256;
+function imageViewUrl(path){return '/api/image?path='+encodeURIComponent(path);}
+function getExif(path){
+  if(exifCache.has(path))return Promise.resolve(exifCache.get(path));
+  return fetch('/api/exif?path='+encodeURIComponent(path)).then(r=>{
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    return r.json();
+  }).then(data=>{
+    exifCache.set(path,data);
+    if(exifCache.size>EXIF_CACHE_LIMIT){
+      const first=exifCache.keys().next().value;
+      if(first!==undefined)exifCache.delete(first);
+    }
+    return data;
+  });
+}
+function prefetchLbNeighbors(){
+  if(lbList.length<2)return;
+  const candidates=[
+    lbList[(lbIndex-1+lbList.length)%lbList.length],
+    lbList[(lbIndex+1)%lbList.length]
+  ];
+  candidates.forEach(item=>{
+    if(!item||!item.path)return;
+    const img=new Image();img.decoding='async';img.src=imageViewUrl(item.path);
+    getExif(item.path).catch(()=>{});
+  });
+}
 function showLb(){
   const p=lbList[lbIndex];if(!p)return;
   resetLbZoom();
-  document.getElementById('lbImg').src='/api/image?path='+encodeURIComponent(p.path);
+  document.getElementById('lbImg').src=imageViewUrl(p.path);
   document.getElementById('lbName').textContent=(p.rank!=null?'#'+p.rank+'  ':'')+p.name;
   const extra=(currentStep==='dedup')
     ? ((p.group>1)?('   ·   同组最佳 · 共 '+p.group+' 张（'+(p.group-1)+' 张相似照片已归组）'):'   ·   原始照片')
@@ -6639,13 +6701,14 @@ function showLb(){
     side.innerHTML=`<h3>${currentStep==='cull'?'清晰度':currentStep==='trash'?'软件回收站':'照片'}</h3><div style="font-size:13px;opacity:.9">${escHtml(p.name)}</div><div style="font-size:18px;font-weight:700;margin-top:8px">${escHtml(label)}</div>${currentStep==='trash'?`<div style="font-size:11px;opacity:.7;margin-top:8px;line-height:1.5">原位置：${escHtml(p.original_path||'')}</div>`:''}${currentStep==='rank'&&p.score!=null?`<div style="font-size:11px;opacity:.58;margin-top:4px">综合评分 ${p.score}</div>`:''}`;
   }
   loadExif(p.path,side);
+  prefetchLbNeighbors();
 }
 function exifRow(label,val,allowHtml=false){
   return `<div class="exrow"><span class="lab">${escHtml(label)}</span><span class="val">${allowHtml?val:escHtml(val)}</span></div>`;
 }
 function loadExif(path,side){
   const token=path;side.dataset.exifToken=token;
-  fetch('/api/exif?path='+encodeURIComponent(path)).then(r=>r.json()).then(e=>{
+  getExif(path).then(e=>{
     if(side.dataset.exifToken!==token)return; // user moved on
     let rows='',wantMap=null;
     if(e.date)rows+=exifRow('日期',e.date);
@@ -7169,7 +7232,11 @@ def _raw_preview_file(image_path):
     try:
         with open_image_pil(image_path) as src:
             img = ImageOps.exif_transpose(src).convert('RGB')
-            img.save(out, format='JPEG', quality=90)
+            # Lightbox does not benefit from decoding a 40–60 MP RAW on every
+            # navigation. A 3200px display preview retains inspection detail
+            # while dramatically reducing decode, transfer and WebView memory.
+            img.thumbnail((3200, 3200), Image.Resampling.LANCZOS)
+            img.save(out, format='JPEG', quality=90, optimize=False)
         return out
     except Exception as e:
         logger.warning(f"raw preview fail {image_path}: {e}")
