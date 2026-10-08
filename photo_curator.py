@@ -1393,6 +1393,11 @@ def _safe_move_file(src, dst):
         if exc.errno != errno.EXDEV and getattr(exc, 'winerror', None) != 17:
             raise
 
+    # Copying a multi-GB file can last many minutes. Snapshot the original
+    # inode/device/size/mtime before copying; a changed or replaced original
+    # must NEVER be unlinked by the stale background task.
+    source_identity = _file_action_signature(src)
+
     # Never delete another attempt's fixed-name .part file. Create a unique
     # staging file on the destination volume so the final rename is local.
     with tempfile.NamedTemporaryFile(
@@ -1412,13 +1417,20 @@ def _safe_move_file(src, dst):
             return h.digest()
         if digest(src) != digest(tmp):
             raise IOError("跨盘复制校验失败：文件内容不一致")
+        if _file_action_signature(src) != source_identity:
+            raise RuntimeError("跨盘复制期间原照片发生变化，已保留原片并中止任务")
         # Windows requires a write-capable handle for FlushFileBuffers/fsync.
         with open(tmp, 'r+b') as fh:
             os.fsync(fh.fileno())
         # tmp already resides on the destination volume. The final claim
         # must be no-replace too; a check-then-os.replace race can overwrite
         # another user's photograph.
+        # Revalidate *after* the destination is claimed too. If another
+        # process replaces the source at this point, leave both files intact
+        # for manual reconciliation rather than unlinking unrelated bytes.
         _rename_no_replace(tmp, dst)
+        if _file_action_signature(src) != source_identity:
+            raise RuntimeError("跨盘目标写入后发现源照片身份变化，禁止删除新原片")
         src.unlink()
         return dst
     finally:
