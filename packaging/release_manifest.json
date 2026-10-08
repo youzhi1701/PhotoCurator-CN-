@@ -24,7 +24,7 @@
   "replace": [
     "app"
   ],
-  "notes": "v1.7.2 性能架构升级：在 v1.7.0 发布级数据与文件安全底座上，统一任务中心轻量心跳并按忙闲自适应轮询；Rank 预览只在输入变化时重算；Cull/Dedup 共用不可变扫描快照并移除扫描过程的大列表重复复制；递归 Cull 与相似组增加无变化渲染短路；离线历史图库改为最多 800 张前台卡片的双向窗口化分页；缩略图缩放合并到浏览器动画帧并延迟偏好写入；移除照片卡片级高频毛玻璃合成；新增性能架构回归门禁，并接入源码、Windows Candidate 与正式 Release 验证。",
+  "notes": "v1.7.2 深层性能收口：在 v1.7.1 性能架构基础上继续减少磁盘、CPU、GPU 与 WebView 重复工作；Cull/Rank 缓存共享单次文件指纹采集，来源目录显示改为纯路径运算避免逐照片 resolve 触盘；缩略图生成限制并发并使用原子缓存写入，RAW/HEIF 灯箱预览限制到 3200px 长边；Lightbox 增加相邻图片与 EXIF 有界预取缓存；任务中心改用最小后台任务 heartbeat；运行日志清理改为摊销维护；彻底移除照片卡片/相似组/文件夹组的 backdrop-filter 与 fixed Aurora 背景重绘；性能门禁同步扩展。",
   "release_date": "2026-10-08",
   "published_version": "1.5.0",
   "published_installer": "PhotoCurator-Setup-v1.5.0.exe"
