@@ -8366,7 +8366,6 @@ def api_delete_photo():
                 previous_group_status = str(group.get('status') or 'pending')
                 break
     lifecycle = 'pending_trash' if mode == 'trash' else 'pending_permanent_delete'
-    _apply_media_lifecycle(original, str(target), lifecycle, step)
 
     kind = 'move_to_trash' if mode == 'trash' else 'permanent_delete'
     priority = 10 if mode == 'trash' else 5
@@ -8379,12 +8378,21 @@ def api_delete_photo():
         task_payload['trash_path'] = str(
             _trash_destination(Path(target), folder).resolve()
         )
-    task_id, created = TASK_MANAGER.enqueue(
-        kind,
-        task_payload,
-        priority=priority,
-        idempotency_key=f"{kind}:{original}",
-    )
+    # Enqueue first. A full queue, closed database or disk error must not leave
+    # a permanent "pending" marker for a task that was never accepted.
+    try:
+        task_id, created = TASK_MANAGER.enqueue(
+            kind,
+            task_payload,
+            priority=priority,
+            idempotency_key=f"{kind}:{original}",
+        )
+    except Exception:
+        logger.exception("failed to enqueue single-file action")
+        return jsonify({'error': '文件任务提交失败，未对原片执行操作'}), 503
+    task = TASK_MANAGER.get(task_id)
+    if task and task.get('state') in ('queued', 'running'):
+        _apply_media_lifecycle(original, str(target), lifecycle, step)
     _activity('提交后台任务', original, f"{kind}#{task_id}")
     return jsonify({
         'ok': True,
