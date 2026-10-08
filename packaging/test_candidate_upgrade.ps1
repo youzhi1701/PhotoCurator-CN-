@@ -36,25 +36,25 @@ $externalHash = (Get-FileHash $externalMarker -Algorithm SHA256).Hash
 function AssertPreserved($pass, $expectedVersion) {
     $exe = Join-Path $installRoot 'app\\PhotoCurator.exe'
     if (!(Test-Path -LiteralPath $exe -PathType Leaf)) {
-        throw "Pass $pass: installed PhotoCurator.exe missing"
+        throw "Pass ${pass}: installed PhotoCurator.exe missing"
     }
     $actual = (Get-Item -LiteralPath $exe).VersionInfo.ProductVersion
     if (!$actual.StartsWith($expectedVersion)) {
-        throw "Pass $pass: wrong installed version $actual"
+        throw "Pass ${pass}: wrong installed version $actual"
     }
     foreach($file in @($probeConfig, $probeOffline)) {
         if (!(Test-Path -LiteralPath $file -PathType Leaf)) {
-            throw "Pass $pass: retained config/offline preview removed"
+            throw "Pass ${pass}: retained config/offline preview removed"
         }
         $actualHash = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash
         if ($actualHash -ne $originalHash) {
-            throw "Pass $pass: retained config/offline preview changed"
+            throw "Pass ${pass}: retained config/offline preview changed"
         }
     }
     if ((Get-FileHash -LiteralPath $externalMarker -Algorithm SHA256).Hash -ne $externalHash) {
-        throw "Pass $pass: an external original photo was modified"
+        throw "Pass ${pass}: an external original photo was modified"
     }
-    Write-Host "Pass $pass: installed executable, retained user data and original photo verified."
+    Write-Host "Pass ${pass}: installed executable, retained user data and original photo verified."
 }
 
 for ($pass=1; $pass -le 2; $pass++) {
