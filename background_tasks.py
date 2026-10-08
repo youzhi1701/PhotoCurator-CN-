@@ -131,12 +131,12 @@ class BackgroundTaskManager:
                 continue
             try:
                 with self._connect() as db:
-                    row = db.execute("SELECT kind,payload_json,state FROM background_task WHERE id=?", (task_id,)).fetchone()
+                    row = db.execute("SELECT kind,payload_json,state,priority FROM background_task WHERE id=?", (task_id,)).fetchone()
                     if not row or row[2] != "queued":
                         continue
                     db.execute("UPDATE background_task SET state='running',updated_at=? WHERE id=?", (time.time(), task_id))
                     db.commit()
-                kind, payload_json, _ = row
+                kind, payload_json, _, priority = row
                 handler = self.handlers.get(kind)
                 if handler is None:
                     # During application startup queued tasks may be recovered
@@ -149,7 +149,7 @@ class BackgroundTaskManager:
                         db.commit()
                     with self._cv:
                         self._seq += 1
-                        heapq.heappush(self._heap, (20, self._seq, task_id))
+                        heapq.heappush(self._heap, (int(priority), self._seq, task_id))
                     time.sleep(0.2)
                     continue
                 result = handler(json.loads(payload_json or "{}"))

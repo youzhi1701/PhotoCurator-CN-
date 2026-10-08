@@ -55,6 +55,35 @@ class BackgroundTaskHistoryTests(unittest.TestCase):
             finally:
                 manager.shutdown(timeout=3)
 
+    def test_missing_handler_requeue_keeps_original_priority(self):
+        from unittest.mock import patch
+        import background_tasks
+
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = BackgroundTaskManager(Path(tmp) / "priority.sqlite", workers=1, autostart=False)
+            original_push = background_tasks.heapq.heappush
+            observed = []
+            def record_push(heap, item):
+                if item[2] == delayed:
+                    observed.append(item[0])
+                return original_push(heap, item)
+
+            try:
+                delayed, _ = manager.enqueue("not-registered-yet", {"value": 1}, priority=95)
+                ready, _ = manager.enqueue("registered", {"value": 2}, priority=40)
+                manager.register("registered", lambda payload: payload["value"])
+                with patch.object(background_tasks.heapq, "heappush", side_effect=record_push):
+                    manager.start()
+                    self._wait_for_state(manager, ready, "done")
+                    deadline = time.monotonic() + 3
+                    while not observed and time.monotonic() < deadline:
+                        time.sleep(0.02)
+                self.assertTrue(observed, "Missing handler was never requeued")
+                self.assertEqual(set(observed), {95})
+                self.assertEqual(manager.get(delayed)["state"], "queued")
+            finally:
+                manager.shutdown(timeout=3)
+
     @staticmethod
     def _wait_for_state(manager, task_id, state):
         deadline = time.monotonic() + 5
