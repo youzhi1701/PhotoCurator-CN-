@@ -1,8 +1,8 @@
 {
   "product": "PhotoCurator",
   "channel": "candidate",
-  "version": "1.7.7",
-  "installer": "PhotoCurator-Setup-v1.7.7.exe",
+  "version": "1.7.8",
+  "installer": "PhotoCurator-Setup-v1.7.8.exe",
   "upgrade_mode": "in_place",
   "same_app_id": true,
   "data_root": "%LOCALAPPDATA%/PhotoCurator/data",
@@ -24,7 +24,7 @@
   "replace": [
     "app"
   ],
-  "notes": "v1.7.7 Candidate：从 v1.8.0 研发分支安全整合 SQLite WAL 初始化优化，避免短事务反复设置日志模式；增加并发读取、独立数据库与完整性测试。保留 v1.7.6 文件安全、v1.7.5 数据统计和 v1.7.4 Aurora UI；仍有整套方案未完成。",
+  "notes": "v1.7.8 Candidate：跨盘移动改为单次专用临时文件，复制后进行 SHA-256 内容校验；原片只在校验和目标提交后才删除。新增复制损坏、重复临时文件回归。仍有跨盘中断恢复、文件生命周期、筛选审阅、19000张图库等未完成项目。",
   "release_date": "2026-10-08",
   "published_version": "1.5.0",
   "published_installer": "PhotoCurator-Setup-v1.5.0.exe"
