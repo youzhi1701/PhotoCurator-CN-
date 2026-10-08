@@ -5171,9 +5171,9 @@ function sourceTotals(){
   let roots=0,indexed=0,online=0,offline=0;
   for(const source of sourceCatalog||[]){
     if(source.connected)online++;else offline++;
-    for(const root of source.roots||[]){
-      roots++;indexed+=Number(root.photo_count||0);
-    }
+    // The server deduplicates physical paths across overlapping roots.
+    indexed+=Number(source.unique_photo_count||0);
+    for(const root of source.roots||[])roots++;
   }
   return {roots,indexed,online,offline,total:(sourceCatalog||[]).length};
 }
