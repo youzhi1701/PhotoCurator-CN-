@@ -6306,6 +6306,10 @@ function selectDedupPhoto(groupId,path){
       }
       // Leave the card in place; other status partitions refresh on demand.
       updateDedupApplyButton();
+      if(document.getElementById('lightbox').classList.contains('open')){
+        const lb=lbList[lbIndex];
+        if(lb&&lb.path===path)document.getElementById('lbDelete').textContent=member.marked_delete?'↶ 撤销待删除':'🗑 标记待删除';
+      }
       lastDedupSig='';
     }).catch(err=>toast('标记未保存：'+(err.message||'未知错误'),'bad'));
 }
@@ -6401,7 +6405,12 @@ function toggleRankReviewMark(path){
         const btn=card.querySelector('.rank-review-mark');
         if(btn)btn.textContent=photo.marked_delete?'↶ 撤销待删除':'🗑 标记待删除';
       }
-      updateRankApplyButton();lastRankSig='';
+      updateRankApplyButton();
+      if(document.getElementById('lightbox').classList.contains('open')){
+        const lb=lbList[lbIndex];
+        if(lb&&lb.path===path)document.getElementById('lbDelete').textContent=photo.marked_delete?'↶ 撤销待删除':'🗑 标记待删除';
+      }
+      lastRankSig='';
    }).catch(err=>toast('标记未保存：'+(err.message||'未知错误'),'bad'));
 }
 async function applyRankReviewMarks(){
@@ -6889,7 +6898,12 @@ async function deletePhoto(step,path,fromLightbox=false){
 function lbDeleteCurrent(){
   const p=lbList[lbIndex];if(!p)return;
   if(currentStep==='cull'){setBlurryMoveSelection(p.path,!p.move_selected);return;}
-  deletePhoto(currentStep,p.path,true);
+  if(currentStep==='dedup'){
+    const group=(photos||[]).find(g=>(g.members||[]).some(m=>m.path===p.path));
+    if(group)selectDedupPhoto(group.group_id,p.path);
+    return;
+  }
+  if(currentStep==='rank'){toggleRankReviewMark(p.path);return;}
 }
 
 /* ---- remove / restore (rank) ---- */
@@ -6916,7 +6930,15 @@ document.getElementById('gallery').addEventListener('click',e=>{
   const ri=e.target.closest('.restore-inline');if(ri){e.stopPropagation();restoreFromReviewCard(Number(ri.dataset.trashId));return;}
   const rankMark=e.target.closest('.rank-review-mark');
   if(rankMark&&currentStep==='rank'){e.stopPropagation();toggleRankReviewMark(rankMark.dataset.path);return;}
-  const db=e.target.closest('.delete-btn');if(db){e.stopPropagation();deletePhoto(db.dataset.step||currentStep,db.dataset.path);return;}
+  const db=e.target.closest('.delete-btn');if(db){
+    e.stopPropagation();
+    const step=db.dataset.step||currentStep,path=db.dataset.path;
+    if(step==='rank'){toggleRankReviewMark(path);return;}
+    if(step==='cull'){const row=(photos||[]).find(p=>p.path===path);if(row)setBlurryMoveSelection(path,!row.move_selected);return;}
+    if(step==='dedup'){const group=(photos||[]).find(g=>(g.members||[]).some(m=>m.path===path));
+      if(group)selectDedupPhoto(group.group_id,path);return;}
+    return;
+  }
   const keep=e.target.closest('.dedup-recommend');
   if(keep&&currentStep==='dedup'){
     e.stopPropagation();
@@ -7003,6 +7025,11 @@ function showLb(){
   const life=p.lifecycle||'normal';
   const inReview=['cull','dedup','rank'].includes(currentStep);
   del.style.display=(['dedup','rank'].includes(currentStep)&&!['pending_trash','pending_permanent_delete','trashed','permanently_deleted','pending_restore'].includes(life))?'inline-block':'none';
+  if(del.style.display!=='none'){
+    const marked=!!p.marked_delete;
+    del.textContent=marked?'↶ 撤销待删除':'🗑 标记待删除';
+    del.title=marked?'撤销待删除标记':'标记为待删除';
+  }
   tr.style.display=(currentStep==='trash'||(inReview&&life==='trashed'&&p.trash_id))?'inline-block':'none';
   tp.style.display=currentStep==='trash'?'inline-block':'none';
   rs.style.display=(currentStep==='rank'&&removedCount>0)?'inline-block':'none';
