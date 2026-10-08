@@ -8618,12 +8618,25 @@ def api_move_blurry():
         original = _find_original_for_path(path)
         planned_trash = str(_trash_destination(Path(path), folder).resolve())
         _apply_media_lifecycle(original, path, 'pending_trash', 'cull')
-        task_id, _ = TASK_MANAGER.enqueue(
-            'move_to_trash',
-            {'path': path, 'folder': str(folder), 'step': 'cull',
-             'trash_path': planned_trash},
-            priority=12, idempotency_key=f"move_to_trash:{original}"
-        )
+        try:
+            task_id, _ = TASK_MANAGER.enqueue(
+                'move_to_trash',
+                {'path': path, 'folder': str(folder), 'step': 'cull',
+                 'trash_path': planned_trash},
+                priority=12, idempotency_key=f"move_to_trash:{original}"
+            )
+        except Exception:
+            # Failed queue submission must never leave a false pending-delete
+            # state for a photo that no worker can process.
+            logger.exception("failed to queue reviewed photo move: %s", path)
+            try:
+                _apply_media_lifecycle(original, path, 'normal', 'cull')
+            except Exception:
+                logger.exception("failed to restore photo lifecycle: %s", path)
+            return jsonify({
+                'error': '任务提交失败，未提交的照片仍保留原位，请检查任务中心后重试',
+                'queued': len(task_ids), 'task_ids': task_ids,
+            }), 503
         task_ids.append(task_id)
     selected_left, eligible_total = _blurry_move_counts()
     return jsonify({'ok': True, 'queued': len(task_ids), 'task_ids': task_ids,

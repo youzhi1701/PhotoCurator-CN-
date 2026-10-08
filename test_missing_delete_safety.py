@@ -154,5 +154,28 @@ class MissingFileDeleteSafetyTests(unittest.TestCase):
                 self.assertTrue(good.exists())
                 self.assertTrue(outside.exists())
 
+    def test_failed_queue_submission_restores_nonpending_lifecycle(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "library"
+            root.mkdir()
+            photo = root / "one.jpg"
+            photo.write_bytes(b"test")
+            with patch.dict(photo_curator.state, {"folder": str(root)}), \
+                 patch.dict(photo_curator.state["cull"],
+                            {"photos": [{"path": str(photo), "tier": "sharp",
+                                         "move_selected": True, "lifecycle": "normal"}]},
+                            clear=False), \
+                 patch.object(photo_curator, "_apply_media_lifecycle") as lifecycle, \
+                 patch.object(photo_curator, "_find_original_for_path",
+                              return_value=str(photo)), \
+                 patch.object(photo_curator.TASK_MANAGER, "enqueue",
+                              side_effect=OSError("queue unavailable")):
+                response = photo_curator.app.test_client().post("/api/move-blurry")
+            self.assertEqual(response.status_code, 503, response.get_json())
+            self.assertEqual(lifecycle.call_count, 2)
+            self.assertEqual(lifecycle.call_args_list[0].args[2], "pending_trash")
+            self.assertEqual(lifecycle.call_args_list[1].args[2], "normal")
+            self.assertTrue(photo.exists())
+
 if __name__ == "__main__":
     unittest.main()
