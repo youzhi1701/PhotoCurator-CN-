@@ -99,8 +99,8 @@ require("catalogLoadEarlier" in catalog and "catalogLoadMore" in catalog,
 # 7) File metadata and path rendering stay single-pass / lexical on large
 #    external libraries instead of repeatedly touching the filesystem.
 cull = block("def run_cull(", "def _cull_allowed_for_dedup(")
-require("fingerprints = _fingerprints(images)" in cull,
-        "Cull must collect file fingerprints once per scan")
+require("fingerprints = _shared_scan_fingerprints(folder, recursive) or _fingerprints(images)" in cull,
+        "Cull must reuse shared scan fingerprints with a safe fallback")
 require("_load_cull_metrics_map(images, fingerprints)" in cull,
         "Cull cache lookup must reuse the shared fingerprint pass")
 require("_load_review_overrides(images, fingerprints)" in cull,
