@@ -31,8 +31,8 @@ Uninstallable=yes
 ShowLanguageDialog=no
 VersionInfoVersion={#MyAppVersion}.0
 SetupIconFile=PhotoCurator.ico
-; Upgrades terminate a running PhotoCurator instance automatically so mapped
-; program files can be replaced without asking the user to close it manually.
+; Never terminate active photo operations during upgrade. The preflight guard
+; refuses to replace program files until the previous app exits normally.
 CloseApplications=no
 RestartApplications=no
 
@@ -80,47 +80,17 @@ var
   DeleteSettings: Boolean;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
-var
-  ResultCode: Integer;
-  I: Integer;
 begin
   Result := '';
-
+  { Never force-kill the application during file processing. An unclean
+    shutdown could leave an unfinished move or a pending catalog update. }
   if CheckForMutexes(PhotoCuratorMutex) then
   begin
-    Log('PhotoCurator is running; closing the old instance automatically before upgrade.');
-
-    { taskkill is scoped to the product executable and /T also closes a
-      transient child picker if one exists. }
-    if not Exec(
-      ExpandConstant('{sys}\taskkill.exe'),
-      '/F /T /IM "{#MyAppExeName}"',
-      '',
-      SW_HIDE,
-      ewWaitUntilTerminated,
-      ResultCode
-    ) then
-    begin
-      Result := '无法自动关闭正在运行的 PhotoCurator。请稍后重试安装。';
-      Exit;
-    end;
-
-    { Wait for Windows to release the named mutex and mapped executable files. }
-    for I := 1 to 30 do
-    begin
-      if not CheckForMutexes(PhotoCuratorMutex) then
-        Break;
-      Sleep(100);
-    end;
-
-    if CheckForMutexes(PhotoCuratorMutex) then
-    begin
-      Result := '正在运行的 PhotoCurator 未能自动退出。请稍后重试安装。';
-      Exit;
-    end;
-
-    Sleep(250);
-    Log('Previous PhotoCurator instance stopped; continuing in-place upgrade.');
+    Log('PhotoCurator still running; postponing upgrade safely.');
+    Result := 'PhotoCurator 仍在运行。请先从右下角系统托盘选择“退出”，'
+      + '等待正在执行的照片任务结束，然后重新运行安装程序。'
+      + '安装不会删除已保存的图库和用户数据。';
+    Exit;
   end;
 end;
 
