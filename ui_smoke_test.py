@@ -132,6 +132,18 @@ def main():
             opacity,imageFilter
           };
         """)
+        other_quality = driver.execute_script("""
+          const sharp={path:'good.jpg',name:'good.jpg',thumb:'/fake.jpg',
+                       tier:'sharp',badge:'清晰',badgeType:'good',
+                       lifecycle:'normal',move_selected:true};
+          const card=cullCardHtml(sharp,0);
+          return {redIcon:card.includes('🗑'),
+                  marker:card.includes('move-select"'),
+                  tierUnchanged:card.includes('data-tier="sharp"')};
+        """)
+        require(all(other_quality.values()),
+                f"好照片也必须允许人工待删除而不改变算法质量标签: {other_quality}")
+
         require(markers["off"] and markers["marked"] and markers["icon"],
                 f"待删除标记不是人工选择状态: {markers}")
         require(markers["opacity"] == "1" and markers["imageFilter"] == "none",
