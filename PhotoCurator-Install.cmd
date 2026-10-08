@@ -24,7 +24,7 @@ echo [1/5] Python runtime
 if errorlevel 1 goto fail
 
 if not exist ".venv\Scripts\python.exe" goto create_venv
-".venv\Scripts\python.exe" -c "import sys,struct; raise SystemExit(0 if (3,9)<=sys.version_info[:2]<=(3,12) and struct.calcsize('P')*8==64 else 1)" >nul 2>nul
+".venv\Scripts\python.exe" -c "import sys,struct; raise SystemExit(0 if (3,10)<=sys.version_info[:2]<=(3,12) and struct.calcsize('P')*8==64 else 1)" >nul 2>nul
 if not errorlevel 1 goto venv_ready
 echo [2/5] Rebuilding incompatible virtual environment...
 rmdir /s /q ".venv"
@@ -67,9 +67,6 @@ if not errorlevel 1 set "PY_CMD=py -3.12"
 if defined PY_CMD exit /b 0
 py -3.10 -c "import struct; raise SystemExit(0 if struct.calcsize('P')*8==64 else 1)" >nul 2>nul
 if not errorlevel 1 set "PY_CMD=py -3.10"
-if defined PY_CMD exit /b 0
-py -3.9 -c "import struct; raise SystemExit(0 if struct.calcsize('P')*8==64 else 1)" >nul 2>nul
-if not errorlevel 1 set "PY_CMD=py -3.9"
 if defined PY_CMD exit /b 0
 
 :try_python
