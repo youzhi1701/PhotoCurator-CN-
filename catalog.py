@@ -853,7 +853,7 @@ def finish_catalog_scan(db_path, session, *, full_scan=True):
         # Finalization is serialized with cancellation and new scans.
         db.execute("BEGIN IMMEDIATE")
         row = db.execute(
-            """SELECT state,error_count,generation,root_id FROM scan_session
+            """SELECT state,error_count,generation,root_id,files_seen FROM scan_session
                WHERE session_id=?""",
             (session["session_id"],),
         ).fetchone()
@@ -862,6 +862,24 @@ def finish_catalog_scan(db_path, session, *, full_scan=True):
                 or str(row["root_id"]) != str(session["root_id"])):
             raise RuntimeError("scan session is not active")
         error_count = int(row["error_count"] or 0)
+        seen = int(row["files_seen"] or 0)
+        # An unexpectedly empty traversal must never mark every historical
+        # photo missing. A powered-down external drive can appear as an empty
+        # directory on some Windows/virtualized mounts without a scandir error.
+        prior = int(db.execute(
+            """SELECT COUNT(*) FROM media_catalog
+               WHERE root_id=? AND state='present'""",
+            (session["root_id"],),
+        ).fetchone()[0])
+        suspect_empty = bool(full_scan and seen == 0 and prior > 0)
+        if suspect_empty:
+            error_count += 1
+            db.execute(
+                """UPDATE scan_session SET error_count=error_count+1,
+                          error='empty scan refused: preserved existing media'
+                   WHERE session_id=?""",
+                (session["session_id"],),
+            )
         reconcile_missing = bool(full_scan and error_count == 0)
         if reconcile_missing:
             db.execute(
@@ -902,7 +920,7 @@ def finish_catalog_scan(db_path, session, *, full_scan=True):
                WHERE session_id=?""",
             (
                 terminal_state, now, now,
-                int(session.get("files_seen") or present),
+                seen,
                 session["session_id"],
             ),
         )
