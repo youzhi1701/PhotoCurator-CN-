@@ -4783,15 +4783,72 @@ document.getElementById('appExit').onclick=async()=>{
   }
   nativeWindow('exit');
 };
+function taskPhase(d){
+  if(!d)return 'idle';
+  const st=String(d.status||'');
+  if(st.includes('错误')||st.includes('失败'))return 'error';
+  if(d.running)return 'running';
+  if(d.complete)return 'success'; // 100% alone is not proof of completion.
+  if(st.includes('停止')||st.includes('暂停'))return 'paused';
+  return 'idle';
+}
 function taskLabel(d){
   if(!d)return '待开始';
-  if(d.src_folder&&folder&&!sameFolder(d.src_folder,folder))return '待开始';
-  if(d.running)return Math.max(0,Math.min(100,Number(d.progress)||0))+'% · 处理中';
-  const st=String(d.status||'');
-  if(st.includes('错误')||st.includes('失败'))return '需要处理';
-  if(st.includes('停止'))return '已停止';
-  if((d.progress||0)>=100||st.startsWith('完成')||st.includes('筛选完成'))return '已完成';
-  return st&&st!=='待开始'?'待继续':'待开始';
+  if(d.src_folder&&folder&&!sameFolder(d.src_folder,folder))return '其他图库';
+  const done=Math.max(0,Number(d.processed)||0),total=Math.max(0,Number(d.total)||0);
+  const count=total?Math.min(done,total)+'/'+total+' · ':'';
+  const pct=Math.max(0,Math.min(100,Number(d.progress)||0));
+  const phase=taskPhase(d);
+  if(phase==='running')return count+pct+'% · 处理中';
+  if(phase==='error')return count+'失败';
+  if(phase==='paused')return count+'已停止';
+  if(phase==='success')return count+'已完成';
+  return count+(String(d.status||'')==='等待开始'?'待开始':'待继续');
+}
+function renderTaskPulse(rows,queued,failed){
+  const ids=['Cull','Dedup','Rank'];
+  const names=['清晰度分析','相似分析','照片评分'];
+  const taskItems=rows.map((d,i)=>({d,i})).filter(x=>x.d&&(!x.d.src_folder||!folder||sameFolder(x.d.src_folder,folder)));
+  for(let i=0;i<ids.length;i++){
+    const d=rows[i],phase=taskPhase(d);
+    const el=document.getElementById('task'+ids[i]);
+    el.textContent=taskLabel(d);
+    const row=el.closest('.task-row');
+    row.classList.remove('is-running','is-success','is-error','is-paused');
+    row.classList.add('is-'+phase);
+    const fill=document.getElementById('task'+ids[i]+'Fill');
+    fill.style.width=(phase==='success'?100:Math.min(100,Math.max(0,Number(d?.progress)||0)))+'%';
+  }
+  const active=taskItems.filter(x=>x.d.running);
+  let picked=active[0]||taskItems.find(x=>x.i===['cull','dedup','rank'].indexOf(currentStep))
+             ||taskItems.find(x=>x.d.complete)||taskItems[0]||null;
+  const title=document.getElementById('taskMiniTitle');
+  const numbers=document.getElementById('taskMiniNumbers');
+  const fill=document.getElementById('taskMiniFill');
+  const toggle=document.getElementById('taskToggle');
+  toggle.classList.remove('is-running','is-success','is-error','is-paused');
+  let phase='idle',pct=0;
+  if(active.length&&picked){
+    phase='running';
+    title.textContent=names[picked.i]+(active.length>1?' · +'+(active.length-1)+'项':'');
+  }else if(queued>0){title.textContent='后台文件任务';phase='running';picked=null;}
+  else if(failed>0){title.textContent='任务异常';phase='error';picked=null;}
+  else if(picked&&picked.d.complete){title.textContent=names[picked.i]+'完成';phase='success';}
+  else if(picked&&taskPhase(picked.d)==='error'){title.textContent='任务失败';phase='error';}
+  else if(picked&&taskPhase(picked.d)==='paused'){title.textContent='任务已停止';phase='paused';}
+  else{title.textContent='后台任务';}
+  if(picked){
+    const d=picked.d;
+    pct=Math.max(0,Math.min(100,Number(d.progress)||0));
+    if(phase==='success')pct=100;
+    const done=Math.max(0,Number(d.processed)||0),total=Math.max(0,Number(d.total)||0);
+    numbers.textContent=total?Math.min(done,total)+'/'+total+' · '+pct+'%':(phase==='running'?pct+'% · 准备中':taskLabel(d));
+  }else{
+    numbers.textContent=queued>0?queued+' 个处理中':failed>0?failed+' 个失败':'待开始';
+  }
+  fill.style.width=pct+'%';
+  toggle.classList.add('is-'+phase);
+  toggle.title='查看任务进度详情 · '+title.textContent+' · '+numbers.textContent;
 }
 let lastBackgroundActive=0,lastBackgroundFailed=-1,lastAutoSyncAt=0;
 let taskCenterTimer=null,taskCenterBusy=false;
@@ -4817,9 +4874,6 @@ async function refreshTaskCenter(){
     const analysisMap=snapshot.analysis||{};
     const rows=['cull','dedup','rank'].map(k=>analysisMap[k]||null);
     const tasks=snapshot.files||{active:0,counts:{},items:[]};
-    document.getElementById('taskCull').textContent=taskLabel(rows[0]);
-    document.getElementById('taskDedup').textContent=taskLabel(rows[1]);
-    document.getElementById('taskRank').textContent=taskLabel(rows[2]);
     const counts=tasks.counts||{};
     const analysis=rows.some(x=>x&&x.running),queued=Math.max(0,Number(tasks.active)||0);
     const failed=Math.max(0,Number(counts.failed)||0);
@@ -4839,10 +4893,7 @@ async function refreshTaskCenter(){
     }else{
       fileHint.textContent='删除、恢复和永久删除在持久化后台队列中执行；异常退出后未完成任务会在下次启动继续。';
     }
-    document.getElementById('taskToggle').textContent=failed?'!':((analysis||queued)?'●':'◉');
-    document.getElementById('taskToggle').title=failed
-      ?'有 '+failed+' 个文件任务失败 · 打开任务中心查看'
-      :((analysis||queued)?'后台运行中 · '+queued+' 个文件任务':'后台任务空闲');
+    renderTaskPulse(rows,queued,failed);
     if(failed>0&&failed!==lastBackgroundFailed){
       toast('有 '+failed+' 个后台文件任务失败，请打开任务中心查看','bad');
     }
