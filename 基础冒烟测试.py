@@ -443,6 +443,12 @@ def main():
             wait_task(photo_curator, task_id)
         assert_true(keep_a.exists() and keep_b.exists() and not drop_c.exists(),
                     "相似照片后台处理错误移动了保留项，或未处理待删除项")
+        with sqlite3.connect(str(photo_curator.INDEX_DB)) as db:
+            leftover = db.execute(
+                "SELECT COUNT(*) FROM review_delete_intent WHERE path=?",
+                (str(drop_c),)
+            ).fetchone()[0]
+        assert_true(leftover == 0, "已删除照片仍保留危险的待删除标记，恢复后可能误删")
         trash_rows = photo_curator._trash_rows(root)
         drop_c_norm = os.path.normcase(os.path.realpath(str(drop_c)))
         assert_true(any(
