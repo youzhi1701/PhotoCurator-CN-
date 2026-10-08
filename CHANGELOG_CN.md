@@ -1,3 +1,22 @@
+## v1.7.2 Candidate
+
+### 发布级漏洞修复与完整性加固
+- 分析运行期间统一锁定照片来源；前端数据源切换、手工路径输入与后端 /api/run 均阻止跨图库并行，双核心轮询额外校验 src_folder，避免旧图库结果进入新工作区。
+- 跨盘文件移动由“仅文件大小校验”升级为流式 SHA-256 内容校验；如果程序在目标文件已提交、源文件尚未删除的瞬间断电或被强杀，重启任务会识别相同内容并安全完成提交，而不是永久卡在目标已存在。
+- XMP / AAE sidecar 增加断点续传式 reconciliation：主照片已经移动但 sidecar 尚未完成时，恢复后的后台任务会继续补齐 sidecar。
+- 相似组“完成本组”会立即使 Rank 预览失效，修复评分条目数量不变时精选结果可能暂时沿用旧资格集合的问题。
+- 后台文件任务幂等入队使用 BEGIN IMMEDIATE 原子化判断；重复提交不会竞争 UNIQUE key，已完成/失败任务不再删除，而是保留为审计历史。
+- 设备盘符重绑定将路径键迁移从 UPDATE OR REPLACE 收紧为冲突保留策略，避免同一盘符曾被不同离线设备使用时静默覆盖另一图库的历史状态。
+- 真正移除照片卡片、相似组和文件夹组的逐节点 backdrop-filter；性能门禁现在直接检查高基数结果容器，不再只检查单个按钮。
+- 诊断包继续不包含原照片/预览图，并新增本地路径脱敏；日志写入 ZIP 前同样清洗已知数据源和用户目录路径。
+- 精确反向地理编码不再因打开 GPS 照片自动请求第三方服务，改为用户点击“联网解析地点”后才发送经纬度。
+- pillow-heif 安全下限提升到 1.3；Candidate/Release 同时审计核心与可选依赖，PyInstaller 固定安全下限 >=6.22.1。
+- WebView2 Bootstrapper 下载后必须通过微软 Authenticode 签名验证。
+- Windows Candidate 与正式 Release 都新增真实覆盖升级：先安装当前公开 Stable、写入现代数据与 legacy 数据哨兵，再静默覆盖安装候选版并验证配置、离线预览、旧数据和新 EXE 自检全部保留。
+- Candidate 版本号改由 release_manifest.json 单一驱动，取消 workflow 手写版本；普通 main push 也会运行轻量源码/架构门禁。
+- 新增 release_hardening_gate_test.py 与 file_safety_test.py，把以上发布级修复锁成长期回归门禁。
+- 版本统一升级为 **v1.7.2 Candidate**；公开 Stable 仍保持已实际发布的 v1.5.0，正式发布前继续按 Candidate 验证。
+
 ## v1.7.1 Candidate
 
 ### 性能架构升级：消除空闲重复工作与大图库重绘

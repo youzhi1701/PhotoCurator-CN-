@@ -26,7 +26,7 @@ def block(start, end):
     return SOURCE[a:b]
 
 
-require('APP_VERSION = "1.7.1"' in SOURCE, "expected v1.7.1 source version")
+require('APP_VERSION = "1.7.2"' in SOURCE, "expected v1.7.2 source version")
 
 # 1) Task center: one lightweight heartbeat, adaptive cadence, no idle
 #    fan-out to the three result-bearing progress endpoints.
@@ -89,9 +89,11 @@ require("previous.items.splice(previous.items.length-drop,drop)" in catalog,
 require("catalogLoadEarlier" in catalog and "catalogLoadMore" in catalog,
         "Catalog bounded window must remain bidirectional")
 
-# Per-photo compositing filters are intentionally avoided; the large visual
-# shell may keep its two glass surfaces.
-pbg_css = block(".pbg-toggle{", ".pbg-toggle:hover")
-require("backdrop-filter" not in pbg_css, "per-card backdrop blur reintroduced")
+# High-cardinality result surfaces intentionally avoid one compositor layer per
+# photo/group; the large visual shell may keep a small number of glass surfaces.
+require(".folder-group,.dedup-group,.photo-card{backdrop-filter:none" in SOURCE,
+        "high-cardinality result surfaces must explicitly disable backdrop blur")
+require(".panel-box,.shortcut,.folder-group,.dedup-group,.photo-card" not in SOURCE,
+        "old card-level glass selector was reintroduced")
 
 print("Performance regression gate OK: task heartbeat, Rank preview, shared scan, rendering, zoom, Catalog window and card compositing contracts are intact")

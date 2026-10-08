@@ -24,9 +24,9 @@ jobs:
       PYTHONUTF8: "1"
       PYTHONIOENCODING: "utf-8"
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: "3.11"
 
@@ -71,12 +71,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install -r requirements-optional.txt
-          pip install pyinstaller "selenium>=4.25,<5" "pip-audit>=2.7,<3"
+          pip install "pyinstaller>=6.22.1,<7" "selenium>=4.25,<5" "pip-audit>=2.7,<3"
 
       - name: Release-gate source tests
         shell: powershell
         run: |
-          python -m py_compile db_runtime.py desktop_app.py runtime_paths.py catalog.py photo_curator.py background_tasks.py raw_loader.py ui_smoke_test.py windows_smoke_test.py performance_gate_test.py
+          python -m py_compile db_runtime.py desktop_app.py runtime_paths.py catalog.py photo_curator.py background_tasks.py raw_loader.py ui_smoke_test.py windows_smoke_test.py performance_gate_test.py release_hardening_gate_test.py file_safety_test.py
           if ($LASTEXITCODE -ne 0) { throw "py_compile failed" }
           python -c "import runpy; runpy.run_path('\u57fa\u7840\u5192\u70df\u6d4b\u8bd5.py', run_name='__main__')"
           if ($LASTEXITCODE -ne 0) { throw "base smoke test failed" }
@@ -84,10 +84,16 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "release_gate_test failed" }
           python performance_gate_test.py
           if ($LASTEXITCODE -ne 0) { throw "performance_gate_test failed" }
+          python release_hardening_gate_test.py
+          if ($LASTEXITCODE -ne 0) { throw "release_hardening_gate_test failed" }
+          python file_safety_test.py
+          if ($LASTEXITCODE -ne 0) { throw "file_safety_test failed" }
           python ui_smoke_test.py
           if ($LASTEXITCODE -ne 0) { throw "ui_smoke_test failed" }
           pip-audit -r requirements.txt
-          if ($LASTEXITCODE -ne 0) { throw "pip-audit failed" }
+          if ($LASTEXITCODE -ne 0) { throw "pip-audit core failed" }
+          pip-audit -r requirements-optional.txt
+          if ($LASTEXITCODE -ne 0) { throw "pip-audit optional failed" }
 
       - name: Build approved app icon
         shell: powershell
@@ -129,6 +135,10 @@ jobs:
         run: |
           Invoke-WebRequest "https://go.microsoft.com/fwlink/p/?LinkId=2124703" -OutFile "packaging\MicrosoftEdgeWebview2Setup.exe"
           if (!(Test-Path "packaging\MicrosoftEdgeWebview2Setup.exe")) { throw "WebView2 bootstrapper missing" }
+          $sig = Get-AuthenticodeSignature "packaging\MicrosoftEdgeWebview2Setup.exe"
+          if ($sig.Status -ne "Valid" -or $sig.SignerCertificate.Subject -notmatch "Microsoft") {
+            throw "WebView2 bootstrapper signature is not a valid Microsoft signature"
+          }
 
       - name: Install Inno Setup
         shell: powershell
@@ -144,6 +154,48 @@ jobs:
           $installer = "release\${{ steps.release_meta.outputs.installer }}"
           if (!(Test-Path $installer)) { throw "Installer not built: $installer" }
 
+      - name: Verify real in-place upgrade from published Stable
+        shell: powershell
+        run: |
+          $published = "${{ steps.release_meta.outputs.published_version }}"
+          $publishedInstaller = "${{ steps.release_meta.outputs.published_installer }}"
+          $stableUrl = "https://github.com/${{ github.repository }}/releases/download/v$published/$publishedInstaller"
+          $stableSetup = Join-Path $env:RUNNER_TEMP $publishedInstaller
+          $installRoot = Join-Path $env:RUNNER_TEMP "PhotoCuratorReleaseUpgradeProbe"
+          Invoke-WebRequest $stableUrl -OutFile $stableSetup
+          if (!(Test-Path $stableSetup)) { throw "Published Stable installer download failed" }
+          $stable = Start-Process -FilePath $stableSetup -ArgumentList @(
+            "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/TASKS=","/DIR=$installRoot"
+          ) -Wait -PassThru
+          if ($stable.ExitCode -ne 0) { throw "Published Stable install failed: $($stable.ExitCode)" }
+
+          $dataRoot = Join-Path $env:LOCALAPPDATA "PhotoCurator\data"
+          New-Item -ItemType Directory -Force (Join-Path $dataRoot "config") | Out-Null
+          New-Item -ItemType Directory -Force (Join-Path $dataRoot "offline_previews") | Out-Null
+          Set-Content (Join-Path $dataRoot "config\release-upgrade-sentinel.txt") "preserve-modern" -Encoding utf8
+          Set-Content (Join-Path $dataRoot "offline_previews\release-upgrade-sentinel.jpg") "preserve-preview" -Encoding ascii
+          New-Item -ItemType Directory -Force (Join-Path $installRoot "data\config") | Out-Null
+          Set-Content (Join-Path $installRoot "data\config\legacy-release-sentinel.txt") "preserve-legacy" -Encoding utf8
+
+          $candidate = Resolve-Path "release\${{ steps.release_meta.outputs.installer }}"
+          $upgrade = Start-Process -FilePath $candidate -ArgumentList @(
+            "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/TASKS=","/DIR=$installRoot"
+          ) -Wait -PassThru
+          if ($upgrade.ExitCode -ne 0) { throw "Release in-place upgrade failed: $($upgrade.ExitCode)" }
+          if ((Get-Content (Join-Path $dataRoot "config\release-upgrade-sentinel.txt") -Raw).Trim() -ne "preserve-modern") {
+            throw "Modern config sentinel was not preserved"
+          }
+          if (!(Test-Path (Join-Path $dataRoot "offline_previews\release-upgrade-sentinel.jpg"))) {
+            throw "Offline preview sentinel was not preserved"
+          }
+          if ((Get-Content (Join-Path $installRoot "data\config\legacy-release-sentinel.txt") -Raw).Trim() -ne "preserve-legacy") {
+            throw "Legacy config sentinel was not preserved"
+          }
+          $installedExe = Join-Path $installRoot "app\PhotoCurator.exe"
+          if (!(Test-Path $installedExe)) { throw "Upgraded executable missing" }
+          $probe = Start-Process -FilePath $installedExe -ArgumentList "--self-test" -Wait -PassThru
+          if ($probe.ExitCode -ne 0) { throw "Upgraded installed executable self-test failed: $($probe.ExitCode)" }
+
       - name: Generate installer SHA256
         id: checksum
         shell: powershell
@@ -156,7 +208,7 @@ jobs:
           "sha256=$hash" >> $env:GITHUB_OUTPUT
           Write-Host "Installer SHA256: $hash"
       - name: Upload installer
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: PhotoCurator-Setup-v${{ steps.release_meta.outputs.version }}
           path: |
@@ -200,7 +252,7 @@ jobs:
 
       - name: Publish GitHub Release
         if: "${{ startsWith(github.ref, 'refs/tags/v') || (github.ref == 'refs/heads/main' && startsWith(github.event.head_commit.message, 'release: publish v')) }}"
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v{0}', steps.release_meta.outputs.version) }}
           name: PhotoCurator 中文桌面版 v${{ steps.release_meta.outputs.version }}
@@ -252,6 +304,7 @@ jobs:
           installer = f"PhotoCurator-Setup-v{version}.exe"
           manifest["published_version"] = version
           manifest["published_installer"] = installer
+          manifest["channel"] = "stable"
           manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
           readme_path = Path("README.md")

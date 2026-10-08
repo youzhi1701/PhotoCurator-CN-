@@ -714,7 +714,7 @@ def _prune_index_db():
 threading.Thread(target=_prune_index_db, daemon=True,
                  name='photocurator-index-prune').start()
 
-APP_VERSION = "1.7.1"
+APP_VERSION = "1.7.2"
 IS_CODESPACES = os.environ.get('CODESPACES', '').strip().lower() == 'true'
 CODESPACE_NAME = os.environ.get('CODESPACE_NAME', '').strip()
 _CODESPACES_DOMAIN_RAW = os.environ.get(
@@ -1294,13 +1294,47 @@ def _photo_sidecars(path):
     return out
 
 
+def _sha256_file(path, chunk_size=4 * 1024 * 1024):
+    """Stream a file digest without loading large photos into memory."""
+    digest = hashlib.sha256()
+    with open(path, 'rb') as fh:
+        while True:
+            chunk = fh.read(chunk_size)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.digest()
+
+
+def _files_identical(first, second):
+    """Content equality used only when reconciling an interrupted file commit."""
+    first = Path(first)
+    second = Path(second)
+    try:
+        if not first.is_file() or not second.is_file():
+            return False
+        if int(first.stat().st_size) != int(second.stat().st_size):
+            return False
+        return _sha256_file(first) == _sha256_file(second)
+    except OSError:
+        return False
+
+
 def _safe_move_file(src, dst):
-    """Move without overwrite; cross-volume moves are copy/verify/commit/delete."""
+    """Move without overwrite; cross-volume moves are verified and crash-reconcilable.
+
+    If a previous attempt already committed an identical destination but died
+    before unlinking the source, the retry completes that commit instead of
+    failing forever with FileExistsError.
+    """
     src = Path(src)
     dst = Path(dst)
     if not src.is_file():
         raise FileNotFoundError(str(src))
     if dst.exists():
+        if dst.is_file() and _files_identical(src, dst):
+            src.unlink()
+            return dst
         raise FileExistsError(str(dst))
     dst.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -1314,13 +1348,13 @@ def _safe_move_file(src, dst):
         tmp.unlink()
     try:
         shutil.copy2(str(src), str(tmp))
-        if int(tmp.stat().st_size) != int(src.stat().st_size):
-            raise IOError("跨盘复制校验失败：文件大小不一致")
         try:
             with open(tmp, 'rb') as fh:
                 os.fsync(fh.fileno())
         except OSError:
             pass
+        if not _files_identical(src, tmp):
+            raise IOError("跨盘复制校验失败：SHA-256 内容不一致")
         os.replace(str(tmp), str(dst))
         src.unlink()
         return dst
@@ -1331,6 +1365,17 @@ def _safe_move_file(src, dst):
         except OSError:
             pass
         raise
+
+
+def _resume_bundle_sidecars(source_path, target_path):
+    """Finish XMP/AAE sidecars after a crash that already committed the photo."""
+    source_path = Path(source_path)
+    target_path = Path(target_path)
+    for sidecar in _photo_sidecars(source_path):
+        side_dst = target_path.with_suffix(sidecar.suffix)
+        if side_dst.exists() and not _files_identical(sidecar, side_dst):
+            side_dst = _unique_destination(side_dst)
+        _safe_move_file(sidecar, side_dst)
 
 
 def _move_photo_bundle(src, dst):
@@ -1749,6 +1794,7 @@ def _background_move_to_trash(payload):
             # Crash-safe continuation: the same-drive rename may already have
             # completed even though SQLite/lifecycle updates did not.
             if planned_trash and Path(planned_trash).is_file():
+                _resume_bundle_sidecars(original, planned_trash)
                 trash_id = _ensure_software_trash_record(
                     original, planned_trash, source_step
                 )
@@ -1851,10 +1897,10 @@ def _background_restore_trash(payload):
 
         if trash_file.is_file():
             restored_file.parent.mkdir(parents=True, exist_ok=True)
-            if restored_file.exists():
-                raise FileExistsError("计划的恢复目标已存在，未覆盖任何文件")
             _move_photo_bundle(trash_file, restored_file)
-        elif not restored_file.is_file():
+        elif restored_file.is_file():
+            _resume_bundle_sidecars(trash_file, restored_file)
+        else:
             raise FileNotFoundError("回收站中的照片和计划恢复目标均不存在")
 
         with _DB_LOCK, connect_db(INDEX_DB, timeout=15) as db:
@@ -3686,8 +3732,11 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
        border-bottom:1px solid rgba(255,255,255,.28);box-shadow:0 8px 28px rgba(52,72,140,.15)}
   .sidebar{background:rgba(255,255,255,.58);backdrop-filter:blur(24px) saturate(145%);-webkit-backdrop-filter:blur(24px) saturate(145%);
            border-right:1px solid rgba(255,255,255,.65)}
-  .panel-box,.shortcut,.folder-group,.dedup-group,.photo-card,.btn-ghost,.chip,input[type=text],input[type=number],.wgroup select{
+  .panel-box,.shortcut,.btn-ghost,.chip,input[type=text],input[type=number],.wgroup select{
     backdrop-filter:blur(18px) saturate(135%);-webkit-backdrop-filter:blur(18px) saturate(135%)}
+  /* High-cardinality result surfaces deliberately avoid per-node backdrop blur:
+     hundreds of GPU compositing layers make large libraries stutter. */
+  .folder-group,.dedup-group,.photo-card{backdrop-filter:none;-webkit-backdrop-filter:none}
   .folder-group,.dedup-group,.photo-card{background:var(--glass);border-color:rgba(255,255,255,.72);box-shadow:0 8px 26px rgba(66,84,132,.08)}
   .folder-head{background:rgba(244,248,255,.72)}
   .main{padding-right:12px}
@@ -4907,12 +4956,19 @@ function updateSourceUi(){
 }
 function selectFolderValue(value){
   const next=String(value||'').trim();
-  if(next===folder){updateStartAvailability();updateSourceUi();return;}
+  if(next===folder){updateStartAvailability();updateSourceUi();return true;}
+  if(isRunning||coreRunning){
+    const fi=document.getElementById('folderInput');
+    if(fi)fi.value=folder||'';
+    toast('分析任务运行中，不能切换照片来源。请先停止或等待当前分析完成。','info');
+    return false;
+  }
   folder=next||null;
   catalogRootView=null;
   resetWorkspaceForFolder();
   updateStartAvailability();
   updateSourceUi();
+  return true;
 }
 
 function fmtDate(ts){
@@ -5635,6 +5691,12 @@ async function pollCore(){
   if(corePollTimer){clearTimeout(corePollTimer);corePollTimer=null;}
   try{
     const rows=await Promise.all(['cull','dedup'].map(k=>fetch('/api/progress/'+k).then(r=>r.json())));
+    const activeFolder=folder;
+    if(rows.some(d=>d&&d.src_folder&&activeFolder&&!sameFolder(d.src_folder,activeFolder))){
+      document.getElementById('progressText').textContent='后台结果属于另一照片来源，已隔离等待当前任务结束';
+      corePollTimer=setTimeout(pollCore,900);
+      return;
+    }
     coreSnapshots.cull=rows[0];coreSnapshots.dedup=rows[1];
     if(currentStep==='cull')updateVisibleStepStatus('cull',rows[0]);
     if(currentStep==='dedup')updateVisibleStepStatus('dedup',rows[1]);
@@ -6662,14 +6724,23 @@ function loadExif(path,side){
         +`<span class="cred"><a href="https://openfreemap.org/" target="_blank" rel="noopener">OpenFreeMap</a> © `
         +`<a href="https://www.openmaptiles.org/" target="_blank" rel="noopener">OpenMapTiles</a> · 地图数据 © `
         +`<a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a></span></div>`;
-      rows+=`<div class="exrow"><span class="lab">具体地点</span><span class="val" id="geoLabel">正在解析…</span></div>`;
+      rows+=`<div class="exrow"><span class="lab">具体地点</span><span class="val" id="geoLabel">未联网解析</span><button class="geo-lookup" id="geoLookupBtn" type="button">联网解析地点</button></div>`;
       wantMap={lat:e.lat,lon:e.lon};
     }
     if(!rows)rows=`<div style="font-size:12px;opacity:.5">没有可读取的 EXIF 信息。</div>`;
     side.insertAdjacentHTML('beforeend',`<h3>照片信息</h3>${rows}`);
     if(wantMap){
       mountExifMap(wantMap.lat,wantMap.lon);
-      fetch('/api/reverse-geocode?lat='+wantMap.lat+'&lon='+wantMap.lon).then(r=>r.json()).then(g=>{const el=document.getElementById('geoLabel');if(el)el.textContent=g.label||'未解析到具体地点';}).catch(()=>{const el=document.getElementById('geoLabel');if(el)el.textContent='地点解析失败';});
+      const lookup=document.getElementById('geoLookupBtn');
+      if(lookup)lookup.onclick=()=>{
+        lookup.disabled=true;lookup.textContent='解析中…';
+        const label=document.getElementById('geoLabel');if(label)label.textContent='正在联网解析…';
+        fetch('/api/reverse-geocode?lat='+wantMap.lat+'&lon='+wantMap.lon)
+          .then(r=>r.json())
+          .then(g=>{const el=document.getElementById('geoLabel');if(el)el.textContent=g.label||'未解析到具体地点';})
+          .catch(()=>{const el=document.getElementById('geoLabel');if(el)el.textContent='地点解析失败';})
+          .finally(()=>{lookup.disabled=false;lookup.textContent='重新解析';});
+      };
     }
   }).catch(()=>{});
 }
@@ -7015,30 +7086,68 @@ def api_library_root_remove():
         return jsonify({'error': str(exc)}), 500
 
 
+def _diagnostic_redactions(sources):
+    """Build deterministic path redactions for support bundles."""
+    candidates = [str(Path.home()), str(DATA_ROOT)]
+    for source in sources or []:
+        candidates.append(str(source.get('last_mount') or ''))
+        for root in source.get('roots') or []:
+            candidates.extend([
+                str(root.get('original_root') or ''),
+                str(root.get('current_root') or ''),
+            ])
+    unique = []
+    seen = set()
+    for raw in sorted((x for x in candidates if x), key=len, reverse=True):
+        key = os.path.normcase(os.path.realpath(raw))
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append((raw, f'<PATH_{len(unique)+1}>'))
+    return unique
+
+
+def _sanitize_diagnostic_value(value, replacements):
+    if isinstance(value, dict):
+        return {str(k): _sanitize_diagnostic_value(v, replacements) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_sanitize_diagnostic_value(v, replacements) for v in value]
+    if isinstance(value, str):
+        text = value
+        for raw, token in replacements:
+            text = text.replace(raw, token)
+            text = text.replace(raw.replace('\\', '/'), token)
+        return text
+    return value
+
+
 @app.route('/api/diagnostics-export', methods=['POST'])
 def api_diagnostics_export():
-    """Create a support bundle with no source photos or preview images."""
+    """Create a path-redacted support bundle with no source photos/previews."""
     try:
         diag_dir = DATA_ROOT / 'logs' / 'diagnostics'
         diag_dir.mkdir(parents=True, exist_ok=True)
         stamp = time.strftime('%Y%m%d-%H%M%S')
         target = diag_dir / f'PhotoCurator-Diagnostic-{stamp}.zip'
+        sources = catalog_list_sources(INDEX_DB, refresh=False)
+        replacements = _diagnostic_redactions(sources)
         report = {
             'app_version': APP_VERSION,
             'python': sys.version,
             'platform': platform.platform(),
             'frozen': IS_FROZEN,
-            'data_root': str(DATA_ROOT),
+            'data_root': '<DATA_ROOT>',
             'database_quick_check': sqlite_quick_check(INDEX_DB),
             'rawpy': HAS_RAWPY,
             'heif': HAS_HEIF,
             'supported_extensions': sorted(IMG_EXTS),
-            'sources': catalog_list_sources(INDEX_DB, refresh=False),
+            'sources': sources,
             'scan_sessions': catalog_recent_scan_sessions(INDEX_DB, limit=20),
             'tasks': TASK_MANAGER.summary(),
             'scan_runtime': current_scan_snapshot(),
             'storage': catalog_storage_summary(DATA_ROOT, INDEX_DB),
         }
+        report = _sanitize_diagnostic_value(report, replacements)
         with zipfile.ZipFile(target, 'w', compression=zipfile.ZIP_DEFLATED) as zf:
             zf.writestr(
                 'diagnostics.json',
@@ -7047,11 +7156,14 @@ def api_diagnostics_export():
             if LOG_DIR and Path(LOG_DIR).is_dir():
                 for log_file in Path(LOG_DIR).glob('*.log*'):
                     try:
-                        if log_file.is_file() and log_file.stat().st_size <= 8 * 1024 * 1024:
-                            zf.write(log_file, arcname='logs/' + log_file.name)
+                        if not log_file.is_file() or log_file.stat().st_size > 8 * 1024 * 1024:
+                            continue
+                        text = log_file.read_text(encoding='utf-8', errors='replace')
+                        safe_text = _sanitize_diagnostic_value(text, replacements)
+                        zf.writestr('logs/' + log_file.name, safe_text)
                     except OSError:
                         continue
-        _activity('导出诊断包', str(target), '不包含原照片和预览图')
+        _activity('导出诊断包', str(target), '已脱敏路径；不包含原照片和预览图')
         return jsonify({'ok': True, 'path': str(target)})
     except Exception as exc:
         logger.warning("diagnostic export failed", exc_info=True)
@@ -7412,6 +7524,15 @@ def api_run(step):
     # idle step and start duplicate workers or bypass the Rank/core exclusion.
     with _RUN_GATE_LOCK:
         active = [k for k in ('cull', 'dedup', 'rank') if state[k].get('running')]
+        if step in ('cull', 'dedup'):
+            other_core = [k for k in ('cull', 'dedup') if k != step and state[k].get('running')]
+            active_folder = str(state.get('folder') or '')
+            if other_core and active_folder:
+                if os.path.normcase(os.path.realpath(active_folder)) != os.path.normcase(folder):
+                    return jsonify({
+                        'error': '另一核心分析正在处理不同照片来源，禁止跨图库并行',
+                        'active': other_core[0],
+                    }), 409
         if state[step].get('running'):
             return jsonify({'error': '该分析任务已经在运行', 'active': step}), 409
         if ((step == 'rank' and active)
@@ -7635,6 +7756,7 @@ def api_dedup_complete():
         p for g in state['dedup'].get('groups_data', [])
         for p in (g.get('selected_paths') or [])
     ]
+    state['rank']['preview_at'] = 0.0
     _activity('完成相似组复核', '', f'组 {gid} · 保留 {len(selected)} 张')
     return jsonify({'ok': True, 'changed_group': group,
                     'status': 'reviewed', 'kept': len(selected)})

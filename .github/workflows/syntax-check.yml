@@ -13,15 +13,14 @@ concurrency:
 
 jobs:
   syntax:
-    # Only consume a Linux runner for PRs, explicit releases, or manual checks.
-    # Ordinary direct pushes to main are runner-free.
-    if: "${{ github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request' || (github.event_name == 'push' && startsWith(github.event.head_commit.message, 'release: publish v')) }}"
+    # Lightweight source gates run on every main push as well as PR/manual checks.
+    # This prevents a direct push from silently bypassing syntax/architecture guards.
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: "3.11"
 
@@ -44,7 +43,13 @@ jobs:
             windows_smoke_test.py \
             ui_smoke_test.py \
             release_gate_test.py \
-            performance_gate_test.py
+            performance_gate_test.py \
+            release_hardening_gate_test.py \
+            file_safety_test.py
+
+      - name: Release hardening static gate
+        run: |
+          python release_hardening_gate_test.py
 
       - name: Parse GitHub Actions YAML
         run: |
@@ -573,7 +578,7 @@ jobs:
           )
           missing_ui = [item for item in required_ui if item not in ui]
           if missing_ui:
-              raise SystemExit("v1.7.1 workspace contract missing: " + repr(missing_ui))
+              raise SystemExit("v1.7.2 workspace contract missing: " + repr(missing_ui))
 
           shortcuts = core.split("@app.route('/api/shortcuts')", 1)[1].split(
               "@app.route('/api/sources')", 1
@@ -779,9 +784,9 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: "3.11"
 
@@ -815,7 +820,7 @@ jobs:
 
       - name: Compile Python sources
         run: |
-          python -m py_compile db_runtime.py desktop_app.py runtime_paths.py catalog.py photo_curator.py background_tasks.py photo_dedup_batch.py photo_file_organizer.py photo_ranking_engine.py photo_ranking_v3.py raw_loader.py "基础冒烟测试.py" "Codespaces冒烟测试.py" windows_smoke_test.py ui_smoke_test.py
+          python -m py_compile db_runtime.py desktop_app.py runtime_paths.py catalog.py photo_curator.py background_tasks.py photo_dedup_batch.py photo_file_organizer.py photo_ranking_engine.py photo_ranking_v3.py raw_loader.py "基础冒烟测试.py" "Codespaces冒烟测试.py" windows_smoke_test.py ui_smoke_test.py release_gate_test.py performance_gate_test.py release_hardening_gate_test.py file_safety_test.py
 
       - name: Runtime data path and migration smoke test
         shell: powershell
@@ -924,6 +929,11 @@ jobs:
       - name: Performance architecture regression gate
         run: |
           python performance_gate_test.py
+
+      - name: Release hardening and file lifecycle gates
+        run: |
+          python release_hardening_gate_test.py
+          python file_safety_test.py
 
       - name: Real desktop UI interaction smoke test
         run: |
