@@ -1379,7 +1379,8 @@ def _safe_move_file(src, dst):
             return h.digest()
         if digest(src) != digest(tmp):
             raise IOError("跨盘复制校验失败：文件内容不一致")
-        with open(tmp, 'rb') as fh:
+        # Windows requires a write-capable handle for FlushFileBuffers/fsync.
+        with open(tmp, 'r+b') as fh:
             os.fsync(fh.fileno())
         if dst.exists():
             raise FileExistsError(str(dst))
