@@ -1,3 +1,4 @@
+from unittest.mock import patch
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """Overlapping parent and child scan roots must not inflate library totals."""
@@ -159,6 +160,51 @@ class CatalogRelinkCollisionTests(unittest.TestCase):
                 ).fetchone()[0]
             self.assertEqual(saved, sorted([old_path, new_path]))
             self.assertEqual(media, old_path)
+
+
+class CatalogPhysicalSourceGuardTest(unittest.TestCase):
+    def test_drive_swap_during_scan_does_not_mark_photos_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "photos"
+            root.mkdir()
+            old_photo = root / "safe.jpg"
+            old_photo.write_bytes(b"sample")
+            db_path = Path(tmp) / "catalog.sqlite"
+            catalog.catalog_media_scan(db_path, root, [old_photo])
+            session = begin_catalog_scan(db_path, root)
+            with patch.object(catalog, "volume_info_for_path",
+                              return_value={"identity_key": "replaced-device"}):
+                with self.assertRaisesRegex(RuntimeError, "身份发生变化"):
+                    finish_catalog_scan(db_path, session, full_scan=True)
+            with connect_db(db_path) as db:
+                media_state = db.execute(
+                    "SELECT state FROM media_catalog WHERE original_path=?",
+                    (str(old_photo),)).fetchone()
+                scan_state = db.execute(
+                    "SELECT state FROM scan_session WHERE session_id=?",
+                    (session["session_id"],)).fetchone()
+            self.assertEqual(media_state[0], "present")
+            self.assertEqual(scan_state[0], "interrupted")
+
+    def test_disconnected_root_keeps_index_and_logs_interrupt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "photos"
+            root.mkdir()
+            old_photo = root / "safe.jpg"
+            old_photo.write_bytes(b"sample")
+            db_path = Path(tmp) / "catalog.sqlite"
+            catalog.catalog_media_scan(db_path, root, [old_photo])
+            session = begin_catalog_scan(db_path, root)
+            root.rename(Path(tmp) / "disconnected")
+            with self.assertRaisesRegex(RuntimeError, "历史图库"):
+                finish_catalog_scan(db_path, session, full_scan=True)
+            with connect_db(db_path) as db:
+                self.assertEqual(db.execute(
+                    "SELECT state FROM media_catalog LIMIT 1").fetchone()[0], "present")
+                self.assertEqual(db.execute(
+                    "SELECT state FROM scan_session WHERE session_id=?",
+                    (session["session_id"],)).fetchone()[0], "interrupted")
+
 
 if __name__ == "__main__":
     unittest.main()
