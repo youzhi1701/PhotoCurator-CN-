@@ -73,7 +73,7 @@ class SafeMoveTests(unittest.TestCase):
                 return real_rename(a, b)
 
             with (patch.object(photo_curator, '_rename_no_replace',
-                              side_effect=cross_volume_only),,
+                              side_effect=cross_volume_only),
                  patch.object(photo_curator.shutil, 'copy2',
                               side_effect=replace_after_copy)):
                 with self.assertRaisesRegex(RuntimeError, '原照片发生变化'):
