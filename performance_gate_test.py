@@ -11,6 +11,7 @@ from pathlib import Path
 import re
 
 SOURCE = Path("photo_curator.py").read_text(encoding="utf-8")
+TASK_SOURCE = Path("background_tasks.py").read_text(encoding="utf-8")
 
 
 def require(condition, message):
@@ -26,7 +27,7 @@ def block(start, end):
     return SOURCE[a:b]
 
 
-require('APP_VERSION = "1.7.1"' in SOURCE, "expected v1.7.1 source version")
+require('APP_VERSION = "1.7.2"' in SOURCE, "expected v1.7.2 source version")
 
 # 1) Task center: one lightweight heartbeat, adaptive cadence, no idle
 #    fan-out to the three result-bearing progress endpoints.
@@ -89,9 +90,56 @@ require("previous.items.splice(previous.items.length-drop,drop)" in catalog,
 require("catalogLoadEarlier" in catalog and "catalogLoadMore" in catalog,
         "Catalog bounded window must remain bidirectional")
 
-# Per-photo compositing filters are intentionally avoided; the large visual
-# shell may keep its two glass surfaces.
-pbg_css = block(".pbg-toggle{", ".pbg-toggle:hover")
-require("backdrop-filter" not in pbg_css, "per-card backdrop blur reintroduced")
+# 7) File metadata and path rendering stay single-pass / lexical on large
+#    external libraries instead of repeatedly touching the filesystem.
+cull = block("def run_cull(", "def _cull_allowed_for_dedup(")
+require("fingerprints = _fingerprints(images)" in cull,
+        "Cull must collect file fingerprints once per scan")
+require("_load_cull_metrics_map(images, fingerprints)" in cull,
+        "Cull cache lookup must reuse the shared fingerprint pass")
+require("_load_review_overrides(images, fingerprints)" in cull,
+        "review overrides must reuse the shared fingerprint pass")
+relative = block("def relative_folder(", "def _path_reservation_key(")
+require(".resolve()" not in relative,
+        "relative folder formatting must not perform per-photo filesystem resolve I/O")
 
-print("Performance regression gate OK: task heartbeat, Rank preview, shared scan, rendering, zoom, Catalog window and card compositing contracts are intact")
+# 8) Thumbnail decode concurrency is bounded and cache writes are atomic.
+thumb_py = block("def make_thumb_file(", "def _background_build_offline_previews(")
+require("_THUMB_BUILD_SEMAPHORE" in SOURCE and "with _THUMB_BUILD_SEMAPHORE:" in thumb_py,
+        "thumbnail decode concurrency guard missing")
+require("os.replace(tmp, out)" in thumb_py,
+        "thumbnail cache writes must remain atomic")
+
+# 9) Lightbox navigation preloads adjacent images/EXIF and bounds client cache.
+lightbox = block("const exifCache=new Map()", "/* GPS map")
+require("EXIF_CACHE_LIMIT=256" in lightbox and "prefetchLbNeighbors" in lightbox,
+        "bounded Lightbox EXIF/image prefetch missing")
+require("getExif(path)" in lightbox,
+        "Lightbox EXIF cache path missing")
+
+# 10) The periodic task heartbeat must use the compact task query, while the
+#     full 30-row history remains available only for explicit task inspection.
+require("def heartbeat(self):" in TASK_SOURCE,
+        "compact background task heartbeat missing")
+task_api = block("@app.route('/api/task-center')", "@app.route('/api/tasks/<int:task_id>')")
+require("TASK_MANAGER.heartbeat()" in task_api,
+        "task center must use compact task heartbeat")
+
+# 11) Per-photo/group compositing filters and fixed background repaint are
+#     intentionally avoided; the large visual shell may keep glass surfaces.
+aurora = block("/* v1.4.0 Aurora + iOS glass visual system */", ".top-right{")
+require("background-attachment:fixed" not in aurora,
+        "fixed Aurora background repaint was reintroduced")
+glass_line = next((line for line in aurora.splitlines()
+                   if ".panel-box,.shortcut" in line), "")
+require(".photo-card" not in glass_line and ".dedup-group" not in glass_line
+        and ".folder-group" not in glass_line,
+        "photo/group nodes must not receive backdrop blur")
+
+# 12) Activity-log retention remains amortized rather than running a bounded
+#     table cleanup query after every small UI action.
+activity = block("def _activity(", "def _cached_cull_metrics(")
+require("_ACTIVITY_TRIM_EVERY" in SOURCE and "% _ACTIVITY_TRIM_EVERY" in activity,
+        "activity-log cleanup must stay amortized")
+
+print("Performance regression gate OK: v1.7.2 hot paths, rendering, scan metadata, thumbnail scheduling, Lightbox prefetch and compact task heartbeat are intact")
