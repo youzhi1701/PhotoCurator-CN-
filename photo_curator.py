@@ -44,6 +44,7 @@ from raw_loader import (RAW_EXTS, HAS_RAWPY, is_raw,
                         open_image_pil, imread_bgr, imread_gray)
 from photo_ranking_v3 import AdvancedPhotoAnalyzer, PhotoScoreV3
 from photo_dedup_batch import FastBatchDeduplicator
+from exact_duplicates import exact_duplicate_groups
 from background_tasks import BackgroundTaskManager
 from runtime_paths import resolve_data_root
 from db_runtime import (connect_db, quick_check as sqlite_quick_check,
@@ -3200,6 +3201,22 @@ def run_dedup(folder, threshold, ftype='all', pair='both',
             except Exception:
                 pass
             dd.reset()
+            # Run a separate read-only byte-exact pass BEFORE perceptual
+            # grouping. SHA-256 matches are definitive; pHash/ORB matches are
+            # merely visual suggestions and never authorize deletion.
+            exact_groups = exact_duplicate_groups(
+                batch_paths,
+                cache_path=DEDUP_CACHE_DIR / f'exact_v1_{cache_key}.json',
+                cancelled=lambda: bool(s.get('cancel')),
+            )
+            exact_primary = {}
+            exact_paths = set()
+            for exact_group in exact_groups:
+                primary = str(exact_group[0])
+                exact_paths.update(str(p) for p in exact_group)
+                for duplicate in exact_group[1:]:
+                    exact_primary[str(duplicate)] = primary
+            exact_quality = {}
 
             for p in batch_paths:
                 if TASK_MANAGER.foreground_busy():
@@ -3214,6 +3231,14 @@ def run_dedup(folder, threshold, ftype='all', pair='both',
                 scope_txt = '全局对比' if compare_scope == 'global' else f'文件夹：{batch_label}'
                 s['status'] = (f"相似去重 · {scope_txt} · {p.name}（{processed}/{total}）· "
                                f"已用时 {_fmt(elapsed)} · 预计剩余 {_fmt(eta)}")
+                # A byte-identical alias inherits its canonical image's
+                # sharpness and cluster, avoiding another image decode/pHash.
+                primary = exact_primary.get(str(p))
+                if primary is not None and primary in exact_quality:
+                    sharp = exact_quality[primary]
+                    if dd.attach_exact_duplicate(
+                            _LiteScore(str(p), p.name, sharp, sharp), primary):
+                        continue
                 cached_metrics = cull_metric_cache.get(str(p))
                 if cached_metrics is not None:
                     sharp = float(cached_metrics[0])
@@ -3221,6 +3246,8 @@ def run_dedup(folder, threshold, ftype='all', pair='both',
                     gray = imread_gray(str(p))
                     sharp = sharpness_score(gray) if gray is not None else 0.0
                 dd.add_photo(_LiteScore(str(p), p.name, sharp, sharp))
+                if str(p) in exact_paths:
+                    exact_quality[str(p)] = sharp
 
             dd.save_disk_cache()
             for cluster in dd.clusters:
@@ -3235,6 +3262,7 @@ def run_dedup(folder, threshold, ftype='all', pair='both',
                     'score': round(float(getattr(m, 'overall_score', 0.0) or 0.0), 1),
                     'selected': m.path == selected,
                     'rel_dir': relative_folder(m.path, folder),
+                    'exact_duplicate': str(m.path) in exact_paths,
                 } for m in members]
                 rels = sorted({m['rel_dir'] for m in member_rows})
                 if len(member_rows) > 1:
@@ -3253,6 +3281,7 @@ def run_dedup(folder, threshold, ftype='all', pair='both',
                         'count': len(member_rows),
                         'active_count': len(member_rows),
                         'deleted_count': 0,
+                        'exact_count': sum(bool(m.get('exact_duplicate')) for m in member_rows),
                         'status': persisted.get('status', 'pending'),
                         'revision': persisted.get('revision', 1),
                         'ready': True,
@@ -6334,7 +6363,7 @@ function renderDedupGroups(groups){
   const g=document.getElementById('gallery');
   document.getElementById('sShowing').textContent=reviewGroups.length;
   const dedupSig=reviewGroups.map(group=>String(group.group_id)+':'+String(group.status||'pending')+':'
-    +(group.members||[]).filter(visibleInReview).map(p=>p.path+':'+(p.selected?1:0)+':'+(p.lifecycle||'normal')+':'+String(p.score??'')+':'+String(p.name||'')).join(',')).join('|');
+    +(group.members||[]).filter(visibleInReview).map(p=>p.path+':'+(p.selected?1:0)+':'+(p.lifecycle||'normal')+':'+String(p.score??'')+':'+String(p.name||'')+':'+String(!!p.exact_duplicate)).join(',')+':'+String(group.exact_count||0)).join('|');
   if(dedupSig===lastDedupSig&&lastStep===currentStep){updateResultTools();return;}
   lastDedupSig=dedupSig;lastStep=currentStep;
   if(!reviewGroups.length){
@@ -6366,7 +6395,8 @@ function renderDedupGroups(groups){
       html+='<div class="dedup-group-head">'
         +'<div class="dedup-group-title"><b>相似组 '+seq+' · '+members.length+' 张</b>'
         +'<span class="group-status '+statusClass+'">'+statusText+'</span>'
-        +'<span class="dedup-group-meta">保留 '+kept+' · 删除 '+deleted+' · 待处理 '+Math.max(0,active-kept)+'</span></div>'
+        +'<span class="dedup-group-meta">保留 '+kept+' · 删除 '+deleted+' · 待处理 '+Math.max(0,active-kept)
+        +(group.exact_count>=2?' · '+group.exact_count+' 张字节级重复':'')+'</span></div>'
         +'<div class="dedup-group-actions">'
         +'<button class="chip group-complete" data-group="'+group.group_id+'">完成本组</button>'
         +'<details class="dedup-more"><summary title="更多操作">更多操作</summary><div class="dedup-quick">'
@@ -6385,7 +6415,8 @@ function renderDedupGroups(groups){
         html+='<button class="dedup-recommend '+badgeClass+'" data-group="'+group.group_id+'" data-path="'+escHtml(p.path)+'" data-life="'+escHtml(life)+'" data-trash-id="'+escHtml(p.trash_id||'')+'" title="'+title+'"'+disabled+'>'+label+'</button>';
         if(p.thumb)html+='<img src="'+p.thumb+'" loading="lazy" decoding="async">';
         else html+='<div style="aspect-ratio:3/2;display:grid;place-items:center;background:var(--panel2);color:var(--muted)">文件已删除</div>';
-        html+='<div class="dedup-choice-meta"><div><div class="dedup-choice-name">'+escHtml(p.name)+'</div>';
+        html+='<div class="dedup-choice-meta"><div><div class="dedup-choice-name">'+escHtml(p.name)
+          +(p.exact_duplicate?'<span title="SHA-256 字节级一致"> · 精确重复</span>':'')+'</div>';
         html+='<div class="source-path">'+escHtml(p.rel_dir||'当前文件夹')+'</div></div>';
         if(!['pending_trash','pending_permanent_delete','trashed','permanently_deleted'].includes(p.lifecycle))
           html+='<button class="delete-btn" data-step="dedup" data-path="'+escHtml(p.path)+'" title="删除">🗑</button>';
