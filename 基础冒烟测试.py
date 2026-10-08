@@ -753,6 +753,25 @@ def main():
         assert_true(selected_now == [str(keep_b)],
                     f"模糊化原保留项后没有自动晋升可用照片：{selected_now}")
 
+        # Cross-step keeper promotion must NEVER implicitly authorize
+        # deletion of another member. The reviewer makes a separate mark.
+        unmarked_sync = client.post(
+            "/api/dedup-apply", json={},
+            headers={"Host": f"127.0.0.1:{photo_curator.PORT}"},
+        )
+        assert_true(unmarked_sync.status_code == 202
+                    and unmarked_sync.get_json().get("queued") == 0,
+                    "跨阶段相似结果不应自动删除任何未标记成员")
+        assert_true(blurry_a.exists() and keep_b.exists() and drop_c.exists(),
+                    "未明确标记前的跨阶段相似照片被移动")
+
+        marked_sync = client.post(
+            "/api/review-delete-mark",
+            json={"step": "dedup", "path": str(drop_c), "marked": True},
+            headers={"Host": f"127.0.0.1:{photo_curator.PORT}"},
+        )
+        assert_true(marked_sync.status_code == 200 and marked_sync.get_json().get("marked"),
+                    f"跨阶段待删除标记保存失败：{marked_sync.get_json()}")
         applied_sync = client.post(
             "/api/dedup-apply", json={},
             headers={"Host": f"127.0.0.1:{photo_curator.PORT}"},
@@ -761,11 +780,11 @@ def main():
                     f"跨阶段相似处理未异步受理：HTTP {applied_sync.status_code}")
         payload = applied_sync.get_json()
         assert_true(payload.get("queued") == 1,
-                    f"跨阶段相似处理任务数错误：{payload}")
+                    f"仅明确标记项可以提交后台：{payload}")
         for task_id in payload.get("task_ids", []):
             wait_task(photo_curator, task_id)
         assert_true(blurry_a.exists() and keep_b.exists() and not drop_c.exists(),
-                    "相似处理错误删除了模糊照片或当前保留项")
+                    "相似处理错误删除了未标记照片或当前保留项")
 
         # Similarity metadata keeps the full source relationship so a photo
         # rescued from Blurry later can immediately re-enter the eligible set.
