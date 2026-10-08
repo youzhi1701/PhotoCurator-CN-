@@ -5042,7 +5042,7 @@ function setupFilterBar(){
     if(!types.some(([k])=>k===cullType))cullType='all';
     bar.style.display='flex';
     const blurry=photos.filter(p=>p.tier==='blurry'&&!['pending_trash','pending_permanent_delete','trashed','permanently_deleted'].includes(p.lifecycle));
-    const moveSelected=blurry.filter(p=>p.move_selected!==false).length;
+    const moveSelected=blurry.filter(p=>p.move_selected===true).length;
     bar.innerHTML=opts.map(([k,l])=>`<button class="chip${k===cullFilter?' active':''}" data-f="${k}">${l}</button>`).join('')
       +`<span class="chip-sep"></span>`
       +types.map(([k,l])=>`<button class="chip${k===cullType?' active':''}" data-t="${k}">${l}</button>`).join('')
@@ -6649,9 +6649,9 @@ function renderCullStep(items){
   }
 
   const moveSig=items.filter(p=>p.tier==='blurry')
-    .map(p=>p.path+':'+(p.move_selected===false?'0':'1')).join('|');
+    .map(p=>p.path+':'+(p.move_selected===true?'1':'0')).join('|');
   if(moveSig!==lastCullMoveSig){lastCullMoveSig=moveSig;setupFilterBar();}
-  const sig=gPage+'#'+cullView.map(p=>p.path+':'+p.tier+':'+(p.lifecycle||'normal')+':'+(p.move_selected===false?'0':'1')).join('|');
+  const sig=gPage+'#'+cullView.map(p=>p.path+':'+p.tier+':'+(p.lifecycle||'normal')+':'+(p.move_selected===true?'1':'0')).join('|');
   if(recursiveScan){
     if(sig===lastCullSig&&lastStep===currentStep){
       document.getElementById('sShowing').textContent=filtered.length;
@@ -6693,7 +6693,7 @@ function renderCullStep(items){
 }
 function cullMoveCounts(){
   const blurry=photos.filter(p=>p.tier==='blurry'&&!['pending_trash','pending_permanent_delete','trashed','permanently_deleted'].includes(p.lifecycle));
-  return {total:blurry.length,selected:blurry.filter(p=>p.move_selected!==false).length};
+  return {total:blurry.length,selected:blurry.filter(p=>p.move_selected===true).length};
 }
 function updateCullMoveButton(){
   const mb=document.getElementById('moveBlurryBtn');if(!mb)return;
@@ -6931,7 +6931,7 @@ function showLb(){
   ms.style.display=(currentStep==='cull'&&p.tier==='blurry')?'inline-block':'none';
   if(currentStep==='cull')tg.textContent='⇄ '+(TIER_NAME[p.tier]||'清晰')+' → '+(TIER_NAME[NEXT_TIER[p.tier||'sharp']]);
   if(currentStep==='cull'&&p.tier==='blurry'){
-    const on=p.move_selected!==false;
+    const on=p.move_selected===true;
     ms.textContent=on?'☑ 本次移动':'☐ 保留原位';
     ms.classList.toggle('toggle',on);ms.classList.toggle('restore',!on);
   }
@@ -7064,7 +7064,7 @@ document.getElementById('lbToggle').onclick=()=>{const p=lbList[lbIndex];if(!p)r
     p.tier=d.tier;p.move_selected=!!d.move_selected;if(d.path)p.path=d.path;
     lastCullSig='';lastCullMoveSig='';renderCullStep(photos);updateCullMoveButton();showLb();});};
 document.getElementById('lbPhoneBg').onclick=()=>{const p=lbList[lbIndex];if(p)togglePhoneBg(p.path);};
-document.getElementById('lbMoveSelect').onclick=()=>{const p=lbList[lbIndex];if(p&&p.tier==='blurry')setBlurryMoveSelection(p.path,p.move_selected===false);};
+document.getElementById('lbMoveSelect').onclick=()=>{const p=lbList[lbIndex];if(p&&p.tier==='blurry')setBlurryMoveSelection(p.path,p.move_selected!==true);};
 document.addEventListener('keydown',e=>{
   if(!document.getElementById('lightbox').classList.contains('open'))return;
   if(e.key==='Escape')closeLb();
@@ -7130,7 +7130,7 @@ document.getElementById('moveBlurryBtn').onclick=async function(){
     const d=await r.json();
     if(!r.ok||d.error)throw new Error(d.error||('HTTP '+r.status));
     (photos||[]).forEach(p=>{
-      if(p&&p.tier==='blurry'&&p.move_selected!==false&&visibleInReview(p)){
+      if(p&&p.tier==='blurry'&&p.move_selected===true&&visibleInReview(p)){
         p.lifecycle='pending_trash';
         p.move_selected=false;
       }
@@ -7795,7 +7795,7 @@ def api_progress(step):
                                   'soft': s['soft'], 'blurry': s['blurry'],
                                   'move_selected': sum(
                                       1 for p in all_photos
-                                      if p.get('tier') == 'blurry' and p.get('move_selected', True)
+                                      if p.get('tier') == 'blurry' and p.get('move_selected', False)
                                   ),
                                   'cache_hits': s.get('cache_hits',0),
                                   'folder_status': s.get('folder_status',{})}})
@@ -8393,7 +8393,7 @@ def api_toggle_status():
     move_total = sum(1 for p in s['photos'] if p.get('tier') == 'blurry')
     move_selected = sum(
         1 for p in s['photos']
-        if p.get('tier') == 'blurry' and p.get('move_selected', True)
+        if p.get('tier') == 'blurry' and p.get('move_selected', False)
     )
     return jsonify({'ok': True, 'tier': tier, 'kept': now_kept, 'badge': badge,
                     'badgeType': bt, 'path': new_path, 'thumb': photo['thumb'],
@@ -8405,7 +8405,7 @@ def api_toggle_status():
 def _blurry_move_counts():
     photos = state['cull'].get('photos', [])
     blurry = [p for p in photos if p.get('tier') == 'blurry']
-    selected = [p for p in blurry if p.get('move_selected', True)]
+    selected = [p for p in blurry if p.get('move_selected', False)]
     return len(selected), len(blurry)
 
 
@@ -8427,7 +8427,7 @@ def api_select_blurry():
                 photo['move_selected'] = selected
                 state['cull'].setdefault('overrides', {}).setdefault(photo.get('path'), {})['move_selected'] = selected
         _save_review_overrides([
-            (p.get('path'), p.get('tier'), p.get('move_selected', True))
+            (p.get('path'), p.get('tier'), p.get('move_selected', False))
             for p in photos if p.get('tier') == 'blurry' and p.get('path')
         ])
         count, total = _blurry_move_counts()
@@ -8463,7 +8463,7 @@ def api_move_blurry():
     rows = [
         pp for pp in state['cull'].get('photos', [])
         if pp.get('tier') == 'blurry'
-        and pp.get('move_selected', True)
+        and pp.get('move_selected', False)
         and pp.get('lifecycle') not in
         ('pending_trash','pending_permanent_delete','trashed','permanently_deleted')
         and pp.get('path')
