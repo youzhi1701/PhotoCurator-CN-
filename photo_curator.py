@@ -2677,9 +2677,14 @@ def _shared_list_images(folder, recursive=True, max_age=2.0):
         if scan_real != demo_real:
             try:
                 scan_session = begin_catalog_scan(INDEX_DB, folder)
-            except Exception:
-                scan_session = None
-                logger.warning("catalog scan session start failed", exc_info=True)
+            except Exception as exc:
+                # A real library scan cannot silently become a transient,
+                # unindexed analysis. Otherwise users believe the session is
+                # saved when no durable catalog session exists.
+                logger.exception("catalog scan session start failed")
+                raise RuntimeError(
+                    "图库索引无法建立，本次扫描未开始；请检查数据库或存储设备后重试"
+                ) from exc
 
         def _scan_walk_error(exc):
             logger.warning("filesystem scan read error: %s", exc)
