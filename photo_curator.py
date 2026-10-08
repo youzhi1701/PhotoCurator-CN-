@@ -43,6 +43,7 @@ from PIL import Image, ImageOps
 from raw_loader import (RAW_EXTS, HAS_RAWPY, is_raw,
                         HEIF_EXTS, HAS_HEIF, is_heif, needs_jpeg_preview,
                         open_image_pil, imread_bgr, imread_gray)
+from quality_annotations import annotate_quality
 from photo_ranking_v3 import AdvancedPhotoAnalyzer, PhotoScoreV3
 from photo_dedup_batch import FastBatchDeduplicator
 from exact_duplicates import exact_duplicate_groups
@@ -3434,6 +3435,7 @@ def build_topn(weights=None, topn=None):
             'rel_dir': relative_folder(s.path, state.get('folder') or Path(s.path).parent),
             'rank': rank, 'score': f"{ov:.1f}",
             'phonebg': s.path in state['phone_bg'],
+            'review': annotate_quality(s, ov),
             'scores': {'composition': round(s.composition), 'technical': round(s.technical),
                        'sharpness': round(s.sharpness), 'color': round(s.color),
                        'aesthetic': round(s.aesthetic)},
@@ -7166,6 +7168,8 @@ function showLb(){
   if(currentStep==='rank'&&p.scores){
     const metrics=CATS.map(([k,lab])=>({label:lab,value:(p.scores&&p.scores[k])||0}));
     let html=`<div style="text-align:center">${radarSVG(metrics,150)}</div><h3>分类评分</h3>`;
+    const rv=p.review||{};
+    if(rv.tier){html+=`<h3>智能质量建议</h3><div style="font-size:13px;line-height:1.6"><strong>${escHtml(rv.tier)}</strong><div>${(rv.tags||[]).map(x=>escHtml(x)).join(' · ')}</div><div style="font-size:11px;opacity:.7">依据技术指标，仅供人工判断，不自动删除；场景尚未语义识别。</div></div>`;}
     CATS.forEach(([k,lab],ci)=>html+=barRow(lab,(p.scores&&p.scores[k])||0,CATINFO[k],true,CATCOLORS[ci]));
     const d=p.detail||{};GROUPS.forEach(([k,lab,keys])=>{const cv=(p.scores&&p.scores[k]);html+=`<h3>${lab}<span>${cv!=null?cv:''}</span></h3>`;keys.forEach(key=>{if(key in d)html+=barRow(key,d[key],SUBINFO[key]);});});
     html+=`<div style="font-size:10px;opacity:.5;margin-top:14px">将鼠标停留在任意评分项上，可查看该指标的含义。</div>`;
