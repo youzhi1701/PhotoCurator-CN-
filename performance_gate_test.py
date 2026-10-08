@@ -27,7 +27,9 @@ def block(start, end):
     return SOURCE[a:b]
 
 
-require('APP_VERSION = "1.7.2"' in SOURCE, "expected v1.7.2 source version")
+# Version changes must not break performance checks unrelated to the version.
+version = re.search(r'^APP_VERSION\s*=\s*"(\d+\.\d+\.\d+)"', SOURCE, re.M)
+require(version is not None, "core version must use numeric semver x.y.z")
 
 # 1) Task center: one lightweight heartbeat, adaptive cadence, no idle
 #    fan-out to the three result-bearing progress endpoints.
@@ -170,4 +172,10 @@ activity = block("def _activity(", "def _cached_cull_metrics(")
 require("_ACTIVITY_TRIM_EVERY" in SOURCE and "% _ACTIVITY_TRIM_EVERY" in activity,
         "activity-log cleanup must stay amortized")
 
-print("Performance regression gate OK: v1.7.2 hot paths, rendering, scan metadata, thumbnail scheduling, Lightbox prefetch and compact task heartbeat are intact")
+# 13) Resuming persisted file tasks must not race late helper definitions.
+require("start_immediately=False" in SOURCE,
+        "recovery workers should not start during partial module initialization")
+require(SOURCE.rfind("TASK_MANAGER.start()") > SOURCE.rfind("def _clear_review_delete_mark("),
+        "recovered task consumers must start after lifecycle helpers are defined")
+
+print(f"Performance regression gate OK: v{version.group(1)} hot paths, rendering, scan metadata, thumbnail scheduling, Lightbox prefetch and compact task heartbeat are intact")

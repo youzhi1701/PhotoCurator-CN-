@@ -16,7 +16,7 @@ from db_runtime import connect_db
 logger = logging.getLogger(__name__)
 
 class BackgroundTaskManager:
-    def __init__(self, db_path, workers=2):
+    def __init__(self, db_path, workers=2, *, start_immediately=True):
         self.db_path = Path(db_path)
         self.workers = max(1, int(workers))
         self.handlers: Dict[str, Callable[[dict], object]] = {}
@@ -26,13 +26,26 @@ class BackgroundTaskManager:
         self._threads = []
         self._init_db()
         self._recover_interrupted()
-        for i in range(self.workers):
-            worker = threading.Thread(
-                target=self._worker, daemon=True,
-                name=f"photocurator-task-{i+1}"
-            )
-            self._threads.append(worker)
-            worker.start()
+        if start_immediately:
+            self.start()
+
+    def start(self):
+        """Start consumers only after application handlers are registered.
+
+        Keeps recovered jobs queued through initialization without spinning on
+        missing handlers, while preserving the old auto-start default.
+        """
+        with self._cv:
+            if self._threads or self._stop:
+                return
+            for i in range(self.workers):
+                worker = threading.Thread(
+                    target=self._worker, daemon=True,
+                    name=f"photocurator-task-{i+1}"
+                )
+                self._threads.append(worker)
+                worker.start()
+            self._cv.notify_all()
 
     def _connect(self):
         return connect_db(self.db_path, timeout=30)

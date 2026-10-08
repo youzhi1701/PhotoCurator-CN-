@@ -119,7 +119,7 @@ _GEOCODE_LAST_AT = 0.0
 _ACTIVITY_TRIM_EVERY = 64
 _activity_write_count = 0
 CULL_METRICS_VERSION = 1
-RUNTIME_SCHEMA_VERSION = 2
+RUNTIME_SCHEMA_VERSION = 3
 
 
 def _db_init():
@@ -158,6 +158,12 @@ def _db_init():
         db.execute("""CREATE TABLE IF NOT EXISTS review_override (
             path TEXT PRIMARY KEY, size INTEGER NOT NULL, mtime_ns INTEGER NOT NULL,
             tier TEXT NOT NULL, move_selected INTEGER NOT NULL, updated_at REAL NOT NULL
+        )""")
+        # Explicit human deletion intent is independent of algorithm keepers.
+        db.execute("""CREATE TABLE IF NOT EXISTS review_delete_intent (
+            path TEXT PRIMARY KEY,
+            size INTEGER NOT NULL, mtime_ns INTEGER NOT NULL,
+            marked_at REAL NOT NULL
         )""")
         db.execute("""CREATE TABLE IF NOT EXISTS activity_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL NOT NULL,
@@ -719,7 +725,7 @@ try:
 except Exception:
     logger.warning("library index unavailable", exc_info=True)
 
-TASK_MANAGER = BackgroundTaskManager(INDEX_DB, workers=1)
+TASK_MANAGER = BackgroundTaskManager(INDEX_DB, workers=1, start_immediately=False)
 
 def _prune_index_db():
     """Keep indexes bounded without doing multi-million-row DELETE work every launch."""
@@ -751,7 +757,7 @@ def _prune_index_db():
 threading.Thread(target=_prune_index_db, daemon=True,
                  name='photocurator-index-prune').start()
 
-APP_VERSION = "1.7.2"
+APP_VERSION = "1.7.3"
 IS_CODESPACES = os.environ.get('CODESPACES', '').strip().lower() == 'true'
 CODESPACE_NAME = os.environ.get('CODESPACE_NAME', '').strip()
 _CODESPACES_DOMAIN_RAW = os.environ.get(
@@ -1804,6 +1810,7 @@ def _background_move_to_trash(payload):
                     original, planned_trash, source_step
                 )
                 _delete_review_override(original)
+                _clear_review_delete_mark(str(payload['path']))
                 _apply_media_lifecycle(
                     original, planned_trash, 'trashed', source_step, trash_id
                 )
@@ -1821,6 +1828,7 @@ def _background_move_to_trash(payload):
             planned_trash_path=(planned_trash or None)
         )
         _delete_review_override(original)
+        _clear_review_delete_mark(str(payload['path']))
         _apply_media_lifecycle(original, trash_path, 'trashed', source_step, trash_id)
         return {'ok': True, 'original_path': original, 'trash_path': trash_path,
                 'trash_id': trash_id}
@@ -1857,6 +1865,7 @@ def _background_permanent_delete(payload):
             db.commit()
         _apply_media_lifecycle(original, path, 'permanently_deleted',
                                str(payload.get('step') or ''))
+        _clear_review_delete_mark(original)
         _activity('永久删除', original, path)
         return {'ok': True, 'original_path': original, 'deleted_path': path}
     except Exception:
@@ -2784,7 +2793,7 @@ def _badge_for(tier, star):
 
 def run_cull(folder, strictness, adaptive, rescue_on, recursive=True):
     s = state['cull']
-    s.update({'running': True, 'cancel': False, 'progress': 0, 'status': '正在扫描照片…',
+    s.update({'running': True, 'cancel': False, 'progress': 0, 'processed': 0, 'total': 0, 'status': '正在扫描照片…',
               'photos': [], 'sharp': 0, 'soft': 0, 'blurry': 0, 'sharp_paths': [],
               'cache_hits': 0, 'folder_status': {}, 'current_folder': '',
               'overrides': {},
@@ -2800,6 +2809,7 @@ def run_cull(folder, strictness, adaptive, rescue_on, recursive=True):
         cull_cache = _load_cull_metrics_map(images, fingerprints)
         s['overrides'] = _load_review_overrides(images, fingerprints)
         total = len(images) or 1
+        s['total'] = len(images)
         items = []   # {name, path, region_s, q}
         cache_buffer = []
 
@@ -2865,7 +2875,7 @@ def run_cull(folder, strictness, adaptive, rescue_on, recursive=True):
                                # classification itself. Blurry frames start
                                # selected, but the user may uncheck any of them
                                # before the explicit Move action.
-                               'move_selected': (overrides.get(it['path']) or {}).get('move_selected', tier == 'blurry')})
+                               'move_selected': (overrides.get(it['path']) or {}).get('move_selected', False)})
             # Newest-processed first in the live grid (no scrolling to bottom).
             # Only the display order is reversed; `kept` stays in capture order
             # so Dedup/Rank still receive survivors in their natural sequence.
@@ -2905,6 +2915,7 @@ def run_cull(folder, strictness, adaptive, rescue_on, recursive=True):
                                f"已用时 {_fmt(time.time()-t0)}")
                 return
             done = idx + 1
+            s['processed'] = done
             s['progress'] = int(done / total * 100)
             elapsed = time.time() - t0
             rate = done / elapsed if elapsed > 0 else 0
@@ -3083,7 +3094,7 @@ def _sync_dedup_with_cull():
 def run_dedup(folder, threshold, ftype='all', pair='both',
               recursive=True, compare_scope='folder'):
     s = state['dedup']
-    s.update({'running': True, 'cancel': False, 'progress': 0, 'status': '正在准备…',
+    s.update({'running': True, 'cancel': False, 'progress': 0, 'processed': 0, 'total': 0, 'status': '正在准备…',
               'photos': [], 'groups': 0, 'kept_paths': [], 'groups_data': [],
               'singleton_paths': [], 'all_singleton_paths': [], 'seen_paths': set(),
               'applied': False, 'complete': False, 'src_folder': str(folder),
@@ -3144,6 +3155,7 @@ def run_dedup(folder, threshold, ftype='all', pair='both',
                        for _, ps in sorted(by_parent.items(), key=lambda kv: kv[0])]
 
         total = len(paths)
+        s['total'] = total
         shared_fingerprints = _shared_scan_fingerprints(folder, recursive)
         cull_metric_cache = _load_cull_metrics_map(paths, shared_fingerprints or None)
         processed = 0
@@ -3175,6 +3187,7 @@ def run_dedup(folder, threshold, ftype='all', pair='both',
                 if s.get('cancel'):
                     break
                 processed += 1
+                s['processed'] = processed
                 s['progress'] = int(processed / total * 100)
                 elapsed = time.time() - t0
                 rate = processed / elapsed if elapsed > 0 else 0
@@ -3360,7 +3373,7 @@ def build_topn(weights=None, topn=None):
 
 def run_rank(folder, ftype='all', pair='both', recursive=True):
     s = state['rank']
-    s.update({'running': True, 'cancel': False, 'progress': 0, 'status': '正在准备…',
+    s.update({'running': True, 'cancel': False, 'progress': 0, 'processed': 0, 'status': '正在准备…',
               'scores': [], 'total': 0, 'analyzed': 0, 'preview': [], 'preview_at': 0.0,
               'preview_score_count': 0,
               'cache_hits': 0, 'pending_paths': set(), 'complete': False,
@@ -3417,6 +3430,7 @@ def run_rank(folder, ftype='all', pair='both', recursive=True):
                                f"已用时 {_fmt(time.time()-t0)}")
                 return
             done = idx + 1
+            s['processed'] = done
             s['progress'] = int(done / total * 100)
             elapsed = time.time() - t0
             rate = done / elapsed if elapsed > 0 else 0
@@ -4007,7 +4021,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   .storage-actions .danger-data-action{color:#b91c1c!important;background:rgba(254,226,226,.62)!important;border-color:rgba(185,28,28,.18)!important}
   .activity-item{padding:8px 9px!important;border:1px solid rgba(124,139,192,.10);line-height:1.45;background:rgba(248,250,255,.72)!important}
   .drawer-scrim{display:none!important}
-  #settingsQuick,#taskToggle,#toolboxOpen{display:none!important}
+  #settingsQuick,#toolboxOpen{display:none!important}
   body.sidebar-collapsed .sidebar-primary-action,
   body.sidebar-collapsed .sidebar-utility-host{display:none!important}
   body.sidebar-collapsed .library-sidebar{width:58px!important;flex-basis:58px!important;padding-left:7px!important;padding-right:7px!important}
@@ -4035,6 +4049,109 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
 
   @media(max-width:1050px){.library-sidebar{width:270px!important;flex-basis:270px!important}}
   @media(max-width:900px){.library-sidebar{width:250px!important;flex-basis:250px!important}.source-pill{display:none}}
+
+  /* Aurora Bubble Glass: vivid atmospheric shell, limited-cost frosted controls.
+     Gallery images intentionally do not use backdrop-filter. */
+  :root{--bg:#f4faff;--panel:#ffffff;--panel2:#eff8ff;--accent:#347cf5;
+    --border:rgba(112,156,216,.23);--shadow:rgba(43,100,184,.13)}
+  body{background:
+    radial-gradient(ellipse 55% 58% at 9% 2%,rgba(81,192,255,.33),transparent 83%),
+    radial-gradient(ellipse 42% 55% at 91% 10%,rgba(177,119,255,.27),transparent 84%),
+    radial-gradient(ellipse 48% 48% at 57% 92%,rgba(93,234,199,.19),transparent 88%),
+    linear-gradient(137deg,#eef8ff 0%,#f9fcff 47%,#faf5ff 100%)!important}
+  .appbar{background:linear-gradient(115deg,rgba(244,252,255,.80),rgba(229,241,255,.71) 49%,rgba(250,235,255,.73))!important;
+    border-bottom:1px solid rgba(255,255,255,.94)!important;
+    box-shadow:0 5px 23px rgba(56,105,186,.09),inset 0 1px rgba(255,255,255,.93);
+    backdrop-filter:blur(26px) saturate(176%);-webkit-backdrop-filter:blur(26px) saturate(176%)}
+  .workspace-tabs,.source-pill{border:1px solid rgba(255,255,255,.93)!important;
+    border-radius:999px!important;background:linear-gradient(145deg,rgba(255,255,255,.77),rgba(222,238,255,.51))!important;
+    box-shadow:inset 0 1px rgba(255,255,255,.97),inset 0 -1px rgba(122,162,219,.10),0 5px 17px rgba(58,103,176,.10)}
+  .workspace-tabs .step{border-radius:999px!important;transition:background-color .18s ease,box-shadow .18s ease,color .18s ease,transform .14s ease}
+  .workspace-tabs .step:hover{background:rgba(255,255,255,.72)!important;transform:translateY(-1px)}
+  .workspace-tabs .step.active{background:linear-gradient(150deg,rgba(255,255,255,.99),rgba(205,229,255,.92))!important;
+    color:#245fd4!important;box-shadow:inset 0 1px 1px #fff,0 4px 13px rgba(62,119,224,.20)}
+  .library-sidebar{background:linear-gradient(148deg,rgba(255,255,255,.79),rgba(230,247,255,.66) 58%,rgba(244,237,255,.67))!important;
+    border-right:1px solid rgba(255,255,255,.91)!important;
+    box-shadow:inset -1px 0 rgba(104,153,215,.08),8px 0 25px rgba(73,132,210,.06)!important}
+  .source-card{border-color:rgba(145,186,236,.24)!important;border-radius:14px!important;
+    background:linear-gradient(145deg,rgba(255,255,255,.88),rgba(232,245,255,.67))!important;
+    box-shadow:inset 0 1px rgba(255,255,255,.95),0 4px 15px rgba(71,123,194,.06)}
+  .source-card>summary{transition:background-color .17s ease}
+  .source-card>summary:hover{background:rgba(185,224,255,.29)}
+  .pc-modal{background:linear-gradient(140deg,rgba(255,255,255,.88),rgba(228,242,255,.79) 60%,rgba(240,230,255,.79))!important;
+    border:1px solid rgba(255,255,255,.95)!important;border-radius:24px!important;
+    box-shadow:inset 0 2px rgba(255,255,255,.97),0 24px 65px rgba(48,90,159,.21)!important;
+    backdrop-filter:blur(25px) saturate(170%);-webkit-backdrop-filter:blur(25px) saturate(170%)}
+  .workspace-action,.sidebar-actions button{transition:background-color .17s ease,box-shadow .17s ease,transform .13s ease}
+  .workspace-action:hover,.sidebar-actions button:hover{transform:translateY(-1px)}
+  .workspace-action:active,.sidebar-actions button:active{transform:translateY(0)}
+  button:focus-visible,.step:focus-visible{outline:2px solid #3b82f6;outline-offset:2px}
+  @media(prefers-reduced-motion:reduce){
+    .workspace-tabs .step,.source-card>summary,.workspace-action,.sidebar-actions button{transition:none!important;transform:none!important}
+  }
+
+
+  /* Binary human review: normal / explicitly marked for deletion. */
+  .photo-card.review-marked{outline:3px solid #dd3545!important;outline-offset:-3px;
+    background:rgba(255,234,238,.95)!important}
+  .photo-card.review-marked .move-select{background:#dc263d!important;color:#fff!important;
+    border-color:#dc263d!important;box-shadow:0 3px 11px rgba(202,39,63,.22)}
+  .photo-card .move-select{min-width:94px;min-height:29px;white-space:nowrap;
+    transition:background-color .15s ease,color .15s ease,box-shadow .15s ease}
+  @media(prefers-reduced-motion:reduce){.photo-card .move-select{transition:none!important}}
+
+
+  /* Two-state similarity review, never reflow a marked thumbnail. */
+  .dedup-choice.review-marked{outline:3px solid #db3245!important;outline-offset:-3px;
+    background:rgba(255,237,240,.97)!important}
+  .dedup-choice.review-marked .dedup-recommend{background:#d7283b!important;color:#fff!important;
+    box-shadow:0 4px 12px rgba(205,42,61,.18)}
+  .dedup-choice .dedup-recommend{min-height:29px;min-width:106px;
+    transition:background-color .14s ease,color .14s ease}
+  @media(prefers-reduced-motion:reduce){.dedup-choice .dedup-recommend{transition:none!important}}
+
+.rank-review-mark{font:inherit;font-size:12px;padding:5px 7px;border-radius:9px;border:1px solid var(--border);cursor:pointer;background:var(--panel2);color:var(--text)}
+.photo-card.review-marked .rank-review-mark{background:#db2c43!important;color:white!important;border-color:#db2c43!important}
+
+/* Release-candidate progress capsule: fixed header real estate; click opens
+   a floating, non-reflowing detail panel. No continuous shader animation. */
+.header-task-compact{display:flex!important;flex-direction:column;justify-content:center;align-items:stretch;
+  flex:0 0 258px;width:258px;min-width:0;height:40px!important;padding:5px 11px!important;
+  border-radius:14px!important;text-align:left!important;
+  background:linear-gradient(140deg,rgba(255,255,255,.93),rgba(227,240,255,.78))!important;
+  box-shadow:inset 0 1px rgba(255,255,255,.9),0 4px 12px rgba(56,111,183,.10)}
+.task-mini-copy{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;line-height:1.3}
+.task-mini-copy b{font-size:13px!important;color:#344158;max-width:48%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.task-mini-copy small{font-size:11px;color:#52627a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:52%}
+.task-mini-track,.task-detail-track{height:6px;border-radius:999px;overflow:hidden;
+  display:block;background:rgba(114,145,187,.16);width:100%;margin-top:4px}
+.task-mini-track i,.task-detail-track i{display:block;width:0;height:100%;border-radius:999px;
+  background:linear-gradient(90deg,#3c96ee,#5370e6);transition:width .22s ease,background-color .2s ease}
+.header-task-compact.is-success .task-mini-track i,#taskCenter .task-progress-detail.is-success .task-detail-track i{background:#16a36a}
+.header-task-compact.is-error .task-mini-track i,#taskCenter .task-progress-detail.is-error .task-detail-track i{background:#df475a}
+.header-task-compact.is-paused .task-mini-track i,#taskCenter .task-progress-detail.is-paused .task-detail-track i{background:#94a3b8}
+.header-task-compact.is-running{border-color:rgba(71,136,227,.38)!important}
+#taskCenter{position:fixed!important;top:55px!important;right:63px!important;left:auto!important;bottom:auto!important;
+  z-index:240!important;width:428px!important;max-width:calc(100vw - 24px)!important;
+  max-height:calc(100vh - 72px)!important;overflow:auto!important;
+  padding:16px!important;display:none!important;border:1px solid rgba(255,255,255,.94)!important;
+  border-radius:20px!important;background:linear-gradient(143deg,rgba(251,254,255,.96),rgba(230,244,255,.94) 62%,rgba(245,238,255,.95))!important;
+  box-shadow:0 24px 66px rgba(37,79,151,.21),inset 0 2px rgba(255,255,255,.92)!important;
+  transform:none!important;opacity:1!important;pointer-events:auto!important;
+  backdrop-filter:blur(22px) saturate(150%);-webkit-backdrop-filter:blur(22px) saturate(150%)}
+#taskCenter.task-open{display:grid!important;gap:10px}
+#taskCenter .task-center-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:2px}
+#taskCenter .task-center-head b{font-size:16px;color:#24324a}
+#taskCenter .task-row{display:grid!important;grid-template-columns:120px minmax(0,1fr);gap:4px 8px;
+  padding:11px 12px!important;border-radius:13px;background:rgba(255,255,255,.7)}
+#taskCenter .task-row b{font-size:12px;white-space:normal;text-align:right;color:#34445e}
+#taskCenter .task-detail-track{grid-column:1/-1;height:6px}
+#taskCenter .task-center-head button{display:inline-flex!important}
+@media(max-width:1100px){.header-task-compact{flex-basis:185px;width:185px}.task-mini-copy b{font-size:11px!important}.task-mini-copy small{font-size:10px}}
+@media(max-width:720px){.header-task-compact{flex-basis:128px;width:128px;padding-inline:7px!important}
+  .task-mini-copy b{font-size:10px!important}.task-mini-copy small{font-size:9px}}
+@media(prefers-reduced-motion:reduce){.task-mini-track i,.task-detail-track i{transition:none!important}}
+
 </style></head><body>
 <header class="appbar pywebview-drag-region">
   <div class="app-brand" aria-label="PhotoCurator">
@@ -4056,7 +4173,10 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
 
   <div class="appbar-actions">
     <button class="appbar-btn" id="settingsQuick">筛选</button>
-    <button class="appbar-btn" id="taskToggle">任务</button>
+    <button class="appbar-btn header-task-compact" id="taskToggle" aria-expanded="false" aria-controls="taskCenter" title="查看后台任务详情">
+      <span class="task-mini-copy"><b id="taskMiniTitle">后台任务</b><small id="taskMiniNumbers">待开始</small></span>
+      <span class="task-mini-track"><i id="taskMiniFill"></i></span>
+    </button>
     <button class="appbar-btn icon-btn" id="toolboxOpen" title="工具箱">⌘</button>
   </div>
   <div class="window-controls" aria-label="窗口控制">
@@ -4104,7 +4224,8 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
           <button class="workspace-action" id="exportBtn" style="display:none">⬇ 导出</button>
           <button class="workspace-action" id="exportPbgBtn" style="display:none">📱 壁纸</button>
           <button class="workspace-action danger-soft" id="moveBlurryBtn" style="display:none">🗑 移入回收站</button>
-          <button class="workspace-action" id="dedupApplyBtn" style="display:none!important" aria-hidden="true">旧版批量处理</button>
+          <button class="workspace-action" id="dedupApplyBtn" style="display:none" disabled>🗑 执行待删除照片</button>
+          <button class="workspace-action" id="rankApplyBtn" style="display:none" disabled>🗑 执行待删除照片</button>
         </div>
       </section>
 
@@ -4259,9 +4380,9 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
 
 <aside class="task-center" id="taskCenter">
   <div class="task-center-head"><b>任务中心</b><button id="taskClose">×</button></div>
-  <div class="task-row"><span>清晰度分析</span><b id="taskCull">待开始</b></div>
-  <div class="task-row"><span>相似分析</span><b id="taskDedup">待开始</b></div>
-  <div class="task-row"><span>精选评分</span><b id="taskRank">待开始</b></div>
+  <div class="task-row task-progress-detail"><span>清晰度分析</span><b id="taskCull">待开始</b><div class="task-detail-track"><i id="taskCullFill"></i></div></div>
+  <div class="task-row task-progress-detail"><span>相似分析</span><b id="taskDedup">待开始</b><div class="task-detail-track"><i id="taskDedupFill"></i></div></div>
+  <div class="task-row task-progress-detail"><span>精选评分</span><b id="taskRank">待开始</b><div class="task-detail-track"><i id="taskRankFill"></i></div></div>
   <div class="task-row"><span>文件操作</span><b id="taskFiles">空闲</b></div>
   <div class="task-tip" id="taskFileHint">删除、恢复和永久删除在持久化后台队列中执行；异常退出后未完成任务会在下次启动继续。</div>
   <button class="task-exit" id="appExit">退出 PhotoCurator</button>
@@ -4355,6 +4476,9 @@ let sourceCatalog=[], discoveredDevices=[], selectedSource=null, catalogRootView
 let latestStorageSummary=null, demoShortcutPath='', demoShortcutCount=0, demoShortcutReady=false;
 const cullLiveStore=new Map();
 const dedupLiveStore=new Map();
+// View-only state: cache result rows, not detached gallery DOM.
+const reviewScrollOffsets={cull:0,dedup:0,rank:0,trash:0};
+function reviewScrollHost(){return document.querySelector('main.main');}
 let isRunning=false, runningStep=null, codespacesMode=false;
 let coreRunning=false, corePollTimer=null, coreSnapshots={cull:null,dedup:null};
 let lastRankSig='', lastCullSig='', lastDedupSig='', lastStep=null, weightTimer=null, removedCount=0, pollFailures=0, largeResultWarned=false;
@@ -4364,7 +4488,7 @@ let lastRankSig='', lastCullSig='', lastDedupSig='', lastStep=null, weightTimer=
 // a later lexical declaration and abort the rest of the interaction bindings.
 let cullChunkToken=0, cullVisibleTotal=0;
 let dedupChunkToken=0;
-let dedupStatusFilter='pending', dedupVisibleTotal=0;
+let dedupStatusFilter='all', dedupVisibleTotal=0;
 let dedupStatusCounts={pending:0,reviewed:0,updated:0};
 // These controls are needed by setupFilterBar() during initial page boot.
 // Define them before the first setupFilterBar() call to avoid TDZ failures
@@ -4581,7 +4705,7 @@ const inspectorPanel=document.getElementById('inspector');
 const toolboxPanel=document.getElementById('toolboxPanel');
 const activityPanel=document.getElementById('activityPanel');
 const taskCenter=document.getElementById('taskCenter');
-[inspectorPanel,taskCenter,activityPanel,toolboxPanel].forEach(panel=>{
+[inspectorPanel,activityPanel,toolboxPanel].forEach(panel=>{
   if(panel)sidebarUtilityHost.appendChild(panel);
 });
 if(inspectorPanel)inspectorPanel.setAttribute('aria-hidden','false');
@@ -4601,8 +4725,21 @@ document.getElementById('inspectorClose').onclick=()=>{};
 document.getElementById('drawerScrim').onclick=()=>{};
 document.getElementById('toolboxOpen').onclick=()=>focusSidebarPanel(toolboxPanel);
 document.getElementById('toolboxClose').onclick=()=>{};
-document.getElementById('taskToggle').onclick=()=>focusSidebarPanel(taskCenter);
-document.getElementById('taskClose').onclick=()=>{};
+const taskToggle=document.getElementById('taskToggle');
+function setTaskPanelOpen(open){
+  taskCenter.classList.toggle('task-open',!!open);
+  taskToggle.setAttribute('aria-expanded',open?'true':'false');
+}
+taskToggle.onclick=()=>setTaskPanelOpen(!taskCenter.classList.contains('task-open'));
+document.getElementById('taskClose').onclick=()=>setTaskPanelOpen(false);
+document.addEventListener('click',e=>{
+  if(taskCenter.classList.contains('task-open')&&!taskCenter.contains(e.target)&&!taskToggle.contains(e.target)){
+    setTaskPanelOpen(false);
+  }
+});
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape'&&taskCenter.classList.contains('task-open'))setTaskPanelOpen(false);
+});
 document.getElementById('openRankTool').onclick=()=>{
   activateStep('rank');
   fetch('/api/progress/rank').then(r=>r.json()).then(d=>{renderRank(d.photos||[]);updateVisibleStepStatus('rank',d);}).catch(()=>{});
@@ -4647,15 +4784,72 @@ document.getElementById('appExit').onclick=async()=>{
   }
   nativeWindow('exit');
 };
+function taskPhase(d){
+  if(!d)return 'idle';
+  const st=String(d.status||'');
+  if(st.includes('错误')||st.includes('失败'))return 'error';
+  if(d.running)return 'running';
+  if(d.complete)return 'success'; // 100% alone is not proof of completion.
+  if(st.includes('停止')||st.includes('暂停'))return 'paused';
+  return 'idle';
+}
 function taskLabel(d){
   if(!d)return '待开始';
-  if(d.src_folder&&folder&&!sameFolder(d.src_folder,folder))return '待开始';
-  if(d.running)return Math.max(0,Math.min(100,Number(d.progress)||0))+'% · 处理中';
-  const st=String(d.status||'');
-  if(st.includes('错误')||st.includes('失败'))return '需要处理';
-  if(st.includes('停止'))return '已停止';
-  if((d.progress||0)>=100||st.startsWith('完成')||st.includes('筛选完成'))return '已完成';
-  return st&&st!=='待开始'?'待继续':'待开始';
+  if(d.src_folder&&folder&&!sameFolder(d.src_folder,folder))return '其他图库';
+  const done=Math.max(0,Number(d.processed)||0),total=Math.max(0,Number(d.total)||0);
+  const count=total?Math.min(done,total)+'/'+total+' · ':'';
+  const pct=Math.max(0,Math.min(100,Number(d.progress)||0));
+  const phase=taskPhase(d);
+  if(phase==='running')return count+pct+'% · 处理中';
+  if(phase==='error')return count+'失败';
+  if(phase==='paused')return count+'已停止';
+  if(phase==='success')return count+'已完成';
+  return count+(String(d.status||'')==='等待开始'?'待开始':'待继续');
+}
+function renderTaskPulse(rows,queued,failed){
+  const ids=['Cull','Dedup','Rank'];
+  const names=['清晰度分析','相似分析','照片评分'];
+  const taskItems=rows.map((d,i)=>({d,i})).filter(x=>x.d&&(!x.d.src_folder||!folder||sameFolder(x.d.src_folder,folder)));
+  for(let i=0;i<ids.length;i++){
+    const d=rows[i],phase=taskPhase(d);
+    const el=document.getElementById('task'+ids[i]);
+    el.textContent=taskLabel(d);
+    const row=el.closest('.task-row');
+    row.classList.remove('is-running','is-success','is-error','is-paused');
+    row.classList.add('is-'+phase);
+    const fill=document.getElementById('task'+ids[i]+'Fill');
+    fill.style.width=(phase==='success'?100:Math.min(100,Math.max(0,Number(d?.progress)||0)))+'%';
+  }
+  const active=taskItems.filter(x=>x.d.running);
+  let picked=active[0]||taskItems.find(x=>x.i===['cull','dedup','rank'].indexOf(currentStep))
+             ||taskItems.find(x=>x.d.complete)||taskItems[0]||null;
+  const title=document.getElementById('taskMiniTitle');
+  const numbers=document.getElementById('taskMiniNumbers');
+  const fill=document.getElementById('taskMiniFill');
+  const toggle=document.getElementById('taskToggle');
+  toggle.classList.remove('is-running','is-success','is-error','is-paused');
+  let phase='idle',pct=0;
+  if(active.length&&picked){
+    phase='running';
+    title.textContent=names[picked.i]+(active.length>1?' · +'+(active.length-1)+'项':'');
+  }else if(queued>0){title.textContent='后台文件任务';phase='running';picked=null;}
+  else if(failed>0){title.textContent='任务异常';phase='error';picked=null;}
+  else if(picked&&picked.d.complete){title.textContent=names[picked.i]+'完成';phase='success';}
+  else if(picked&&taskPhase(picked.d)==='error'){title.textContent='任务失败';phase='error';}
+  else if(picked&&taskPhase(picked.d)==='paused'){title.textContent='任务已停止';phase='paused';}
+  else{title.textContent='后台任务';}
+  if(picked){
+    const d=picked.d;
+    pct=Math.max(0,Math.min(100,Number(d.progress)||0));
+    if(phase==='success')pct=100;
+    const done=Math.max(0,Number(d.processed)||0),total=Math.max(0,Number(d.total)||0);
+    numbers.textContent=total?Math.min(done,total)+'/'+total+' · '+pct+'%':(phase==='running'?pct+'% · 准备中':taskLabel(d));
+  }else{
+    numbers.textContent=queued>0?queued+' 个处理中':failed>0?failed+' 个失败':'待开始';
+  }
+  fill.style.width=pct+'%';
+  toggle.classList.add('is-'+phase);
+  toggle.title='查看任务进度详情 · '+title.textContent+' · '+numbers.textContent;
 }
 let lastBackgroundActive=0,lastBackgroundFailed=-1,lastAutoSyncAt=0;
 let taskCenterTimer=null,taskCenterBusy=false;
@@ -4681,9 +4875,6 @@ async function refreshTaskCenter(){
     const analysisMap=snapshot.analysis||{};
     const rows=['cull','dedup','rank'].map(k=>analysisMap[k]||null);
     const tasks=snapshot.files||{active:0,counts:{},items:[]};
-    document.getElementById('taskCull').textContent=taskLabel(rows[0]);
-    document.getElementById('taskDedup').textContent=taskLabel(rows[1]);
-    document.getElementById('taskRank').textContent=taskLabel(rows[2]);
     const counts=tasks.counts||{};
     const analysis=rows.some(x=>x&&x.running),queued=Math.max(0,Number(tasks.active)||0);
     const failed=Math.max(0,Number(counts.failed)||0);
@@ -4703,10 +4894,7 @@ async function refreshTaskCenter(){
     }else{
       fileHint.textContent='删除、恢复和永久删除在持久化后台队列中执行；异常退出后未完成任务会在下次启动继续。';
     }
-    document.getElementById('taskToggle').textContent=failed?'!':((analysis||queued)?'●':'◉');
-    document.getElementById('taskToggle').title=failed
-      ?'有 '+failed+' 个文件任务失败 · 打开任务中心查看'
-      :((analysis||queued)?'后台运行中 · '+queued+' 个文件任务':'后台任务空闲');
+    renderTaskPulse(rows,queued,failed);
     if(failed>0&&failed!==lastBackgroundFailed){
       toast('有 '+failed+' 个后台文件任务失败，请打开任务中心查看','bad');
     }
@@ -4836,6 +5024,12 @@ function renderSettings(){
 
 /* Switch the visible step (used by tab clicks AND God mode). */
 function activateStep(step){
+  if(currentStep!==step){
+    const host=reviewScrollHost();
+    if(host)reviewScrollOffsets[currentStep]=host.scrollTop;
+    cullChunkToken++;
+    dedupChunkToken++; // Late page fetches cannot overwrite a different workspace.
+  }
   currentStep=step;
   document.querySelectorAll('.step').forEach(x=>x.classList.toggle('active',x.dataset.step===step));
   updateWorkspaceHeading();
@@ -4844,6 +5038,7 @@ function activateStep(step){
   document.getElementById('exportPbgBtn').style.display='none';
   {const mb=document.getElementById('moveBlurryBtn');mb.style.display='none';mb.classList.remove('cta');}
   document.getElementById('dedupApplyBtn').style.display='none';
+  document.getElementById('rankApplyBtn').style.display='none';
   document.getElementById('progressWrap').style.display='none';  // clear stale summary
   document.getElementById('resultTools').style.display='none';
   if(!photos.length&&!isRunning&&!coreRunning&&!catalogRootView){
@@ -4855,26 +5050,47 @@ function activateStep(step){
   lastRankSig='';lastCullSig='';lastDedupSig='';lastStep=null;
   gPage=0;lastGallerySig='';gItems=[];document.getElementById('pager').style.display='none';
   setupFilterBar();
+  // Restore previously paged results before asynchronous status refresh.
+  if(step==='cull'&&cullLiveStore.size){
+    renderCullStep(Array.from(cullLiveStore.values()));
+    updateCullLoadMore();
+  }else if(step==='dedup'&&dedupLiveStore.size){
+    renderDedupGroups(Array.from(dedupLiveStore.values()));
+    updateDedupLoadMore();
+  }
+  const host=reviewScrollHost();
+  if(host)host.scrollTop=reviewScrollOffsets[step]||0;
   if(step==='cull')updateCullMoveButton();
 }
 /* step tabs (blocked while a step is running) */
 document.querySelectorAll('.step').forEach(t=>t.onclick=()=>{
-  activateStep(t.dataset.step);
-  if(currentStep==='trash'){loadTrash();return;}
-  fetch('/api/progress/'+currentStep).then(r=>r.json()).then(d=>{
+  const requestedStep=t.dataset.step;
+  activateStep(requestedStep);
+  const requestSource=folder;
+  const cullRequestEpoch=cullChunkToken;
+  const dedupRequestEpoch=dedupChunkToken;
+  if(requestedStep==='trash'){loadTrash();return;}
+  fetch('/api/progress/'+requestedStep).then(r=>r.json()).then(d=>{
+    if(currentStep!==requestedStep||folder!==requestSource)return; // Ignore abandoned source/tab responses.
+    if(requestedStep==='cull'&&cullChunkToken!==cullRequestEpoch)return;
+    if(requestedStep==='dedup'&&dedupChunkToken!==dedupRequestEpoch)return;
     if(d.src_folder && folder && !sameFolder(d.src_folder,folder)){
       showPhotoView();
       document.getElementById('gallery').innerHTML=emptyHTML(currentStep);
       document.getElementById('progressWrap').style.display='none';
       return;
     }
-    if(currentStep==='cull')renderCullStep(cullRowsForPayload(d));
-    else if(currentStep==='dedup'){
+    if(currentStep==='cull'){
+      // The progress API may return a bounded first page; preserve user-loaded pages.
+      if(cullLiveStore.size>(d.photos||[]).length)
+        renderCullStep(Array.from(cullLiveStore.values()));
+      else renderCullStep(cullRowsForPayload(d));
+    }else if(currentStep==='dedup'){
       const st=d.stats||{};
       dedupStatusCounts={
         pending:Number(st.pending_groups||0),reviewed:Number(st.reviewed_groups||0),updated:Number(st.updated_groups||0)
       };
-      loadDedupPage(true);
+      loadDedupPage(dedupLiveStore.size===0);
     }else renderRank(d.photos||[]);
     updateVisibleStepStatus(currentStep,d);
     if(currentStep==='cull')maybeLoadAllCull(d);
@@ -4901,12 +5117,14 @@ function setupFilterBar(){
       ...(rawFmts.length>1?rawFmts.map(f=>['ext:'+f.toLowerCase(),'仅 '+f]):[])];
     if(!types.some(([k])=>k===cullType))cullType='all';
     bar.style.display='flex';
-    const blurry=photos.filter(p=>p.tier==='blurry'&&!['pending_trash','pending_permanent_delete','trashed','permanently_deleted'].includes(p.lifecycle));
-    const moveSelected=blurry.filter(p=>p.move_selected!==false).length;
+    const available=photos.filter(p=>!['pending_trash','pending_permanent_delete','trashed','permanently_deleted'].includes(p.lifecycle));
+    const blurry=available.filter(p=>p.tier==='blurry');
+    const moveSelected=available.filter(p=>!!p.move_selected).length;
     bar.innerHTML=opts.map(([k,l])=>`<button class="chip${k===cullFilter?' active':''}" data-f="${k}">${l}</button>`).join('')
       +`<span class="chip-sep"></span>`
       +types.map(([k,l])=>`<button class="chip${k===cullType?' active':''}" data-t="${k}">${l}</button>`).join('')
-      +(blurry.length?`<span class="chip-sep"></span><span class="move-summary">待删除 <b id="cullMoveCount">${moveSelected}/${blurry.length}</b></span><button class="chip move-bulk" id="moveSelAll">全选</button><button class="chip move-bulk" id="moveSelNone">全不选</button>`:'')
+      +(available.length?`<span class="chip-sep"></span><span class="move-summary">待删除 <b id="cullMoveCount">${moveSelected}/${available.length}</b></span>`:'')
+      +(blurry.length?`<button class="chip move-bulk" id="moveSelAll">标记模糊</button><button class="chip move-bulk" id="moveSelNone">撤销模糊标记</button>`:'')
       +`<span class="chip-sep"></span><button class="chip" id="cullLoadMore" style="display:none"></button>`;
     bar.querySelectorAll('.chip[data-f]').forEach(c=>c.onclick=()=>{cullFilter=c.dataset.f;gPage=0;
       bar.querySelectorAll('.chip[data-f]').forEach(x=>x.classList.toggle('active',x.dataset.f===cullFilter));
@@ -4924,10 +5142,19 @@ function setupFilterBar(){
   if(currentStep==='dedup'){
     bar.style.display='flex';
     const counts=dedupStatusCounts||{};
-    const opts=[['pending','待筛选'],['reviewed','已筛选'],['updated','新增待复核']];
+    const opts=[['all','全部'],['reviewed','已筛选'],['pending','未筛选']];
     bar.innerHTML=opts.map(([k,l])=>`<button class="chip${dedupStatusFilter===k?' active':''}" data-dstatus="${k}">${l} <span>${Number(counts[k]||0)}</span></button>`).join('')
       +'<span class="chip-sep"></span><button class="chip" id="dedupLoadMore" style="display:none"></button>';
-    bar.querySelectorAll('[data-dstatus]').forEach(b=>b.onclick=()=>{dedupStatusFilter=b.dataset.dstatus;loadDedupPage(true);});
+    bar.querySelectorAll('[data-dstatus]').forEach(b=>b.onclick=()=>{
+      const next=b.dataset.dstatus;
+      if(next===dedupStatusFilter)return;
+      dedupChunkToken++;
+      dedupStatusFilter=next;
+      // Never show groups from the previous status partition during a fetch.
+      dedupLiveStore.clear();dedupVisibleTotal=0;
+      photos=[];lastDedupSig='';
+      loadDedupPage(true);
+    });
     const more=document.getElementById('dedupLoadMore');if(more)more.onclick=()=>loadDedupPage(false);
     updateDedupLoadMore();
     return;
@@ -4964,7 +5191,9 @@ function normalizedFolder(p){
 function sameFolder(a,b){return normalizedFolder(a)===normalizedFolder(b);}
 function resetWorkspaceForFolder(){
   cullChunkToken++;
+  dedupChunkToken++; // Invalidate pending requests for the previous data source.
   cullLiveStore.clear();dedupLiveStore.clear();
+  Object.keys(reviewScrollOffsets).forEach(key=>{reviewScrollOffsets[key]=0;});
   cullReady=false;
   photos=[];lbList=[];folderStatus={};
   lastRankSig='';lastCullSig='';lastDedupSig='';lastCullMoveSig='';lastGallerySig='';
@@ -5236,12 +5465,24 @@ function renderSources(){
     const current=!!(selectedSource&&selectedSource.source_id===source.source_id);
     const open=source.connected||current;
     const state=source.connected?'已连接':'未连接 · 历史保留';
-    const roots=(source.roots||[]).map(root=>{
+    // Nested registered roots are views inside the same physical data source.
+    // Show their actual ancestry rather than implying they are sibling drives.
+    const rootRows=(source.roots||[]).slice();
+    const rel=r=>String(r.relative_root||'').replace(/\\/g,'/').replace(/^\/+|\/+$/g,'').toLowerCase();
+    rootRows.sort((a,b)=>rel(a).split('/').length-rel(b).split('/').length||rel(a).localeCompare(rel(b),'zh-CN'));
+    const roots=rootRows.map(root=>{
       const path=root.current_root||root.original_root||'';
+      const key=rel(root);
+      const ancestors=rootRows.filter(other=>{
+        const parent=rel(other);
+        return other!==root&&parent!==key&&(parent===''?key!=='':key.startsWith(parent+'/'));
+      }).length;
+      const indent=Math.min(ancestors,4);
       const title=(root.display_name||path||'照片库')+' · '+Number(root.photo_count||0)+' 张';
       return '<button class="source-root-btn" data-source-root="'+escHtml(path)+'"'
         +' data-root-id="'+escHtml(root.root_id)+'" data-source-id="'+escHtml(source.source_id)+'"'
-        +' data-connected="'+(source.connected?'1':'0')+'" title="'+escHtml(path)+'">'+escHtml(title)+'</button>';
+        +' data-connected="'+(source.connected?'1':'0')+'" style="padding-left:'+(12+indent*16)+'px"'
+        +' title="'+escHtml(path)+'">'+(indent?'↳ ':'')+escHtml(title)+'</button>';
     }).join('');
     return '<details class="source-card '+(source.connected?'connected':'offline')+(current?' current':'')+'" '+(open?'open':'')+'>'
       +'<summary><span class="source-dot '+(source.connected?'online':'offline')+'"></span>'
@@ -5654,14 +5895,18 @@ function snapshotPipelineConfig(){
 async function startStep(step,config=null){
   const cfg=config||snapshotPipelineConfig();
   runningStep=step;
-  if(step==='cull'){cullReady=false;cullLiveStore.clear();}
-  if(step==='dedup')dedupLiveStore.clear();
+  // A new background run does not revoke the reviewer's existing decisions
+  // or browsing window. Fresh authoritative results will reconcile later.
+  if(step==='cull')cullReady=false;
   pollFailures=0;largeResultWarned=false;
   document.getElementById('progressWrap').style.display='block';
   if(step===currentStep){
-    document.getElementById('gallery').innerHTML='';
-    lastRankSig='';lastStep=step;
-    gPage=0;lastGallerySig='';document.getElementById('pager').style.display='none';
+    const gallery=document.getElementById('gallery');
+    if(!gallery.querySelector('.photo-card,.dedup-choice,.catalog-card')){
+      gallery.innerHTML='';
+      lastRankSig='';lastStep=step;
+    }
+    document.getElementById('pager').style.display='none';
     document.getElementById('exportBtn').style.display='none';
     document.getElementById('exportPbgBtn').style.display='none';
     {const mb=document.getElementById('moveBlurryBtn');mb.style.display='none';mb.classList.remove('cta');}
@@ -5752,11 +5997,13 @@ function applyLatestCoreSnapshot(){
   if(!d)return;
   if(currentStep==='cull'){
     const rows=d.photos||[];
-    cullLiveStore.clear();rows.forEach(p=>{if(p&&p.path)cullLiveStore.set(p.path,p);});
-    renderCullStep(Array.from(cullLiveStore.values()));
+    // A progress snapshot is a bounded preview, not the authoritative full page.
+    // Merge it without discarding rows explicitly paged in by the reviewer.
+    renderCullStep(cullRowsForPayload(d));
     if(!d.running)maybeLoadAllCull(d);
   }else if(currentStep==='dedup'){
-    loadDedupPage(true);
+    // Preserve loaded groups unless there is no prior result window.
+    loadDedupPage(dedupLiveStore.size===0);
   }
   const b=document.getElementById('loadNewResults');if(b)b.style.display='none';
 }
@@ -5791,7 +6038,12 @@ async function coreRun(){
   const coreSteps=['cull','dedup'];
   coreRunning=true;setStartBtn(true);
   showPhotoView();
-  document.getElementById('gallery').innerHTML='<div class="empty"><div class="icon">◌</div><div class="title">正在分析照片</div><p>模糊筛选与相似照片分析正在后台并行启动，结果会持续进入当前工作区。</p></div>';
+  // Starting analysis must not replace the review cards a person is editing.
+  // Only show the startup placeholder when the workspace has no photo content.
+  const activeGallery=document.getElementById('gallery');
+  if(!activeGallery.querySelector('.photo-card,.dedup-choice,.catalog-card')){
+    activeGallery.innerHTML='<div class="empty"><div class="icon">◌</div><div class="title">正在分析照片</div><p>模糊筛选与相似照片分析正在后台并行启动，结果会持续进入当前工作区。</p></div>';
+  }
   document.getElementById('progressWrap').style.display='block';
   document.getElementById('progressText').textContent='正在启动模糊分析与相似分析…';
   try{
@@ -5841,7 +6093,10 @@ startBtn.onclick=()=>{
 };
 function cullRowsForPayload(d){
   const rows=d.photos||[];
-  if(!d.running)cullLiveStore.clear();
+  // A terminal progress payload may contain only a bounded preview. Only a
+  // confirmed complete snapshot may replace user-loaded result pages.
+  if(!d.running && d.truncated===false && Number(d.result_total)===rows.length)
+    cullLiveStore.clear();
   rows.forEach(p=>{if(p&&p.path)cullLiveStore.set(p.path,p);});
   return Array.from(cullLiveStore.values());
 }
@@ -5849,11 +6104,12 @@ function cullRowsForPayload(d){
 async function loadCullPage(reset=false){
   if(currentStep!=='cull')return;
   const token=++cullChunkToken;
+  const sourceAtRequest=folder;
   const offset=reset?0:cullLiveStore.size;
   try{
     const d=await fetch('/api/results/cull?offset='+offset+'&limit=200')
       .then(async r=>{const x=await r.json();if(!r.ok)throw new Error(x.error||('HTTP '+r.status));return x;});
-    if(token!==cullChunkToken||currentStep!=='cull')return;
+    if(token!==cullChunkToken||currentStep!=='cull'||folder!==sourceAtRequest)return;
     if(reset)cullLiveStore.clear();
     (d.photos||[]).forEach(p=>{if(p&&p.path)cullLiveStore.set(p.path,p);});
     cullVisibleTotal=Number(d.total||0);
@@ -5861,7 +6117,10 @@ async function loadCullPage(reset=false){
     renderCullStep(photos);
     setupFilterBar();
     updateCullLoadMore();
-  }catch(err){toast('载入清晰度结果失败：'+(err.message||'未知错误'),'bad');}
+  }catch(err){
+    if(token===cullChunkToken&&currentStep==='cull'&&folder===sourceAtRequest)
+      toast('载入清晰度结果失败：'+(err.message||'未知错误'),'bad');
+  }
 }
 function updateCullLoadMore(){
   const btn=document.getElementById('cullLoadMore');
@@ -5877,16 +6136,22 @@ function maybeLoadAllCull(d){
 }
 function dedupRowsForPayload(d){
   const rows=d.photos||[];
-  if(!d.running)dedupLiveStore.clear();
+  // Keep paged groups when progress only returns the first result window.
+  if(!d.running && d.truncated===false && Number(d.result_total)===rows.length)
+    dedupLiveStore.clear();
   rows.forEach(g=>{if(g&&g.group_id!=null)dedupLiveStore.set(String(g.group_id),g);});
   return Array.from(dedupLiveStore.values());
 }
 async function loadDedupPage(reset=false){
   if(currentStep!=='dedup')return;
+  const token=++dedupChunkToken;
+  const sourceAtRequest=folder;
+  const filterAtRequest=dedupStatusFilter;
   const offset=reset?0:dedupLiveStore.size;
   try{
-    const d=await fetch('/api/results/dedup?offset='+offset+'&limit=200&status='+encodeURIComponent(dedupStatusFilter))
+    const d=await fetch('/api/results/dedup?offset='+offset+'&limit=200&status='+encodeURIComponent(filterAtRequest))
       .then(async r=>{const x=await r.json();if(!r.ok)throw new Error(x.error||('HTTP '+r.status));return x;});
+    if(token!==dedupChunkToken||currentStep!=='dedup'||folder!==sourceAtRequest||dedupStatusFilter!==filterAtRequest)return;
     if(reset)dedupLiveStore.clear();
     (d.photos||[]).forEach(g=>dedupLiveStore.set(String(g.group_id),g));
     dedupVisibleTotal=Number(d.total||0);dedupStatusCounts=d.counts||dedupStatusCounts;
@@ -5894,7 +6159,10 @@ async function loadDedupPage(reset=false){
     renderDedupGroups(photos);
     setupFilterBar();
     updateDedupLoadMore();
-  }catch(err){toast('载入相似组失败：'+(err.message||'未知错误'),'bad');}
+  }catch(err){
+    if(token===dedupChunkToken&&currentStep==='dedup'&&folder===sourceAtRequest&&dedupStatusFilter===filterAtRequest)
+      toast('载入相似组失败：'+(err.message||'未知错误'),'bad');
+  }
 }
 function updateDedupLoadMore(){
   const btn=document.getElementById('dedupLoadMore');
@@ -6024,15 +6292,24 @@ function dedupGroupStatusLabel(status){
   if(status==='updated')return ['已筛选 · 有新增','updated'];
   return ['待筛选','pending'];
 }
+function updateDedupApplyButton(){
+  const button=document.getElementById('dedupApplyBtn');
+  if(!button)return;
+  const n=new Set(Array.from(dedupLiveStore.values()).flatMap(
+    group=>(group.members||[]).filter(m=>m.marked_delete&&visibleInReview(m)).map(m=>m.path)
+  )).size;
+  button.style.display=currentStep==='dedup'?'inline-flex':'none';
+  button.disabled=n===0;
+  button.textContent=n?'🗑 执行 '+n+' 张待删除照片':'尚未标记待删除照片';
+}
 function dedupMemberState(group,p){
   const life=p.lifecycle||'normal';
-  if(life==='pending_trash')return ['待移入回收站','state-pending','pending-delete'];
-  if(life==='pending_permanent_delete')return ['待彻底删除','state-pending','pending-delete'];
+  if(life==='pending_trash')return ['正在移入回收站','state-pending','pending-delete'];
+  if(life==='pending_permanent_delete')return ['正在彻底删除','state-pending','pending-delete'];
   if(life==='trashed')return ['↩ 已删除 · 恢复','state-trash','trashed'];
   if(life==='permanently_deleted')return ['已彻底删除','state-trash','trashed'];
-  if(group.status==='reviewed'&&p.selected)return ['✓ 保留','','selected'];
-  if(p.selected)return ['推荐保留','',''];
-  return ['待筛选','state-neutral',''];
+  if(p.marked_delete)return ['↶ 撤销待删除','state-trash','review-marked'];
+  return ['🗑 标记待删除','state-neutral',''];
 }
 function renderDedupGroups(groups){
   showPhotoView();
@@ -6042,8 +6319,9 @@ function renderDedupGroups(groups){
   );
   const g=document.getElementById('gallery');
   document.getElementById('sShowing').textContent=reviewGroups.length;
+  updateDedupApplyButton();
   const dedupSig=reviewGroups.map(group=>String(group.group_id)+':'+String(group.status||'pending')+':'
-    +(group.members||[]).filter(visibleInReview).map(p=>p.path+':'+(p.selected?1:0)+':'+(p.lifecycle||'normal')+':'+String(p.score??'')+':'+String(p.name||'')).join(',')).join('|');
+    +(group.members||[]).filter(visibleInReview).map(p=>p.path+':'+(p.marked_delete?1:0)+':'+(p.lifecycle||'normal')+':'+String(p.score??'')+':'+String(p.name||'')).join(',')).join('|');
   if(dedupSig===lastDedupSig&&lastStep===currentStep){updateResultTools();return;}
   lastDedupSig=dedupSig;lastStep=currentStep;
   if(!reviewGroups.length){
@@ -6069,35 +6347,28 @@ function renderDedupGroups(groups){
       const members=allMembers.filter(visibleInReview);
       const deleted=allMembers.length-members.length;
       const active=members.length;
-      const kept=members.filter(p=>p.selected).length;
+      const marked=members.filter(p=>p.marked_delete).length;
       const [statusText,statusClass]=dedupGroupStatusLabel(group.status||'pending');
       html+='<div class="dedup-group" data-group="'+group.group_id+'">';
       html+='<div class="dedup-group-head">'
         +'<div class="dedup-group-title"><b>相似组 '+seq+' · '+members.length+' 张</b>'
         +'<span class="group-status '+statusClass+'">'+statusText+'</span>'
-        +'<span class="dedup-group-meta">保留 '+kept+' · 删除 '+deleted+' · 待处理 '+Math.max(0,active-kept)+'</span></div>'
-        +'<div class="dedup-group-actions">'
-        +'<button class="chip group-complete" data-group="'+group.group_id+'">完成本组</button>'
-        +'<details class="dedup-more"><summary title="更多操作">更多操作</summary><div class="dedup-quick">'
-        +'<button data-dmode="best1" data-group="'+group.group_id+'">保留最佳 1 张</button>'
-        +'<button data-dmode="best2" data-group="'+group.group_id+'">保留最佳 2 张</button>'
-        +'<button data-dmode="all" data-group="'+group.group_id+'">全部保留</button>'
-        +'</div></details></div></div>';
+        +'<span class="dedup-group-meta">待删除 '+marked+' · 已处理 '+deleted+' · 共 '+active+' 张</span></div>'
+        +'<div class="dedup-group-actions"></div></div>';
       html+='<div class="dedup-choices">';
       members.forEach(p=>{
         const [label,badgeClass,cardState]=dedupMemberState(group,p);
-        const selectedClass=(group.status==='reviewed'&&p.selected)?' selected':'';
+        const selectedClass='';
         html+='<div class="dedup-choice'+selectedClass+(cardState?' '+cardState:'')+'" data-group="'+group.group_id+'" data-path="'+escHtml(p.path)+'">';
         const life=p.lifecycle||'normal';
         const disabled=['pending_trash','pending_permanent_delete','permanently_deleted','pending_restore'].includes(life)?' disabled':'';
-        const title=life==='trashed'?'恢复这张照片':(disabled?'后台处理中':'切换保留状态');
+        const title=life==='trashed'?'恢复这张照片':(disabled?'后台处理中':(p.marked_delete?'撤销待删除标记':'标记为待删除'));
         html+='<button class="dedup-recommend '+badgeClass+'" data-group="'+group.group_id+'" data-path="'+escHtml(p.path)+'" data-life="'+escHtml(life)+'" data-trash-id="'+escHtml(p.trash_id||'')+'" title="'+title+'"'+disabled+'>'+label+'</button>';
         if(p.thumb)html+='<img src="'+p.thumb+'" loading="lazy" decoding="async">';
         else html+='<div style="aspect-ratio:3/2;display:grid;place-items:center;background:var(--panel2);color:var(--muted)">文件已删除</div>';
         html+='<div class="dedup-choice-meta"><div><div class="dedup-choice-name">'+escHtml(p.name)+'</div>';
         html+='<div class="source-path">'+escHtml(p.rel_dir||'当前文件夹')+'</div></div>';
-        if(!['pending_trash','pending_permanent_delete','trashed','permanently_deleted'].includes(p.lifecycle))
-          html+='<button class="delete-btn" data-step="dedup" data-path="'+escHtml(p.path)+'" title="删除">🗑</button>';
+
         html+='</div></div>';
       });
       html+='</div></div>';
@@ -6109,68 +6380,96 @@ function renderDedupGroups(groups){
   updateResultTools();
 }
 
-document.getElementById('gallery').addEventListener('click',e=>{
-  const complete=e.target.closest('.group-complete');
-  if(complete){
-    e.stopPropagation();
-    fetch('/api/dedup-complete',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({group_id:Number(complete.dataset.group)})})
-      .then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;})
-      .then(d=>{
-        const idx=photos.findIndex(g=>g.group_id===Number(complete.dataset.group));
-        if(idx>=0&&d.changed_group)photos[idx]=d.changed_group;
-        renderDedupGroups(photos);
-        toast('本组已完成筛选','good');
-      }).catch(err=>toast('完成本组失败：'+(err.message||'未知错误'),'bad'));
-    return;
-  }
-  const b=e.target.closest('.dedup-quick button');
-  if(!b)return;
-  e.stopPropagation();
-  fetch('/api/dedup-group-action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({group_id:Number(b.dataset.group),mode:b.dataset.dmode})})
-    .then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;})
-    .then(d=>{
-      (d.photos||[]).forEach(g=>{if(g&&g.group_id!=null)dedupLiveStore.set(String(g.group_id),g);});
-      if(d.changed_group&&d.changed_group.group_id!=null)dedupLiveStore.set(String(d.changed_group.group_id),d.changed_group);
-      renderDedupGroups(Array.from(dedupLiveStore.values()));
-    })
-    .catch(err=>toast('相似组选优失败：'+(err.message||'未知错误'),'bad'));
-});
+// The legacy group-complete and keeper-preset handlers are not used by the
+// two-state review interface. Review status follows explicit mark events.
 function selectDedupPhoto(groupId,path){
-  fetch('/api/dedup-select',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({group_id:Number(groupId),path})})
-    .then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;})
+  const group=(photos||[]).find(g=>String(g.group_id)===String(groupId));
+  const member=(group?.members||[]).find(p=>p.path===path);
+  if(!member)return;
+  const next=!Boolean(member.marked_delete);
+  fetch('/api/review-delete-mark',{
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({step:'dedup',path,marked:next})
+  }).then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;})
     .then(d=>{
-      (d.photos||[]).forEach(g=>{if(g&&g.group_id!=null)dedupLiveStore.set(String(g.group_id),g);});
-      if(d.changed_group&&d.changed_group.group_id!=null)dedupLiveStore.set(String(d.changed_group.group_id),d.changed_group);
-      renderDedupGroups(Array.from(dedupLiveStore.values()));
-      toast(d.selected?'已加入保留':'已取消保留','good');
-    })
-    .catch(err=>toast('切换失败：'+(err.message||'未知错误'),'bad'));
-}
-function applyDedupSelection(){
-  const btn=document.getElementById('dedupApplyBtn');
-  btn.disabled=true;btn.textContent='正在处理…';
-  fetch('/api/dedup-apply',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})
-    .then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;})
-    .then(d=>{
-      const first=(d.photos||[]);
-      dedupLiveStore.clear();first.forEach(g=>{if(g&&g.group_id!=null)dedupLiveStore.set(String(g.group_id),g);});
-      const remain=Number(d.result_total!=null?d.result_total:first.length);
-      renderDedupGroups(first);
-      if(d.truncated)loadRemainingDedup(remain,first.length);
-      if(remain===0){
-        btn.style.display='none';
-        document.getElementById('gallery').innerHTML='<div class="empty"><div class="icon">✓</div><div class="title">相似照片处理完成</div><p>未保留照片已按当前设置处理。</p></div>';
-        document.getElementById('resultTools').style.display='none';
-      }else{
-        btn.style.display='block';
+      member.marked_delete=Boolean(d.marked);
+      const choice=Array.from(document.querySelectorAll('#gallery .dedup-choice'))
+        .find(el=>el.dataset.path===path&&el.dataset.group===String(groupId));
+      if(choice){
+        choice.classList.toggle('review-marked',member.marked_delete);
+        const button=choice.querySelector('.dedup-recommend');
+        if(button){
+          button.textContent=member.marked_delete?'↶ 撤销待删除':'🗑 标记待删除';
+          button.title=member.marked_delete?'撤销待删除标记':'标记为待删除';
+          button.classList.toggle('state-trash',member.marked_delete);
+          button.classList.toggle('state-neutral',!member.marked_delete);
+        }
       }
-      const extra=(d.failed||0)?('，'+d.failed+' 张处理失败，可再次尝试'):'';
-      toast('已处理 '+(d.moved||0)+' 张相似照片'+extra,(d.failed||0)?'bad':'good');
-      document.getElementById('progressText').textContent=(remain===0?'处理完成':'部分处理完成')+' · 已移动 '+(d.moved||0)+' 张未保留照片'+extra;
+      const found=(d.groups||[]).find(g=>String(g.group_id)===String(groupId));
+      if(found){group.status=found.status;
+        const section=choice?.closest('.dedup-group');
+        const label=section?.querySelector('.group-status');
+        if(label){const [text,klass]=dedupGroupStatusLabel(group.status);
+          label.textContent=text;label.className='group-status '+klass;}
+      }
+      const counter=choice?.closest('.dedup-group')?.querySelector('.dedup-group-meta');
+      if(counter){
+        const current=group.members.filter(p=>visibleInReview(p));
+        counter.textContent='待删除 '+current.filter(p=>p.marked_delete).length+' · 共 '+current.length+' 张';
+      }
+      // Leave the card in place; other status partitions refresh on demand.
+      updateDedupApplyButton();
+      if(document.getElementById('lightbox').classList.contains('open')){
+        const lb=lbList[lbIndex];
+        if(lb&&lb.path===path)document.getElementById('lbDelete').textContent=member.marked_delete?'↶ 撤销待删除':'🗑 标记待删除';
+      }
+      lastDedupSig='';
+    }).catch(err=>toast('标记未保存：'+(err.message||'未知错误'),'bad'));
+}
+async function applyDedupSelection(){
+  const paths=[...new Set(Array.from(dedupLiveStore.values()).flatMap(
+    g=>(g.members||[]).filter(m=>m.marked_delete&&visibleInReview(m)).map(m=>m.path)
+  ))];
+  const count=paths.length;
+  if(!count){toast('请先标记需要删除的相似照片','info');return;}
+  const yes=await askBatchConfirm('确认处理待删除照片',
+    '已标记 '+count+' 张照片；确认后将提交到软件回收站。未标记照片不会被处理。',
+    '移入软件回收站');
+  if(!yes)return;
+  const btn=document.getElementById('dedupApplyBtn');
+  btn.disabled=true;btn.textContent='正在提交…';
+  fetch('/api/dedup-apply',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({paths})})
+    .then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;})
+    .then(d=>{
+      // /api/dedup-apply acknowledges queued jobs, not completed file moves.
+      // Preserve existing cards while background workers process the queue.
+      const queued=Math.max(0,Number(d.queued)||0);
+      if(queued){
+        toast('已提交 '+queued+' 张相似照片到后台回收站任务','info');
+        document.getElementById('progressText').textContent='已提交 '+queued+' 项后台文件任务 · 可继续筛选照片';
+        refreshTaskCenter();
+        // Refresh lifecycle badges without replacing user-loaded pagination.
+        const sourceAtRequest=folder,filterAtRequest=dedupStatusFilter;
+        fetch('/api/results/dedup?offset=0&limit=200&status='+encodeURIComponent(filterAtRequest))
+          .then(r=>{if(!r.ok)throw new Error('HTTP '+r.status);return r.json();})
+          .then(result=>{
+            if(currentStep!=='dedup'||folder!==sourceAtRequest||dedupStatusFilter!==filterAtRequest)return;
+            (result.photos||[]).forEach(g=>{
+              if(g&&g.group_id!=null)dedupLiveStore.set(String(g.group_id),g);
+            });
+            dedupVisibleTotal=Number(result.total||dedupVisibleTotal);
+            dedupStatusCounts=result.counts||dedupStatusCounts;
+            lastDedupSig='';
+            renderDedupGroups(Array.from(dedupLiveStore.values()));
+            updateDedupLoadMore();
+          }).catch(()=>{/* The task center remains the source of file-operation status. */});
+      }else{
+        toast('目前没有需要提交的相似照片','info');
+      }
     })
     .catch(err=>toast('处理失败：'+(err.message||'未知错误'),'bad'))
-    .finally(()=>{btn.disabled=false;btn.textContent='✓ 确认处理未保留照片';});
+    .finally(()=>{btn.disabled=false;btn.textContent='🗑 执行待删除照片';});
 }
 document.getElementById('dedupApplyBtn').onclick=applyDedupSelection;
 
@@ -6199,14 +6498,59 @@ function updatePager(){
   const pager=document.getElementById('pager');
   if(pager)pager.style.display='none';
 }
+
+function updateRankApplyButton(){
+  const btn=document.getElementById('rankApplyBtn');if(!btn)return;
+  const count=(photos||[]).filter(p=>p.marked_delete&&visibleInReview(p)).length;
+  btn.style.display=currentStep==='rank'?'inline-flex':'none';
+  btn.disabled=count===0;
+  btn.textContent=count?'🗑 执行 '+count+' 张待删除照片':'尚未标记待删除照片';
+}
+function toggleRankReviewMark(path){
+  const photo=(photos||[]).find(p=>p.path===path);if(!photo)return;
+  fetch('/api/review-delete-mark',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({step:'rank',path,marked:!photo.marked_delete})})
+   .then(async r=>{const d=await r.json();if(!r.ok)throw Error(d.error||'标记失败');return d;})
+   .then(d=>{
+      photo.marked_delete=!!d.marked;
+      const card=Array.from(document.querySelectorAll('#gallery .photo-card')).find(el=>el.dataset.path===path);
+      if(card){card.classList.toggle('review-marked',photo.marked_delete);
+        const btn=card.querySelector('.rank-review-mark');
+        if(btn)btn.textContent=photo.marked_delete?'↶ 撤销待删除':'🗑 标记待删除';
+      }
+      updateRankApplyButton();
+      if(document.getElementById('lightbox').classList.contains('open')){
+        const lb=lbList[lbIndex];
+        if(lb&&lb.path===path)document.getElementById('lbDelete').textContent=photo.marked_delete?'↶ 撤销待删除':'🗑 标记待删除';
+      }
+      lastRankSig='';
+   }).catch(err=>toast('标记未保存：'+(err.message||'未知错误'),'bad'));
+}
+async function applyRankReviewMarks(){
+  const paths=[...new Set((photos||[]).filter(p=>p.marked_delete&&visibleInReview(p)).map(p=>p.path))];
+  const count=paths.length;
+  if(!count)return;
+  const yes=await askBatchConfirm('确认处理待删除照片',
+    '将 '+count+' 张已明确标记的照片提交软件回收站；未标记的照片不会处理。','移入软件回收站');
+  if(!yes)return;
+  const btn=document.getElementById('rankApplyBtn');btn.disabled=true;
+  try{
+    const r=await fetch('/api/review-delete-apply',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({step:'rank',paths})});
+    const d=await r.json();if(!r.ok)throw Error(d.error||'提交失败');
+    toast('已提交 '+d.queued+' 项后台回收站任务','info');refreshTaskCenter();
+  }catch(err){toast('提交失败：'+(err.message||'未知错误'),'bad');}
+  finally{updateRankApplyButton();}
+}
+document.getElementById('rankApplyBtn').onclick=applyRankReviewMarks;
 function rankCard(p,idx){const path=escHtml(p.path);
   const on=p.phonebg?' on':'';
-  return `<div class="photo-card kept${p.phonebg?' pbg':''}" data-i="${idx}" data-path="${path}"><div class="rank-num">${p.rank!=null?p.rank:idx+1}</div>
+  return `<div class="photo-card kept${p.phonebg?' pbg':''}${p.marked_delete?' review-marked':''}" data-i="${idx}" data-path="${path}"><div class="rank-num">${p.rank!=null?p.rank:idx+1}</div>
     <button class="pbg-toggle${on}" data-path="${path}" title="${p.phonebg?'已设为手机壁纸，点击取消':'设为手机壁纸'}">📱</button>
     <img class="photo-img" src="${p.thumb}" loading="lazy" decoding="async">
     <div class="photo-info"><div class="pi-row"><span class="photo-name">${escHtml(p.name)}</span>
       <button class="remove-btn" data-path="${path}" title="从优选结果中移除（不会删除原文件）">✕ 移除</button>
-      <button class="delete-btn" data-step="rank" data-path="${path}" title="移入软件回收站">🗑 删除</button></div>
+      <button class="rank-review-mark" data-path="${path}" title="${p.marked_delete?'撤销待删除标记':'标记为待删除'}">${p.marked_delete?'↶ 撤销待删除':'🗑 标记待删除'}</button></div>
       <div class="source-path">${escHtml(p.rel_dir||'当前文件夹')}</div></div></div>`;}
 function renderRank(items){
   showPhotoView();
@@ -6219,6 +6563,7 @@ function renderRank(items){
   const activeRankItems=items.filter(visibleInReview);
   rankView=(rankFilter==='pbg')?activeRankItems.filter(p=>p.phonebg):activeRankItems;
   gItems=rankView;
+  updateRankApplyButton();
   const pbgN=activeRankItems.filter(p=>p.phonebg).length;
   const pbgChip=document.getElementById('pbgChipCount');if(pbgChip)pbgChip.textContent=pbgN;
   document.getElementById('exportPbgBtn').style.display=(currentStep==='rank'&&pbgN>0)?'block':'none';
@@ -6234,7 +6579,7 @@ function renderRank(items){
   gPage=0;
   const start=0,end=rankView.length;
   const slice=rankView;
-  const sig=rankFilter+'#'+slice.map(p=>p.rank+':'+p.path+':'+(p.phonebg?1:0)).join('|');
+  const sig=rankFilter+'#'+slice.map(p=>p.rank+':'+p.path+':'+(p.phonebg?1:0)+':'+(p.marked_delete?1:0)).join('|');
   if(sig===lastRankSig){updatePager();return;}
   lastRankSig=sig;
 
@@ -6426,10 +6771,10 @@ function cullLifecycleInfo(p){
 }
 function cullCardHtml(p,idx){const path=escHtml(p.path);
   const life=cullLifecycleInfo(p),deleted=!!life;
-  const cls=(p.tier==='sharp'?'kept':p.tier==='soft'?'soft':'rejected')+(life?' '+life[1]:'');
-  const moveOn=p.move_selected!==false;
-  const moveSel=!deleted&&p.tier==='blurry'
-    ?`<button class="move-select${moveOn?'':' off'}" data-path="${path}" data-selected="${moveOn?'1':'0'}" title="${moveOn?'已加入本次删除，点击保留在原位置':'保留在原位置，点击重新加入本次删除'}">${moveOn?'✓':'□'}</button>`
+  const moveOn=!!p.move_selected;
+  const cls=(p.tier==='sharp'?'kept':p.tier==='soft'?'soft':'rejected')+(life?' '+life[1]:'')+(moveOn&&!deleted?' review-marked':'');
+  const moveSel=!deleted
+    ?`<button class="move-select${moveOn?'':' off'}" data-path="${path}" data-selected="${moveOn?'1':'0'}" title="${moveOn?'撤销待删除标记':'标记为待删除'}">${moveOn?'↶ 撤销待删除':'🗑 标记待删除'}</button>`
     :'';
   const stateBadge=life
     ?((p.lifecycle==='trashed'&&p.trash_id)
@@ -6442,9 +6787,10 @@ function cullCardHtml(p,idx){const path=escHtml(p.path);
   return `<div class="photo-card ${cls}" data-i="${idx}" data-path="${path}" data-tier="${p.tier}" data-life="${p.lifecycle||'normal'}" data-move-selected="${moveOn?'1':'0'}">
     ${moveSel}${tierBadge}${stateBadge}
     ${p.thumb?`<img class="photo-img" src="${p.thumb}" loading="lazy" decoding="async">`:'<div class="photo-img" style="display:grid;place-items:center;background:var(--panel2)">文件已删除</div>'}
-    <div class="photo-info"><div class="pi-row"><span class="photo-name">${escHtml(p.name)}</span><span class="ftype${p.raw?'':(p.heic?' heic':' jpg')}">${p.fmt||(p.raw?'RAW':p.heic?'HEIC':'JPG')}</span>${deleted?'':`<button class="delete-btn" data-step="cull" data-path="${path}" title="删除">🗑 删除</button>`}</div><div class="source-path">${escHtml(p.rel_dir||'当前文件夹')}</div></div></div>`;}
+    <div class="photo-info"><div class="pi-row"><span class="photo-name">${escHtml(p.name)}</span><span class="ftype${p.raw?'':(p.heic?' heic':' jpg')}">${p.fmt||(p.raw?'RAW':p.heic?'HEIC':'JPG')}</span></div><div class="source-path">${escHtml(p.rel_dir||'当前文件夹')}</div></div></div>`;}
 function syncCullCardNode(node,p,idx){
-  const moveOn=p.move_selected!==false,life=cullLifecycleInfo(p),deleted=!!life;
+  const moveOn=!!p.move_selected,life=cullLifecycleInfo(p),deleted=!!life;
+  node.classList.toggle('review-marked',moveOn&&!deleted);
   node.dataset.i=idx;node.dataset.tier=p.tier;node.dataset.life=p.lifecycle||'normal';
   node.dataset.moveSelected=moveOn?'1':'0';
   node.classList.toggle('kept',p.tier==='sharp');
@@ -6462,9 +6808,10 @@ function syncCullCardNode(node,p,idx){
     badge.textContent='⇄ '+p.badge;
   }
   const ms=node.querySelector('.move-select');
-  if(p.tier==='blurry'&&ms&&!deleted){
+  if(ms&&!deleted){
     ms.dataset.selected=moveOn?'1':'0';ms.classList.toggle('off',!moveOn);
-    ms.textContent=moveOn?'✓':'□';
+    ms.textContent=moveOn?'↶ 撤销待删除':'🗑 标记待删除';
+    ms.title=moveOn?'撤销待删除标记':'标记为待删除';
   }
 }
 
@@ -6482,7 +6829,7 @@ function renderCullStep(items){
       :('ext:'+String(p.fmt||'').toLowerCase())===cullType)));
 
   gItems=filtered;
-  gPage=0;
+  // Preserve browsing position when live analysis delivers new results.
   cullView=filtered;
 
   const g=document.getElementById('gallery');
@@ -6494,10 +6841,10 @@ function renderCullStep(items){
     return;
   }
 
-  const moveSig=items.filter(p=>p.tier==='blurry')
-    .map(p=>p.path+':'+(p.move_selected===false?'0':'1')).join('|');
+  const moveSig=items.filter(p=>visibleInReview(p))
+    .map(p=>p.path+':'+(p.move_selected?'1':'0')).join('|');
   if(moveSig!==lastCullMoveSig){lastCullMoveSig=moveSig;setupFilterBar();}
-  const sig=gPage+'#'+cullView.map(p=>p.path+':'+p.tier+':'+(p.lifecycle||'normal')+':'+(p.move_selected===false?'0':'1')).join('|');
+  const sig=gPage+'#'+cullView.map(p=>p.path+':'+p.tier+':'+(p.lifecycle||'normal')+':'+(p.move_selected?'1':'0')).join('|');
   if(recursiveScan){
     if(sig===lastCullSig&&lastStep===currentStep){
       document.getElementById('sShowing').textContent=filtered.length;
@@ -6538,34 +6885,38 @@ function renderCullStep(items){
   updatePager();
 }
 function cullMoveCounts(){
-  const blurry=photos.filter(p=>p.tier==='blurry'&&!['pending_trash','pending_permanent_delete','trashed','permanently_deleted'].includes(p.lifecycle));
-  return {total:blurry.length,selected:blurry.filter(p=>p.move_selected!==false).length};
+  const available=photos.filter(p=>!['pending_trash','pending_permanent_delete','trashed','permanently_deleted'].includes(p.lifecycle));
+  return {total:available.length,selected:available.filter(p=>!!p.move_selected).length};
 }
 function updateCullMoveButton(){
   const mb=document.getElementById('moveBlurryBtn');if(!mb)return;
   const n=cullMoveCounts();
   const count=document.getElementById('cullMoveCount');if(count)count.textContent=n.selected+'/'+n.total;
-  if(currentStep!=='cull'||!cullReady||!n.total){
+  if(currentStep!=='cull'||!n.total){
     mb.style.display='none';mb.disabled=false;mb.classList.remove('cta');return;
   }
   mb.style.display='inline-flex';
   if(n.selected>0){
     mb.disabled=false;
-    mb.textContent='🗑 '+n.selected+' 张移入回收站';
+    mb.textContent='🗑 执行 '+n.selected+' 张待删除照片';
     mb.classList.add('cta');
   }else{
     mb.disabled=true;
-    mb.textContent='未选择模糊照片';
+    mb.textContent='尚未标记待删除照片';
     mb.classList.remove('cta');
   }
 }
 function applyMoveSelectionResponse(path,d){
-  if(path){
-    const pp=photos.find(x=>x.path===path);
-    if(pp)pp.move_selected=!!d.move_selected;
-  }
+  const pp=path?(photos||[]).find(x=>x.path===path):null;
+  if(pp)pp.move_selected=!!d.move_selected;
+  // Update the existing card in place; replacing the gallery on each click
+  // moved controls beneath the pointer and caused accidental repeat actions.
+  const node=path?Array.from(document.querySelectorAll('#gallery .photo-card'))
+    .find(x=>x.dataset.path===path):null;
+  if(node&&pp)syncCullCardNode(node,pp,Number(node.dataset.i)||0);
+  else if(currentStep==='cull')renderCullStep(photos);
   lastCullSig='';lastCullMoveSig='';
-  renderCullStep(photos);
+  setupFilterBar();
   updateCullMoveButton();
   if(document.getElementById('lightbox').classList.contains('open')&&currentStep==='cull')showLb();
 }
@@ -6658,7 +7009,14 @@ async function deletePhoto(step,path,fromLightbox=false){
   }
 }
 function lbDeleteCurrent(){
-  const p=lbList[lbIndex];if(p)deletePhoto(currentStep,p.path,true);
+  const p=lbList[lbIndex];if(!p)return;
+  if(currentStep==='cull'){setBlurryMoveSelection(p.path,!p.move_selected);return;}
+  if(currentStep==='dedup'){
+    const group=(photos||[]).find(g=>(g.members||[]).some(m=>m.path===p.path));
+    if(group)selectDedupPhoto(group.group_id,p.path);
+    return;
+  }
+  if(currentStep==='rank'){toggleRankReviewMark(p.path);return;}
 }
 
 /* ---- remove / restore (rank) ---- */
@@ -6683,7 +7041,17 @@ document.getElementById('gallery').addEventListener('click',e=>{
   const tr=e.target.closest('.trash-restore-btn');if(tr){e.stopPropagation();trashRestoreOne(Number(tr.dataset.id));return;}
   const tp=e.target.closest('.trash-purge-btn');if(tp){e.stopPropagation();trashPurgeOne(Number(tp.dataset.id));return;}
   const ri=e.target.closest('.restore-inline');if(ri){e.stopPropagation();restoreFromReviewCard(Number(ri.dataset.trashId));return;}
-  const db=e.target.closest('.delete-btn');if(db){e.stopPropagation();deletePhoto(db.dataset.step||currentStep,db.dataset.path);return;}
+  const rankMark=e.target.closest('.rank-review-mark');
+  if(rankMark&&currentStep==='rank'){e.stopPropagation();toggleRankReviewMark(rankMark.dataset.path);return;}
+  const db=e.target.closest('.delete-btn');if(db){
+    e.stopPropagation();
+    const step=db.dataset.step||currentStep,path=db.dataset.path;
+    if(step==='rank'){toggleRankReviewMark(path);return;}
+    if(step==='cull'){const row=(photos||[]).find(p=>p.path===path);if(row)setBlurryMoveSelection(path,!row.move_selected);return;}
+    if(step==='dedup'){const group=(photos||[]).find(g=>(g.members||[]).some(m=>m.path===path));
+      if(group)selectDedupPhoto(group.group_id,path);return;}
+    return;
+  }
   const keep=e.target.closest('.dedup-recommend');
   if(keep&&currentStep==='dedup'){
     e.stopPropagation();
@@ -6769,16 +7137,21 @@ function showLb(){
   rm.style.display=currentStep==='rank'?'inline-block':'none';
   const life=p.lifecycle||'normal';
   const inReview=['cull','dedup','rank'].includes(currentStep);
-  del.style.display=(inReview&&!['pending_trash','pending_permanent_delete','trashed','permanently_deleted','pending_restore'].includes(life))?'inline-block':'none';
+  del.style.display=(['dedup','rank'].includes(currentStep)&&!['pending_trash','pending_permanent_delete','trashed','permanently_deleted','pending_restore'].includes(life))?'inline-block':'none';
+  if(del.style.display!=='none'){
+    const marked=!!p.marked_delete;
+    del.textContent=marked?'↶ 撤销待删除':'🗑 标记待删除';
+    del.title=marked?'撤销待删除标记':'标记为待删除';
+  }
   tr.style.display=(currentStep==='trash'||(inReview&&life==='trashed'&&p.trash_id))?'inline-block':'none';
   tp.style.display=currentStep==='trash'?'inline-block':'none';
   rs.style.display=(currentStep==='rank'&&removedCount>0)?'inline-block':'none';
   tg.style.display=currentStep==='cull'?'inline-block':'none';
-  ms.style.display=(currentStep==='cull'&&p.tier==='blurry')?'inline-block':'none';
+  ms.style.display=currentStep==='cull'?'inline-block':'none';
   if(currentStep==='cull')tg.textContent='⇄ '+(TIER_NAME[p.tier]||'清晰')+' → '+(TIER_NAME[NEXT_TIER[p.tier||'sharp']]);
-  if(currentStep==='cull'&&p.tier==='blurry'){
-    const on=p.move_selected!==false;
-    ms.textContent=on?'☑ 本次移动':'☐ 保留原位';
+  if(currentStep==='cull'){
+    const on=!!p.move_selected;
+    ms.textContent=on?'↶ 撤销待删除':'🗑 标记待删除';
     ms.classList.toggle('toggle',on);ms.classList.toggle('restore',!on);
   }
   const pbg=document.getElementById('lbPhoneBg');
@@ -6910,7 +7283,7 @@ document.getElementById('lbToggle').onclick=()=>{const p=lbList[lbIndex];if(!p)r
     p.tier=d.tier;p.move_selected=!!d.move_selected;if(d.path)p.path=d.path;
     lastCullSig='';lastCullMoveSig='';renderCullStep(photos);updateCullMoveButton();showLb();});};
 document.getElementById('lbPhoneBg').onclick=()=>{const p=lbList[lbIndex];if(p)togglePhoneBg(p.path);};
-document.getElementById('lbMoveSelect').onclick=()=>{const p=lbList[lbIndex];if(p&&p.tier==='blurry')setBlurryMoveSelection(p.path,p.move_selected===false);};
+document.getElementById('lbMoveSelect').onclick=()=>{const p=lbList[lbIndex];if(p)setBlurryMoveSelection(p.path,!p.move_selected);};
 document.addEventListener('keydown',e=>{
   if(!document.getElementById('lightbox').classList.contains('open'))return;
   if(e.key==='Escape')closeLb();
@@ -6976,7 +7349,7 @@ document.getElementById('moveBlurryBtn').onclick=async function(){
     const d=await r.json();
     if(!r.ok||d.error)throw new Error(d.error||('HTTP '+r.status));
     (photos||[]).forEach(p=>{
-      if(p&&p.tier==='blurry'&&p.move_selected!==false&&visibleInReview(p)){
+      if(p&&p.tier==='blurry'&&!!p.move_selected&&visibleInReview(p)){
         p.lifecycle='pending_trash';
         p.move_selected=false;
       }
@@ -7635,7 +8008,9 @@ def api_progress(step):
                                   'soft': s['soft'], 'blurry': s['blurry'],
                                   'move_selected': sum(
                                       1 for p in all_photos
-                                      if p.get('tier') == 'blurry' and p.get('move_selected', True)
+                                      if p.get('move_selected', False)
+                                      and p.get('lifecycle') not in
+                                      ('pending_trash','pending_permanent_delete','trashed','permanently_deleted')
                                   ),
                                   'cache_hits': s.get('cache_hits',0),
                                   'folder_status': s.get('folder_status',{})}})
@@ -7666,9 +8041,13 @@ def api_progress(step):
             s['preview'] = build_topn()
             s['preview_at'] = now
             s['preview_score_count'] = score_count
+        ranked=s.get('preview', [])
+        marks=_review_delete_marks(p.get('path') for p in ranked if p.get('path'))
+        for photo in ranked:
+            photo['marked_delete'] = photo.get('path') in marks
         return jsonify({'running': s['running'], 'complete': bool(s.get('complete')),
                         'progress': s['progress'], 'status': s['status'],
-                        'src_folder': s.get('src_folder'), 'photos': s.get('preview', []),
+                        'src_folder': s.get('src_folder'), 'photos': ranked,
                         'stats': {'images': s['total'], 'cache_hits': s.get('cache_hits',0)}})
     abort(404)
 
@@ -7699,12 +8078,23 @@ def api_dedup_results_chunk():
         return jsonify({'error': '结果范围无效'}), 400
     status_filter = str(request.args.get('status') or 'all')
     all_groups = s.get('photos', [])
-    if status_filter in ('pending','reviewed','updated'):
-        all_groups = [g for g in all_groups if str(g.get('status') or 'pending') == status_filter]
+    if status_filter == 'pending':
+        all_groups = [g for g in all_groups if str(g.get('status') or 'pending') != 'reviewed']
+    elif status_filter == 'reviewed':
+        all_groups = [g for g in all_groups if str(g.get('status') or 'pending') == 'reviewed']
     rows = all_groups[offset:offset + limit]
+    members = [m for g in rows for m in g.get('members', []) if m.get('path')]
+    manual_marks = _review_delete_marks(m.get('path') for m in members)
+    for member in members:
+        member['marked_delete'] = member['path'] in manual_marks
     counts = {
-        key: sum(1 for g in s.get('photos', []) if str(g.get('status') or 'pending') == key)
-        for key in ('pending','reviewed','updated')
+        'all': len(s.get('photos', [])),
+        'reviewed': sum(1 for g in s.get('photos', [])
+                        if g.get('status') == 'reviewed'),
+        'pending': sum(1 for g in s.get('photos', [])
+                       if g.get('status') != 'reviewed'),
+        'updated': sum(1 for g in s.get('photos', [])
+                       if g.get('status') == 'updated'),
     }
     return jsonify({'photos': rows, 'offset': offset, 'next_offset': offset + len(rows),
                     'total': len(all_groups), 'done': offset + len(rows) >= len(all_groups),
@@ -7851,27 +8241,125 @@ def api_dedup_group_action():
                     'kept': len(s['kept_paths'])})
 
 
+
+@app.route('/api/review-delete-mark', methods=['POST'])
+def api_review_delete_mark():
+    """Toggle explicit deletion intent only, leaving file and layout untouched."""
+    data = request.get_json(silent=True) or {}
+    step = str(data.get('step') or '')
+    path = str(data.get('path') or '')
+    if step not in ('dedup', 'rank') or not path:
+        return jsonify({'error': '无效的人工筛选标记'}), 400
+    if path not in _known_step_paths(step):
+        return jsonify({'error': '当前工作区没有这张照片'}), 404
+    marked = bool(data.get('marked', False))
+    try:
+        _set_review_delete_mark(path, marked)
+    except OSError as exc:
+        return jsonify({'error': '照片暂时无法访问：' + str(exc)}), 409
+    except sqlite3.DatabaseError:
+        logger.exception('review delete intent database error')
+        return jsonify({'error': '数据库未能保存标记，请稍后重试'}), 503
+    changed = []
+    if step == 'dedup':
+        for group in state['dedup'].get('groups_data', []):
+            for member in group.get('members', []):
+                if member.get('path') == path:
+                    member['marked_delete'] = marked
+                    changed.append(group)
+                    # Every explicit mark is a review event. A group with no
+                    # marks may remain pending; newly discovered items need review.
+                    current = group.get('status') or 'pending'
+                    if current != 'updated':
+                        group['status'] = 'reviewed' if any(
+                            m.get('marked_delete') for m in group.get('members', [])
+                        ) else 'pending'
+                    if group.get('group_key'):
+                        _set_similarity_group_status(group['group_key'], group['status'])
+    _activity('待删除标记' if marked else '撤销待删除', path, step)
+    return jsonify({'ok': True, 'path': path, 'marked': marked,
+                    'groups': [{'group_id': g.get('group_id'), 'status': g.get('status')}
+                               for g in changed]})
+
+
+
+@app.route('/api/review-delete-apply', methods=['POST'])
+def api_review_delete_apply():
+    """Submit explicit user marks from the Rank toolbox; never auto-select."""
+    data=request.get_json(silent=True) or {}
+    step=str(data.get('step') or '')
+    if step != 'rank':
+        return jsonify({'error': '无效的照片工作区'}), 400
+    folder=state.get('folder')
+    origin=state['rank'].get('src_folder')
+    if not folder or not Path(folder).is_dir() or (
+        origin and os.path.normcase(os.path.realpath(str(origin))) !=
+        os.path.normcase(os.path.realpath(str(folder)))
+    ):
+        return jsonify({'error': '照片来源已切换，请重新查看当前图库'}), 409
+    try:
+        requested=_requested_review_paths(data)
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+    available=_known_step_paths(step)
+    marks=_review_delete_marks(requested)
+    if any(p not in available or p not in marks or _safe_image_path(p) is None
+           for p in requested):
+        return jsonify({'error': '待删除清单已经变化，请刷新后重新确认'}), 409
+    task_ids=[]
+    for path in requested:
+        if not Path(path).is_file() or _safe_image_path(path) is None:
+            continue
+        original=_find_original_for_path(path)
+        planned=str(_trash_destination(Path(path), folder).resolve())
+        with _FILE_PLAN_LOCK:
+            _apply_media_lifecycle(original,path,'pending_trash',step)
+            try:
+                task_id,created=TASK_MANAGER.enqueue(
+                    'move_to_trash',
+                    {'path':path,'folder':str(folder),'step':step,'trash_path':planned},
+                    priority=12,idempotency_key=f"move_to_trash:{original}"
+                )
+            except Exception:
+                # No persisted worker accepted this request. Undo the pending
+                # lifecycle rather than leaving a phantom processing state.
+                _apply_media_lifecycle(original,path,'normal',step)
+                raise
+        task_ids.append(task_id)
+    return jsonify({'ok':True,'queued':len(task_ids),'task_ids':task_ids}),202
+
+
 @app.route('/api/dedup-apply', methods=['POST'])
 def api_dedup_apply():
-    """Compatibility batch action: queue non-kept duplicates into software trash."""
+    """Queue only photos that a human explicitly marked, never algorithm non-keepers."""
     folder = state.get('folder')
     s = state['dedup']
     if not folder or not Path(folder).is_dir():
         return jsonify({'error': '未选择有效的照片文件夹'}), 400
+    origin=s.get('src_folder')
+    if origin and os.path.normcase(os.path.realpath(str(origin))) != os.path.normcase(os.path.realpath(str(folder))):
+        return jsonify({'error': '照片来源已切换，请重新查看当前图库'}), 409
+    try:
+        requested = _requested_review_paths(request.get_json(silent=True) or {})
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
     _sync_dedup_with_cull()
-    allowed = _cull_allowed_for_dedup()
+    all_paths = {str(m.get('path')) for g in s.get('groups_data', [])
+                 for m in g.get('members', []) if m.get('path')}
+    marks = _review_delete_marks(requested)
+    if any(p not in all_paths or p not in marks or _safe_image_path(p) is None
+           for p in requested):
+        return jsonify({'error': '待删除清单已经变化，请刷新后重新确认'}), 409
     queued = []
+    seen = set()
+    requested_set = set(requested)
     for group in s.get('groups_data', []):
-        if group.get('status') not in ('reviewed',):
-            continue
-        selected = set(group.get('selected_paths') or [])
         for m in group.get('members', []):
-            p = m.get('path')
-            if not p or p in selected:
+            p = str(m.get('path') or '')
+            if not p or p not in requested_set or p in seen:
                 continue
+            seen.add(p)
             if m.get('lifecycle') in ('pending_trash','pending_permanent_delete','trashed','permanently_deleted'):
-                continue
-            if allowed is not None and p not in allowed:
                 continue
             original = _find_original_for_path(p)
             planned_trash = str(_trash_destination(Path(p), folder).resolve())
@@ -7884,6 +8372,69 @@ def api_dedup_apply():
             )
             queued.append(task_id)
     return jsonify({'ok': True, 'queued': len(queued), 'task_ids': queued}), 202
+
+
+
+def _clear_review_delete_mark(path):
+    """Remove obsolete deletion intent after a verified destructive operation."""
+    try:
+        with _DB_LOCK, connect_db(INDEX_DB, timeout=15) as db:
+            db.execute("DELETE FROM review_delete_intent WHERE path=?", (str(path),))
+            db.commit()
+    except Exception:
+        logger.warning("unable to clear consumed photo deletion intent", exc_info=True)
+
+
+def _requested_review_paths(data):
+    """Bind a confirmed batch to its exact visible items; never infer hidden marks."""
+    raw = data.get('paths', [])
+    if not isinstance(raw, list) or len(raw) > 5000 or any(
+        not isinstance(p, str) or not p or len(p) > 4096 for p in raw
+    ):
+        raise ValueError('待删除清单无效或过大，请分批处理')
+    return list(dict.fromkeys(raw))
+
+
+def _review_delete_marks(paths):
+    """Return only explicit and still-valid human deletion marks."""
+    keys = [str(p) for p in dict.fromkeys(paths) if p]
+    if not keys:
+        return set()
+    try:
+        rows = _query_cache_rows(
+            'review_delete_intent', 'path,size,mtime_ns', keys
+        )
+        marked = set()
+        for path, size, mtime_ns in rows:
+            try:
+                st = Path(path).stat()
+                if int(st.st_size) == int(size) and int(st.st_mtime_ns) == int(mtime_ns):
+                    marked.add(str(path))
+            except OSError:
+                pass
+        return marked
+    except Exception:
+        logger.warning("unable to load explicit deletion marks", exc_info=True)
+        return set()
+
+
+def _set_review_delete_mark(path, marked):
+    """Commit one reversible mark; the operation never modifies photo bytes."""
+    target = Path(path)
+    if marked:
+        st = target.stat()
+        with _DB_LOCK, connect_db(INDEX_DB, timeout=15) as db:
+            db.execute("""INSERT INTO review_delete_intent(path,size,mtime_ns,marked_at)
+                          VALUES(?,?,?,?)
+                          ON CONFLICT(path) DO UPDATE SET
+                            size=excluded.size,mtime_ns=excluded.mtime_ns,
+                            marked_at=excluded.marked_at""",
+                       (str(target), int(st.st_size), int(st.st_mtime_ns), time.time()))
+            db.commit()
+    else:
+        with _DB_LOCK, connect_db(INDEX_DB, timeout=15) as db:
+            db.execute("DELETE FROM review_delete_intent WHERE path=?", (str(target),))
+            db.commit()
 
 
 def _known_step_paths(step):
@@ -8105,6 +8656,8 @@ def api_task_center():
             'running': bool(step.get('running')),
             'complete': bool(step.get('complete')),
             'progress': int(step.get('progress') or 0),
+            'processed': int(step.get('processed') or 0),
+            'total': int(step.get('total') or 0),
             'status': str(step.get('status') or ''),
             'src_folder': step.get('src_folder'),
         }
@@ -8203,8 +8756,9 @@ def api_toggle_status():
         return jsonify({'error': '未找到照片'}), 404
     now_kept = tier != 'blurry'
     s.setdefault('overrides', {}).setdefault(path, {})['tier'] = tier
-    s['overrides'][path]['move_selected'] = (tier == 'blurry')
-    _save_review_overrides([(path, tier, tier == 'blurry')])
+    current_mark=bool(photo.get('move_selected', False))
+    s['overrides'][path]['move_selected'] = current_mark
+    _save_review_overrides([(path, tier, current_mark)])
     _activity('人工分类', path, tier)
     # Manual review is classification-only. Never move a file merely because
     # its badge was changed; disk changes happen only via an explicit Move action.
@@ -8213,10 +8767,8 @@ def api_toggle_status():
     photo.update({'path': new_path, 'thumb': thumb_url(new_path), 'tier': tier,
                   'kept': now_kept, 'rejected': not now_kept,
                   'badge': badge, 'badgeType': bt,
-                  # Moving is a separate user choice. Entering Blurry selects
-                  # the photo by default; leaving Blurry removes it from the
-                  # pending-move set.
-                  'move_selected': tier == 'blurry'})
+                  # Classification never silently changes a deletion decision.
+                  'move_selected': current_mark})
     sp = s['sharp_paths']
     for old in (path, new_path):
         if old in sp:
@@ -8230,11 +8782,7 @@ def api_toggle_status():
     s['soft'] = sum(1 for p in s['photos'] if p['tier'] == 'soft')
     s['blurry'] = sum(1 for p in s['photos'] if p['tier'] == 'blurry')
     _sync_dedup_with_cull()
-    move_total = sum(1 for p in s['photos'] if p.get('tier') == 'blurry')
-    move_selected = sum(
-        1 for p in s['photos']
-        if p.get('tier') == 'blurry' and p.get('move_selected', True)
-    )
+    move_selected, move_total = _blurry_move_counts()
     return jsonify({'ok': True, 'tier': tier, 'kept': now_kept, 'badge': badge,
                     'badgeType': bt, 'path': new_path, 'thumb': photo['thumb'],
                     'move_selected': photo.get('move_selected', False),
@@ -8243,10 +8791,11 @@ def api_toggle_status():
 
 
 def _blurry_move_counts():
-    photos = state['cull'].get('photos', [])
-    blurry = [p for p in photos if p.get('tier') == 'blurry']
-    selected = [p for p in blurry if p.get('move_selected', True)]
-    return len(selected), len(blurry)
+    # Compatibility helper name; count explicitly marked photos of every tier.
+    photos = [p for p in state['cull'].get('photos', [])
+              if p.get('lifecycle') not in ('pending_trash','pending_permanent_delete','trashed','permanently_deleted')]
+    selected = [p for p in photos if p.get('move_selected', False)]
+    return len(selected), len(photos)
 
 
 @app.route('/api/select-blurry', methods=['POST'])
@@ -8267,7 +8816,7 @@ def api_select_blurry():
                 photo['move_selected'] = selected
                 state['cull'].setdefault('overrides', {}).setdefault(photo.get('path'), {})['move_selected'] = selected
         _save_review_overrides([
-            (p.get('path'), p.get('tier'), p.get('move_selected', True))
+            (p.get('path'), p.get('tier'), p.get('move_selected', False))
             for p in photos if p.get('tier') == 'blurry' and p.get('path')
         ])
         count, total = _blurry_move_counts()
@@ -8277,10 +8826,8 @@ def api_select_blurry():
     photo = next((p for p in photos if p.get('path') == path), None)
     if not photo:
         return jsonify({'error': '未找到照片'}), 404
-    if photo.get('tier') != 'blurry':
-        return jsonify({'error': '只有“模糊”照片可以加入移动列表'}), 400
-
-    photo['move_selected'] = bool(data.get('selected', True))
+    # Manual deletion decisions are independent from classification.
+    photo['move_selected'] = bool(data.get('selected', False))
     state['cull'].setdefault('overrides', {}).setdefault(path, {})['move_selected'] = photo['move_selected']
     _save_review_overrides([(path, photo.get('tier'), photo['move_selected'])])
     _activity('移动选择', path, '选中' if photo['move_selected'] else '取消')
@@ -8302,8 +8849,7 @@ def api_move_blurry():
         return jsonify({'error': '未选择有效的照片文件夹'}), 400
     rows = [
         pp for pp in state['cull'].get('photos', [])
-        if pp.get('tier') == 'blurry'
-        and pp.get('move_selected', True)
+        if pp.get('move_selected', False)
         and pp.get('lifecycle') not in
         ('pending_trash','pending_permanent_delete','trashed','permanently_deleted')
         and pp.get('path')
@@ -8482,6 +9028,10 @@ def api_export_phonebg():
     return jsonify({'ok': failed == 0, 'copied': copied, 'cropped': cropped,
                     'failed': failed, 'dest': str(dest)})
 
+
+# Delay recovered background tasks until every API, cache and lifecycle helper
+# has been defined. Previously a queued move could race late helper definitions.
+TASK_MANAGER.start()
 
 if __name__ == '__main__':
     # Browser compatibility mode opens only after the server has had time to

@@ -297,7 +297,7 @@ def main():
         )
         assert_true(sel.status_code == 200, f"模糊照片取消移动失败：HTTP {sel.status_code}")
         payload = sel.get_json()
-        assert_true(payload["selected"] == 1 and payload["total"] == 2,
+        assert_true(payload["selected"] == 1 and payload["total"] == 3,
                     f"移动选择计数错误：{payload}")
         assert_true(photo_curator.state["cull"]["photos"][0]["tier"] == "blurry",
                     "取消移动不应改变模糊分类")
@@ -309,7 +309,7 @@ def main():
         )
         assert_true(bulk.status_code == 200, f"模糊照片全不选失败：HTTP {bulk.status_code}")
         payload = bulk.get_json()
-        assert_true(payload["selected"] == 0 and payload["total"] == 2,
+        assert_true(payload["selected"] == 0 and payload["total"] == 3,
                     f"全不选计数错误：{payload}")
 
         # Similarity groups now allow multiple kept photos, but never zero.
@@ -360,9 +360,9 @@ def main():
         assert_true(refuse_zero.status_code == 409,
                     "相似组不应允许取消最后一张保留照片")
 
-        # A reviewed dedup group now queues only non-kept members into the
-        # PhotoCurator software recycle bin; the HTTP response is intentionally
-        # immediate so the foreground can continue reviewing.
+        # A reviewed duplicate group must NEVER queue algorithm non-keepers.
+        # Only an explicit, persisted human deletion mark authorizes processing.
+        # The HTTP response remains immediate while workers run in background.
         apply_dir = root / "去重处理测试"
         apply_dir.mkdir(parents=True, exist_ok=True)
         keep_a = apply_dir / "保留A.jpg"
@@ -390,19 +390,65 @@ def main():
             }],
         })
         photo_curator.state["dedup"]["photos"] = photo_curator.state["dedup"]["groups_data"]
-        applied = client.post(
+        # No explicit mark: non-keepers remain physically untouched.
+        unmarked = client.post(
             "/api/dedup-apply", json={},
+            headers={"Host": f"127.0.0.1:{photo_curator.PORT}"},
+        )
+        assert_true(unmarked.status_code == 202
+                    and unmarked.get_json().get("queued") == 0,
+                    "algorithm recommendations must not enqueue a deletion")
+        assert_true(keep_a.exists() and keep_b.exists() and drop_c.exists(),
+                    "unmarked duplicate photos must remain untouched")
+
+        mark = client.post(
+            "/api/review-delete-mark",
+            json={"step": "dedup", "path": str(drop_c), "marked": True},
+            headers={"Host": f"127.0.0.1:{photo_curator.PORT}"},
+        )
+        assert_true(mark.status_code == 200 and mark.get_json()["marked"],
+                    f"待删除标记未保存：{mark.get_json()}")
+        require_marks = photo_curator._review_delete_marks([str(drop_c)])
+        assert_true(str(drop_c) in require_marks, "明确删除意图未持久化")
+
+        # An explicit path is insufficient if the saved mark has changed.
+        stale = client.post(
+            "/api/dedup-apply", json={"paths": [str(keep_b)]},
+            headers={"Host": f"127.0.0.1:{photo_curator.PORT}"},
+        )
+        assert_true(stale.status_code == 409,
+                    "不得处理任何未被用户显式标记的成员")
+
+        cancel_mark = client.post(
+            "/api/review-delete-mark",
+            json={"step": "dedup", "path": str(drop_c), "marked": False},
+            headers={"Host": f"127.0.0.1:{photo_curator.PORT}"},
+        )
+        assert_true(cancel_mark.status_code == 200
+                    and str(drop_c) not in photo_curator._review_delete_marks([str(drop_c)]),
+                    "撤销待删除标记未生效")
+        client.post("/api/review-delete-mark",
+                    json={"step": "dedup", "path": str(drop_c), "marked": True},
+                    headers={"Host": f"127.0.0.1:{photo_curator.PORT}"})
+        applied = client.post(
+            "/api/dedup-apply", json={"paths":[str(drop_c)]},
             headers={"Host": f"127.0.0.1:{photo_curator.PORT}"},
         )
         assert_true(applied.status_code == 202,
                     f"相似照片后台提交失败：HTTP {applied.status_code}")
         payload = applied.get_json()
         assert_true(payload.get("queued") == 1 and payload.get("task_ids"),
-                    f"相似照片后台任务数量错误：{payload}")
+                    f"只应提交显式标记的照片：{payload}")
         for task_id in payload["task_ids"]:
             wait_task(photo_curator, task_id)
         assert_true(keep_a.exists() and keep_b.exists() and not drop_c.exists(),
                     "相似照片后台处理错误移动了保留项，或未处理待删除项")
+        with sqlite3.connect(str(photo_curator.INDEX_DB)) as db:
+            leftover = db.execute(
+                "SELECT COUNT(*) FROM review_delete_intent WHERE path=?",
+                (str(drop_c),)
+            ).fetchone()[0]
+        assert_true(leftover == 0, "已删除照片仍保留危险的待删除标记，恢复后可能误删")
         trash_rows = photo_curator._trash_rows(root)
         drop_c_norm = os.path.normcase(os.path.realpath(str(drop_c)))
         assert_true(any(
@@ -721,19 +767,38 @@ def main():
         assert_true(selected_now == [str(keep_b)],
                     f"模糊化原保留项后没有自动晋升可用照片：{selected_now}")
 
-        applied_sync = client.post(
+        # Cross-step keeper promotion must NEVER implicitly authorize
+        # deletion of another member. The reviewer makes a separate mark.
+        unmarked_sync = client.post(
             "/api/dedup-apply", json={},
+            headers={"Host": f"127.0.0.1:{photo_curator.PORT}"},
+        )
+        assert_true(unmarked_sync.status_code == 202
+                    and unmarked_sync.get_json().get("queued") == 0,
+                    "跨阶段相似结果不应自动删除任何未标记成员")
+        assert_true(blurry_a.exists() and keep_b.exists() and drop_c.exists(),
+                    "未明确标记前的跨阶段相似照片被移动")
+
+        marked_sync = client.post(
+            "/api/review-delete-mark",
+            json={"step": "dedup", "path": str(drop_c), "marked": True},
+            headers={"Host": f"127.0.0.1:{photo_curator.PORT}"},
+        )
+        assert_true(marked_sync.status_code == 200 and marked_sync.get_json().get("marked"),
+                    f"跨阶段待删除标记保存失败：{marked_sync.get_json()}")
+        applied_sync = client.post(
+            "/api/dedup-apply", json={"paths":[str(drop_c)]},
             headers={"Host": f"127.0.0.1:{photo_curator.PORT}"},
         )
         assert_true(applied_sync.status_code == 202,
                     f"跨阶段相似处理未异步受理：HTTP {applied_sync.status_code}")
         payload = applied_sync.get_json()
         assert_true(payload.get("queued") == 1,
-                    f"跨阶段相似处理任务数错误：{payload}")
+                    f"仅明确标记项可以提交后台：{payload}")
         for task_id in payload.get("task_ids", []):
             wait_task(photo_curator, task_id)
         assert_true(blurry_a.exists() and keep_b.exists() and not drop_c.exists(),
-                    "相似处理错误删除了模糊照片或当前保留项")
+                    "相似处理错误删除了未标记照片或当前保留项")
 
         # Similarity metadata keeps the full source relationship so a photo
         # rescued from Blurry later can immediately re-enter the eligible set.

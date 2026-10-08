@@ -261,7 +261,7 @@ jobs:
               "const startBtn=document.getElementById('startBtn');",
               "let cullChunkToken=0, cullVisibleTotal=0;",
               "let dedupChunkToken=0;",
-              "let dedupStatusFilter='pending', dedupVisibleTotal=0;",
+              "let dedupStatusFilter='all', dedupVisibleTotal=0;",
               "let dedupStatusCounts={pending:0,reviewed:0,updated:0};",
           ]
           late = [
@@ -577,7 +577,7 @@ jobs:
           )
           missing_ui = [item for item in required_ui if item not in ui]
           if missing_ui:
-              raise SystemExit("v1.7.2 workspace contract missing: " + repr(missing_ui))
+              raise SystemExit("v1.7.3 workspace contract missing: " + repr(missing_ui))
 
           shortcuts = core.split("@app.route('/api/shortcuts')", 1)[1].split(
               "@app.route('/api/sources')", 1

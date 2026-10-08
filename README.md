@@ -8,17 +8,17 @@
 [**点击下载 PhotoCurator-Setup-v1.5.0.exe**](https://github.com/youzhi1701/PhotoCurator-CN-/releases/download/v1.5.0/PhotoCurator-Setup-v1.5.0.exe)
 
 > Windows 10 / 11 x64 · 正式安装版 EXE  
-> 当前源码为 **v1.7.2 Candidate**；只有 Windows Candidate、数据完整性、安装/升级与发布验证全部通过，并且新的 EXE 真正发布后，这里的正式下载链接才会切到 v1.7.2。
+> 当前源码为 **v1.7.3 Candidate**；只有 Windows Candidate、数据完整性、安装/升级与发布验证全部通过，并且新的 EXE 真正发布后，这里的正式下载链接才会切到 v1.7.3。
 <!-- LATEST_RELEASE_END -->
 
-> 面向大图库的 Windows 照片清理工具。v1.7.2 Candidate 在稳定桌面运行层基础上继续收口持久 Catalog、扫描会话与缺失判定、离线图库与设备识别、文件生命周期、数据库升级保护和 Windows 发布门禁；当前仍处于 Candidate 验证阶段，不等同于已发布 Stable。
+> 面向大图库的 Windows 照片清理工具。v1.7.3 Candidate 在稳定桌面运行层基础上继续收口持久 Catalog、扫描会话与缺失判定、离线图库与设备识别、文件生命周期、数据库升级保护和 Windows 发布门禁；当前仍处于 Candidate 验证阶段，不等同于已发布 Stable。
 
 | 项目 | 信息 |
 | --- | --- |
-| 当前源码版本 | **v1.7.2 Candidate** |
+| 当前源码版本 | **v1.7.3 Candidate** |
 | 项目类型 | Windows 照片筛选桌面应用 |
 | 上游基线 | Photo Curator v7.0 |
-| 当前状态 | **v1.7.2 发布候选版 / Windows Candidate 与 Release Gate 验证中** |
+| 当前状态 | **v1.7.3 发布候选版 / Windows Candidate 与 Release Gate 验证中** |
 
 ## 产品定位
 
@@ -31,7 +31,7 @@ PhotoCurator 的两个核心任务：
 
 图片扫描不再只依赖固定短名单：运行时会自动纳入当前 Pillow 实际可解码的全部扩展格式，并在可用时加入 HEIC/HEIF/HIF 与 RAW（CR2/CR3/NEF/ARW/DNG/RAF/ORF/RW2/PEF 等）支持。
 
-## v1.7.2 运行与界面架构
+## v1.7.3 运行与界面架构
 
 ### 前台优先
 
@@ -76,6 +76,20 @@ PhotoCurator 的两个核心任务：
 - 相似组按状态分区、分块载入
 - 大图库限制单次前台渲染量
 
+## v1.7.3 待删除标记与进度体验
+
+所有人工筛选工作区只使用两种**操作选择状态**：**正常**与**待删除**。清晰、轻微软、模糊属于算法分类，不等于用户删除选择；不存在必须点击的第三种“已保留”状态。
+
+- 单击“标记待删除”只保存用户决定，照片仍留在原位置并显示醒目的红色轮廓；再次点击即可撤销
+- 相似组不再使用“完成本组”操作按钮；批量处理**不会**根据算法推荐的非保留成员自动删除照片
+- 执行前二次确认，提交**本次明确列出的照片路径清单**；后台逐项验证标记仍有效，并检查图库来源，拒绝过期或未标记的条目
+- 文件成功进入软件回收站后清理已消费的删除标记，避免恢复照片时遗留旧的删除意图
+- 扫描与操作可以并行；后台任务按需更新结果，不因一次进度快照清除用户已经加载的分页数据
+- 标题栏默认提供紧凑的任务进度卡，显示已处理数量、总数及百分比；点击出现不挤占照片区域的浮动详情
+- 任务运行蓝色、实际成功绿色、失败红色、停止灰色；**进度到 100% 不代表任务实际成功**，须读取独立完成状态
+
+这些功能仍属于 **1.7.3 Candidate**；最终交付需通过 Windows 安装、升级、文件异常恢复及交互回归验证。
+
 ## 核心工作区
 
 ### 模糊废片
@@ -83,8 +97,8 @@ PhotoCurator 的两个核心任务：
 - 清晰 / 轻微软 / 模糊三级结果
 - 用户决策高于算法建议
 - 点击照片打开大图
-- 删除默认进入 PhotoCurator 软件回收站
-- 批量处理也进入后台任务队列
+- 用户先标记 **待删除**，可随时撤销；标记本身不会移动文件或打乱卡片
+- 单独确认批量执行后，才通过后台队列移入 PhotoCurator 软件回收站
 - 扫描 / 分析时仍可继续复核已有结果
 
 ### 相似照片
@@ -180,30 +194,26 @@ v1.5.0 的布局原则：
 
 ## 内置测试数据
 
-正式程序继续自带 12 张基准测试照片：
-- 清晰 4 张
-- 轻微软 4 张
-- 模糊 4 张
-
-用于回归测试状态切换、软件回收站、相似组选优、前后台任务和 UI。
+正式程序保留可离线使用的多文件夹测试图库（至少 36 张示例照片），用于回归测试状态切换、软件回收站、相似照片分组、前后台任务和 UI。
 
 ## 构建、发布与版本机制
 
 GitHub Actions：
 - `.github/workflows/syntax-check.yml`
+- `.github/workflows/candidate-windows.yml`
 - `.github/workflows/build-release.yml`
 
 普通 `main` 推送只运行源码/结构门禁，不会反复消耗 Windows 正式安装包构建；Windows Candidate 通过 Pull Request 或手动触发完成真实 EXE、窗口存活和测试安装包验证。正式 Release 仅由显式发布请求或匹配版本标签触发。
 
-发布目标由 `packaging/release_manifest.json` 驱动。当前目标为 **1.7.2 Candidate**；只有全部 Release Gate 通过后，才允许创建正式标签：
+发布目标由 `packaging/release_manifest.json` 驱动。当前目标为 **1.7.3 Candidate**；只有全部 Release Gate 通过后，才允许创建正式标签：
 
-`v1.7.2`
+`v1.7.3`
 
 发布工作流接受 `v*` 标签，但会在构建开始时强制检查：**Git 标签必须与 manifest 中的版本完全一致**。标签不一致会直接失败，避免误把旧代码发布成新版本或把新代码挂到旧标签。
 
 当前 Candidate 安装包目标名称：
 
-`PhotoCurator-Setup-v1.7.2.exe`
+`PhotoCurator-Setup-v1.7.3.exe`
 
 当前已经公开可下载的 Stable 安装包仍为 **v1.5.0**。
 
@@ -300,7 +310,7 @@ PhotoCurator-CN-/
 
 许可证保持原项目 **MIT License**。
 
-## v1.7.2 Stable 发布门槛
+## v1.7.3 Stable 发布门槛
 
 正式发布前必须同时满足：
 - Python / 嵌入式 JavaScript / HTML / CSS 自动检查通过
@@ -322,4 +332,4 @@ PhotoCurator-CN-/
 - 覆盖升级不破坏用户数据库、索引、设置、日志、任务状态和用户照片
 - GitHub Release 中真实存在与版本一致、非空且校验通过的 Windows 安装包
 
-在上述门槛没有全部满足前，v1.7.2 只能保持 **Candidate**，不能标记为 Stable。
+在上述门槛没有全部满足前，v1.7.3 只能保持 **Candidate**，不能标记为 Stable。
