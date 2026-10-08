@@ -128,5 +128,31 @@ class MissingFileDeleteSafetyTests(unittest.TestCase):
                 self.assertEqual(reloaded[path]["tier"], "soft")
                 self.assertTrue(reloaded[path]["move_selected"])
 
+    def test_move_queue_rejects_stale_or_outside_path_before_any_mutation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "library"
+            root.mkdir()
+            good = root / "valid.jpg"
+            good.write_bytes(b"test")
+            outside = Path(tmp) / "outside.jpg"
+            outside.write_bytes(b"test")
+            for invalid in (str(outside), str(root / "missing.jpg")):
+                with patch.dict(photo_curator.state, {"folder": str(root)}), \
+                     patch.dict(photo_curator.state["cull"],
+                                {"photos": [
+                                    {"path": str(good), "tier": "sharp",
+                                     "move_selected": True, "lifecycle": "normal"},
+                                    {"path": invalid, "tier": "blurry",
+                                     "move_selected": True, "lifecycle": "normal"}
+                                ]}, clear=False), \
+                     patch.object(photo_curator, "_apply_media_lifecycle") as lifecycle, \
+                     patch.object(photo_curator.TASK_MANAGER, "enqueue") as enqueue:
+                    response = photo_curator.app.test_client().post("/api/move-blurry")
+                self.assertEqual(response.status_code, 409, response.get_json())
+                lifecycle.assert_not_called()
+                enqueue.assert_not_called()
+                self.assertTrue(good.exists())
+                self.assertTrue(outside.exists())
+
 if __name__ == "__main__":
     unittest.main()
