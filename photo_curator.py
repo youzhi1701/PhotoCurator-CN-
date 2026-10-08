@@ -1639,14 +1639,20 @@ def _purge_trash_item(trash_id):
     if not row:
         raise FileNotFoundError("回收站记录不存在")
     target = Path(str(row[0]))
-    if target.is_file():
-        sidecars = _photo_sidecars(target)
-        target.unlink()
-        for sidecar in sidecars:
-            try:
-                sidecar.unlink()
-            except OSError:
-                logger.warning("sidecar delete failed: %s", sidecar)
+    # An absent target may mean the external drive is disconnected, not that
+    # the photo was successfully deleted. Keep the trash record until a
+    # verified deletion; never report a missing file as permanent deletion.
+    if not target.is_file():
+        raise FileNotFoundError(
+            "无法确认回收站照片已删除：文件不可访问或设备离线，记录已保留"
+        )
+    sidecars = _photo_sidecars(target)
+    target.unlink()
+    for sidecar in sidecars:
+        try:
+            sidecar.unlink()
+        except OSError:
+            logger.warning("sidecar delete failed: %s", sidecar)
     with _DB_LOCK, connect_db(INDEX_DB, timeout=15) as db:
         db.execute("DELETE FROM software_trash WHERE id=?", (int(trash_id),))
         db.commit()
@@ -1843,14 +1849,20 @@ def _background_permanent_delete(payload):
     original = _find_original_for_path(path)
     target = Path(path)
     try:
-        if target.is_file():
-            sidecars = _photo_sidecars(target)
-            target.unlink()
-            for sidecar in sidecars:
-                try:
-                    sidecar.unlink()
-                except OSError:
-                    logger.warning("sidecar delete failed: %s", sidecar)
+        if not target.is_file():
+            row = _media_state_get(original)
+            if row and row.get('state') == 'permanently_deleted':
+                return {'ok': True, 'already_done': True, 'deleted_path': path}
+            raise FileNotFoundError(
+                "无法确认照片已永久删除：文件不可访问或设备离线，状态已保留"
+            )
+        sidecars = _photo_sidecars(target)
+        target.unlink()
+        for sidecar in sidecars:
+            try:
+                sidecar.unlink()
+            except OSError:
+                logger.warning("sidecar delete failed: %s", sidecar)
         with _DB_LOCK, connect_db(INDEX_DB, timeout=15) as db:
             db.execute("DELETE FROM software_trash WHERE trash_path=? OR original_path=?",
                        (path, original))
