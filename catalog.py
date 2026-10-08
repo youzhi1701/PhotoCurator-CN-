@@ -628,25 +628,12 @@ def list_sources(db_path, *, refresh=True):
                LEFT JOIN library_root r ON r.source_id=s.source_id
                ORDER BY s.connected DESC,s.last_seen_at DESC,r.created_at ASC"""
         ).fetchall()
-        # A physical photo can appear under both a parent library root and a
-        # nested root. Count distinct current paths within the same device
-        # rather than adding root counters, which double-counts the overlap.
-        # Keep all individual root counts untouched for their detail views.
-        unique_rows = db.execute(
-            """SELECT source_id,
-                      COUNT(DISTINCT LOWER(REPLACE(
-                        CASE WHEN current_path<>'' THEN current_path
-                             ELSE original_path END, CHAR(92), '/')))
-               FROM media_catalog WHERE state='present' GROUP BY source_id"""
-        ).fetchall()
-    unique_by_source = {str(sid): int(count) for sid, count in unique_rows}
-
     grouped = {}
     for row in rows:
         sid = str(row["source_id"])
         item = grouped.setdefault(sid, {
             "source_id": sid,
-            "unique_photo_count": unique_by_source.get(sid, 0),
+            "unique_photo_count": 0,
             "display_name": str(row["display_name"]),
             "kind": str(row["kind"]),
             "connected": bool(row["connected"]),
@@ -667,6 +654,30 @@ def list_sources(db_path, *, refresh=True):
                 "photo_count": int(row["photo_count"] or 0),
                 "analyzed_count": int(row["analyzed_count"] or 0),
             })
+    # Single-root sources can use the already persisted scan count. Only
+    # devices containing overlapping roots need a distinct-path DB aggregate;
+    # this avoids a whole-media-table walk on ordinary first paint.
+    multiple_roots = []
+    for item in grouped.values():
+        roots = item["roots"]
+        item["unique_photo_count"] = sum(int(r["photo_count"]) for r in roots)
+        if len(roots) > 1:
+            multiple_roots.append(item["source_id"])
+    if multiple_roots:
+        placeholders = ",".join("?" for _ in multiple_roots)
+        with _connect(db_path) as db:
+            unique_rows = db.execute(
+                """SELECT source_id,
+                          COUNT(DISTINCT LOWER(REPLACE(
+                            CASE WHEN current_path<>'' THEN current_path
+                                 ELSE original_path END, CHAR(92), '/')))
+                   FROM media_catalog
+                   WHERE state='present' AND source_id IN (""" + placeholders + """)
+                   GROUP BY source_id""",
+                multiple_roots,
+            ).fetchall()
+        for sid, count in unique_rows:
+            grouped[str(sid)]["unique_photo_count"] = int(count)
     return list(grouped.values())
 
 
