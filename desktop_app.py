@@ -20,7 +20,7 @@ from runtime_paths import (
 )
 
 APP_TITLE = "PhotoCurator"
-APP_VERSION = "1.7.2"
+APP_VERSION = "1.7.3"
 HOST = "127.0.0.1"
 DEFAULT_PORT = 5014
 
@@ -137,19 +137,18 @@ if os.name == 'nt':
     if not _mutex_handle:
         raise OSError("无法创建应用单实例锁")
     if ctypes.get_last_error() == 183:  # ERROR_ALREADY_EXISTS
+        # Never silently raise an older running window when launching a new
+        # installer build. That makes the upgraded UI look unchanged.
         try:
             user32 = ctypes.WinDLL('user32', use_last_error=True)
-            hwnd = user32.FindWindowW(None, APP_TITLE)
-            if hwnd:
-                user32.ShowWindow(hwnd, 9)  # SW_RESTORE
-                user32.SetForegroundWindow(hwnd)
-            else:
-                user32.MessageBoxW(
-                    None,
-                    "照片筛选已经在运行，请切换到现有窗口。",
-                    APP_TITLE,
-                    0x40,
-                )
+            user32.MessageBoxW(
+                None,
+                f"PhotoCurator v{APP_VERSION} 无法启动：另一份 PhotoCurator 仍在运行。\\n\\n"
+                "请先从右下角系统托盘彻底退出旧程序，然后重新启动新版。"
+                "\\n如果找不到托盘图标，请使用任务管理器结束 PhotoCurator.exe。",
+                f"{APP_TITLE} · 版本切换提醒",
+                0x30,
+            )
         except Exception:
             pass
         raise SystemExit(0)

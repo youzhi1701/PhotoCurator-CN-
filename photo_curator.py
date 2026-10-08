@@ -34,7 +34,7 @@ from urllib.parse import quote
 
 import cv2
 import numpy as np
-from flask import Flask, render_template_string, request, jsonify, send_file, abort
+from flask import Flask, render_template_string, request, jsonify, send_file, abort, make_response
 from PIL import Image, ImageOps
 
 from raw_loader import (RAW_EXTS, HAS_RAWPY, is_raw,
@@ -719,7 +719,7 @@ try:
 except Exception:
     logger.warning("library index unavailable", exc_info=True)
 
-TASK_MANAGER = BackgroundTaskManager(INDEX_DB, workers=1)
+TASK_MANAGER = BackgroundTaskManager(INDEX_DB, workers=1, autostart=False)
 
 def _prune_index_db():
     """Keep indexes bounded without doing multi-million-row DELETE work every launch."""
@@ -751,7 +751,7 @@ def _prune_index_db():
 threading.Thread(target=_prune_index_db, daemon=True,
                  name='photocurator-index-prune').start()
 
-APP_VERSION = "1.7.2"
+APP_VERSION = "1.7.3"
 IS_CODESPACES = os.environ.get('CODESPACES', '').strip().lower() == 'true'
 CODESPACE_NAME = os.environ.get('CODESPACE_NAME', '').strip()
 _CODESPACES_DOMAIN_RAW = os.environ.get(
@@ -2063,6 +2063,8 @@ def _background_build_offline_previews(payload):
 
 
 TASK_MANAGER.register('build_offline_previews', _background_build_offline_previews)
+# All durable file handlers now exist; recovered tasks may begin safely.
+TASK_MANAGER.start()
 
 
 def thumb_url(image_path):
@@ -4835,7 +4837,11 @@ function renderSettings(){
 }
 
 /* Switch the visible step (used by tab clicks AND God mode). */
+const workspaceScrollByStep=new Map();
+function workspaceViewKey(step,source){return String(source||'')+'|'+step;}
 function activateStep(step){
+  const mainScroll=document.querySelector('main.main');
+  if(mainScroll&&currentStep)workspaceScrollByStep.set(workspaceViewKey(currentStep,folder),mainScroll.scrollTop);
   currentStep=step;
   document.querySelectorAll('.step').forEach(x=>x.classList.toggle('active',x.dataset.step===step));
   updateWorkspaceHeading();
@@ -4861,7 +4867,9 @@ function activateStep(step){
 document.querySelectorAll('.step').forEach(t=>t.onclick=()=>{
   activateStep(t.dataset.step);
   if(currentStep==='trash'){loadTrash();return;}
-  fetch('/api/progress/'+currentStep).then(r=>r.json()).then(d=>{
+  const requestedStep=currentStep, requestedFolder=folder;
+  fetch('/api/progress/'+requestedStep).then(r=>r.json()).then(d=>{
+    if(currentStep!==requestedStep||!sameFolder(requestedFolder,folder))return;
     if(d.src_folder && folder && !sameFolder(d.src_folder,folder)){
       showPhotoView();
       document.getElementById('gallery').innerHTML=emptyHTML(currentStep);
@@ -4878,6 +4886,13 @@ document.querySelectorAll('.step').forEach(t=>t.onclick=()=>{
     }else renderRank(d.photos||[]);
     updateVisibleStepStatus(currentStep,d);
     if(currentStep==='cull')maybeLoadAllCull(d);
+    requestAnimationFrame(()=>{
+      if(requestedStep==='dedup')return;  // Restored after async group rendering.
+      if(currentStep!==requestedStep||!sameFolder(requestedFolder,folder))return;
+      const mainScroll=document.querySelector('main.main');
+      const oldPosition=workspaceScrollByStep.get(workspaceViewKey(requestedStep,requestedFolder));
+      if(mainScroll&&Number.isFinite(oldPosition))mainScroll.scrollTop=oldPosition;
+    });
   }).catch(()=>{});
 });
 renderSettings();
@@ -5881,12 +5896,18 @@ function dedupRowsForPayload(d){
   rows.forEach(g=>{if(g&&g.group_id!=null)dedupLiveStore.set(String(g.group_id),g);});
   return Array.from(dedupLiveStore.values());
 }
+let dedupRequestSerial=0;
 async function loadDedupPage(reset=false){
   if(currentStep!=='dedup')return;
+  const requestSerial=++dedupRequestSerial;
+  const requestFolder=folder,requestFilter=dedupStatusFilter;
   const offset=reset?0:dedupLiveStore.size;
   try{
-    const d=await fetch('/api/results/dedup?offset='+offset+'&limit=200&status='+encodeURIComponent(dedupStatusFilter))
+    const d=await fetch('/api/results/dedup?offset='+offset+'&limit=200&status='+encodeURIComponent(requestFilter))
       .then(async r=>{const x=await r.json();if(!r.ok)throw new Error(x.error||('HTTP '+r.status));return x;});
+    // Older responses must never replace the groups of another step/source/filter.
+    if(requestSerial!==dedupRequestSerial||currentStep!=='dedup'||
+       requestFilter!==dedupStatusFilter||!sameFolder(requestFolder,folder))return;
     if(reset)dedupLiveStore.clear();
     (d.photos||[]).forEach(g=>dedupLiveStore.set(String(g.group_id),g));
     dedupVisibleTotal=Number(d.total||0);dedupStatusCounts=d.counts||dedupStatusCounts;
@@ -5894,6 +5915,14 @@ async function loadDedupPage(reset=false){
     renderDedupGroups(photos);
     setupFilterBar();
     updateDedupLoadMore();
+    // Similar groups load asynchronously; restore scroll only after cards exist.
+    if(reset)requestAnimationFrame(()=>{
+      if(requestSerial!==dedupRequestSerial||currentStep!=='dedup'||
+         !sameFolder(requestFolder,folder))return;
+      const mainScroll=document.querySelector('main.main');
+      const previous=workspaceScrollByStep.get(workspaceViewKey('dedup',requestFolder));
+      if(mainScroll&&Number.isFinite(previous))mainScroll.scrollTop=previous;
+    });
   }catch(err){toast('载入相似组失败：'+(err.message||'未知错误'),'bad');}
 }
 function updateDedupLoadMore(){
@@ -6478,7 +6507,7 @@ function renderCullStep(items){
     &&(cullFilter==='all'||p.tier===cullFilter)
     &&(cullType==='all'||(cullType==='raw'?!!p.raw
       :cullType==='heic'?!!p.heic
-      :cullType==='jpg'?(!p.raw&&!p.heic)
+      :cullType==='standard'?(!p.raw&&!p.heic)
       :('ext:'+String(p.fmt||'').toLowerCase())===cullType)));
 
   gItems=filtered;
@@ -7006,12 +7035,18 @@ document.documentElement.dataset.uiReady='1';
 # --------------------------------------------------------------------------- #
 @app.route('/')
 def index():
-    return render_template_string(
+    # The interface is rendered from the executable's bundled source. Never
+    # reuse an older WebView HTML response after installing a newer build.
+    response = make_response(render_template_string(
         HTML,
         map_style_light=MAP_STYLE_LIGHT,
         map_style_dark=MAP_STYLE_DARK,
         app_version=APP_VERSION,
-    )
+    ))
+    response.headers['Cache-Control'] = 'no-store, max-age=0'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['X-PhotoCurator-Version'] = APP_VERSION
+    return response
 
 
 @app.route('/api/shortcuts')

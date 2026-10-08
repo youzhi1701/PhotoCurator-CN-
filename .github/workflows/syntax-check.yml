@@ -188,18 +188,19 @@ jobs:
           install_delete = installer.split("[InstallDelete]", 1)[1].split("[Files]", 1)[0]
           if 'Type: filesandordirs; Name: "{localappdata}\\PhotoCurator\\data' in install_delete:
               raise SystemExit("Cover upgrade must never delete the per-user runtime data directory")
-          if 'AppMutex=' in installer:
-              raise SystemExit("Installer must not block upgrades with AppMutex; it should auto-close the running app")
-          auto_close_required = [
+          # Never forcibly terminate an application that might be moving or
+          # deleting photo files during an in-place upgrade.
+          safe_close_required = [
               'function PrepareToInstall(var NeedsRestart: Boolean): String;',
               "CheckForMutexes(PhotoCuratorMutex)",
-              "taskkill.exe",
-              '/F /T /IM "{#MyAppExeName}"',
               "CloseApplications=no",
+              "PhotoCurator 仍在运行",
           ]
-          missing_auto_close = [x for x in auto_close_required if x not in installer]
-          if missing_auto_close:
-              raise SystemExit("Installer auto-close upgrade contract regression: " + repr(missing_auto_close))
+          missing_safe_close = [x for x in safe_close_required if x not in installer]
+          if missing_safe_close:
+              raise SystemExit("Safe installer upgrade guard missing: " + repr(missing_safe_close))
+          if "taskkill.exe" in installer or '/F /T /IM' in installer:
+              raise SystemExit("Installer must never force-kill active photo-file operations")
           if 'INSTALL_ROOT = (' not in desktop or 'Path(sys.executable).resolve().parent.parent' not in desktop:
               raise SystemExit("Frozen desktop root no longer matches {app}/app executable layout")
           if 'DATA_ROOT = resolve_data_root(frozen=IS_FROZEN)' not in desktop:
@@ -577,7 +578,7 @@ jobs:
           )
           missing_ui = [item for item in required_ui if item not in ui]
           if missing_ui:
-              raise SystemExit("v1.7.2 workspace contract missing: " + repr(missing_ui))
+              raise SystemExit("v1.7.3 workspace contract missing: " + repr(missing_ui))
 
           shortcuts = core.split("@app.route('/api/shortcuts')", 1)[1].split(
               "@app.route('/api/sources')", 1
@@ -932,6 +933,8 @@ jobs:
       - name: Performance architecture regression gate
         run: |
           python performance_gate_test.py
+          python test_desktop_instance_guard.py
+          python test_frontend_stale_request.py
 
       - name: Real desktop UI interaction smoke test
         run: |
