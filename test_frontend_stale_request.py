@@ -16,4 +16,6 @@ assert "currentStep!==requestedStep" in tabs
 assert "!sameFolder(requestedFolder,folder)" in tabs
 cull=source.split("function renderCullStep(items){",1)[1].split("function cullMoveCounts()",1)[0]
 assert "cullType==='standard'?(!p.raw&&!p.heic)" in cull
-print("Stale navigation and standard format filter guards OK")
+assert "workspaceScrollByStep.set(workspaceViewKey(currentStep,folder)" in source
+assert "workspaceScrollByStep.get(workspaceViewKey(requestedStep,requestedFolder))" in tabs
+print("Navigation, scroll restoration and format filter guards OK")
