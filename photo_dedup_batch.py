@@ -87,6 +87,7 @@ class FastBatchDeduplicator:
         self._ts_cache = {}
         # Live/incremental clustering state (see add_photo / current_survivors).
         self.clusters: List[_Cluster] = []
+        self._cluster_by_path = {}
         # Vectorized matching state, parallel to self.clusters[:self._count]:
         #   _rep_bits  (cap, pb_len) uint8  — packed 192-bit rep signatures
         #   _rep_ts    (cap,)        float64 — capture time (nan if unknown)
@@ -320,6 +321,7 @@ class FastBatchDeduplicator:
     def reset(self):
         """Clear incremental clustering state before a new run."""
         self.clusters = []
+        self._cluster_by_path = {}
         self._active_cache_keys = set()
         self._rep_bits = None
         self._rep_ts = None
@@ -357,9 +359,23 @@ class FastBatchDeduplicator:
         else:
             self._rep_valid[i] = False
         self._rep_ts[i] = ts if ts is not None else np.nan
-        self.clusters.append(_Cluster(rep=score, members=[score],
-                                      sig=sig, ts=ts))
+        cluster = _Cluster(rep=score, members=[score], sig=sig, ts=ts)
+        self.clusters.append(cluster)
+        self._cluster_by_path[str(score.path)] = cluster
         self._count += 1
+
+    def attach_exact_duplicate(self, score, canonical_path) -> bool:
+        """Join a byte-identical file without decoding it again.
+
+        Only the SHA-256/size pre-index may invoke this method; pHash likeness
+        alone must not be upgraded into an exact-duplicate assertion.
+        """
+        cluster = self._cluster_by_path.get(str(canonical_path))
+        if cluster is None:
+            return False
+        cluster.members.append(score)
+        self._cluster_by_path[str(score.path)] = cluster
+        return True
 
     def add_photo(self, score) -> bool:
         """Assign ONE photo to the global cluster set (incremental, live).
@@ -435,6 +451,7 @@ class FastBatchDeduplicator:
 
         c = self.clusters[best]
         c.members.append(score)
+        self._cluster_by_path[str(score.path)] = c
         if self._quality(score) > self._quality(c.rep):
             c.rep = score                      # promote the sharper/better frame
             c.sig = sig
