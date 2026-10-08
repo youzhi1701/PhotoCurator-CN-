@@ -261,7 +261,7 @@ jobs:
               "const startBtn=document.getElementById('startBtn');",
               "let cullChunkToken=0, cullVisibleTotal=0;",
               "let dedupChunkToken=0;",
-              "let dedupStatusFilter='pending', dedupVisibleTotal=0;",
+              "let dedupStatusFilter='all', dedupVisibleTotal=0;",
               "let dedupStatusCounts={pending:0,reviewed:0,updated:0};",
           ]
           late = [
