@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import tempfile
 from pathlib import Path
@@ -83,4 +84,8 @@ if __name__ == "__main__":
             pc.TASK_MANAGER.shutdown(timeout=1.0)
         except Exception:
             pass
+        # Windows keeps FileHandler targets locked until logging is shut down.
+        # Close them explicitly so the test also proves there are no hidden
+        # worker-owned handles beyond the normal logging lifecycle.
+        logging.shutdown()
         _temp.cleanup()
