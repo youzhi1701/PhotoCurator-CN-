@@ -4861,7 +4861,9 @@ function activateStep(step){
 document.querySelectorAll('.step').forEach(t=>t.onclick=()=>{
   activateStep(t.dataset.step);
   if(currentStep==='trash'){loadTrash();return;}
-  fetch('/api/progress/'+currentStep).then(r=>r.json()).then(d=>{
+  const requestedStep=currentStep, requestedFolder=folder;
+  fetch('/api/progress/'+requestedStep).then(r=>r.json()).then(d=>{
+    if(currentStep!==requestedStep||!sameFolder(requestedFolder,folder))return;
     if(d.src_folder && folder && !sameFolder(d.src_folder,folder)){
       showPhotoView();
       document.getElementById('gallery').innerHTML=emptyHTML(currentStep);
@@ -5881,12 +5883,18 @@ function dedupRowsForPayload(d){
   rows.forEach(g=>{if(g&&g.group_id!=null)dedupLiveStore.set(String(g.group_id),g);});
   return Array.from(dedupLiveStore.values());
 }
+let dedupRequestSerial=0;
 async function loadDedupPage(reset=false){
   if(currentStep!=='dedup')return;
+  const requestSerial=++dedupRequestSerial;
+  const requestFolder=folder,requestFilter=dedupStatusFilter;
   const offset=reset?0:dedupLiveStore.size;
   try{
-    const d=await fetch('/api/results/dedup?offset='+offset+'&limit=200&status='+encodeURIComponent(dedupStatusFilter))
+    const d=await fetch('/api/results/dedup?offset='+offset+'&limit=200&status='+encodeURIComponent(requestFilter))
       .then(async r=>{const x=await r.json();if(!r.ok)throw new Error(x.error||('HTTP '+r.status));return x;});
+    // Older responses must never replace the groups of another step/source/filter.
+    if(requestSerial!==dedupRequestSerial||currentStep!=='dedup'||
+       requestFilter!==dedupStatusFilter||!sameFolder(requestFolder,folder))return;
     if(reset)dedupLiveStore.clear();
     (d.photos||[]).forEach(g=>dedupLiveStore.set(String(g.group_id),g));
     dedupVisibleTotal=Number(d.total||0);dedupStatusCounts=d.counts||dedupStatusCounts;
