@@ -1,8 +1,8 @@
 {
   "product": "PhotoCurator",
   "channel": "candidate",
-  "version": "1.7.9",
-  "installer": "PhotoCurator-Setup-v1.7.9.exe",
+  "version": "1.7.10",
+  "installer": "PhotoCurator-Setup-v1.7.10.exe",
   "upgrade_mode": "in_place",
   "same_app_id": true,
   "data_root": "%LOCALAPPDATA%/PhotoCurator/data",
@@ -24,7 +24,7 @@
   "replace": [
     "app"
   ],
-  "notes": "v1.7.9 Candidate：延续精确哈希去重、集中人工复核、原片设备/文件身份防错，强化后台执行时的文件变更保护及扫描期间换盘/拔盘保护；辅件 XMP/AAE 的身份安全仍以独立 PR / CI 验证为准。仍需 4TB/19,000+ 实盘长时性能、完整格式、断电、覆盖升级与签名验收。",
+  "notes": "v1.7.10 Candidate：精确去重、人工复核、设备与文件身份绑定、扫描中途换盘防护、人像候选线索和有界大图库排序；集成 Windows 真实 v1.5.0 覆盖升级 SHA-256 数据保留门禁。仍需真实 4TB 外接盘、19k+ 图库、格式样本、断电/跨盘演练、实机升级及数字签名 QA 批准。",
   "release_date": "2026-10-09",
   "published_version": "1.5.0",
   "published_installer": "PhotoCurator-Setup-v1.5.0.exe"

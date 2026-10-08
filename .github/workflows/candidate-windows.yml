@@ -17,7 +17,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request'
     runs-on: windows-latest
     env:
-      CANDIDATE_VERSION: "1.7.9"
+      CANDIDATE_VERSION: "1.7.10"
       PYTHONUTF8: "1"
       PYTHONIOENCODING: "utf-8"
 
@@ -266,10 +266,17 @@ jobs:
           $installer = "release\PhotoCurator-Setup-v$env:CANDIDATE_VERSION.exe"
           if (!(Test-Path $installer)) { throw "Candidate installer not built: $installer" }
 
-      - name: Upload v1.7.9 test installer
+      - name: Verify shipped v1.5.0 to candidate in-place upgrade retains user data
+        shell: powershell
+        run: |
+          # The script throws on failures. Do not test $LASTEXITCODE here:
+          # it is not set when invoking a .ps1 with PowerShell's call operator.
+          & "packaging\\test_candidate_upgrade.ps1" -Version "$env:CANDIDATE_VERSION"
+
+      - name: Upload v1.7.10 test installer
         uses: actions/upload-artifact@v7
         with:
-          name: PhotoCurator-v1.7.9-test-installer
-          path: release/PhotoCurator-Setup-v1.7.9.exe
+          name: PhotoCurator-v1.7.10-test-installer
+          path: release/PhotoCurator-Setup-v1.7.10.exe
           if-no-files-found: error
           retention-days: 14

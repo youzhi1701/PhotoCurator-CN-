@@ -31,7 +31,8 @@
 | [#59](https://github.com/youzhi1701/PhotoCurator-CN-/pull/59) | 有界的本地 OpenCV 正脸检测，未检测到脸绝不冒称风景；继承替换冲突 PR #57 | Source [37812894532](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37812894532)、Candidate [37812894510](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37812894510) 通过，已合并；#57 关闭 |
 | [#61](https://github.com/youzhi1701/PhotoCurator-CN-/pull/61) | 持久图库每批次写入前检查原设备身份，扫描中途拔盘/换盘不插入异盘照片 | Source [37813476841](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37813476841)、Candidate [37813476828](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37813476828) 通过，已合并 |
 | [#62](https://github.com/youzhi1701/PhotoCurator-CN-/pull/62) | 优选卡片和大图直接显示质量候选标签及可信的人像内容线索 | Source [37813971966](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37813971966)、Candidate [37813971831](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37813971831) 通过，已合并 |
-| [#60](https://github.com/youzhi1701/PhotoCurator-CN-/pull/60) | 从 SHA-256 验证的已发布 v1.5.0 安装器覆盖升级到候选版并核对原照片/离线预览/配置 | **仍在执行 Windows 回归，未合并、不可算完成** |
+| [#60](https://github.com/youzhi1701/PhotoCurator-CN-/pull/60) | 验证真实 v1.5.0 → v1.7.9 升级中软件配置、离线预览和原片哈希不变 | Windows 日志实测两次安装都成功，但 YAML 在调用 PowerShell 脚本后误把空 LASTEXITCODE 当成失败；以 #63 修复并合并 |
+| [#63](https://github.com/youzhi1701/PhotoCurator-CN-/pull/63) | v1.7.10 Candidate 版本号/安装器、修正升级验收脚本调用并集成 #60 测试 | **等待本 PR 的 Source + Windows Candidate 双门禁，未验证前不标完成** |
 
 以上状态只代表相应代码和已有自动化测试通过；**没有执行 4TB 外接机械硬盘、19,000 张以上真实图库、全格式 RAW/HEIF 样本以及多版本覆盖安装等完整实机验收**。本轮没有将候选包发布成 Stable。
 
@@ -57,7 +58,7 @@
 
 ## 最新交接说明（2026-10-09）
 
-- 当前正式可下载 Stable 仍为 **v1.5.0**。v1.7.9 为**候选测试版**，严禁将 Windows 候选安装器当作完成实机验收的 V2.0 Stable。
+- 当前正式可下载 Stable 仍为 **v1.5.0**。v1.7.10 为**候选测试版**（此版本更新后以 Windows CI 结果为准），严禁将 Windows 候选安装器当作完成实机验收的 V2.0 Stable。
 - GitHub 无真实 4TB 外接机械硬盘与用户 Windows 测试机连接；正式签名所需 PFX/密码不能由模型凭空生成。
 - 发布级实机测试、签名设置、评估数据和发布前签核统一按 [RELEASE_ACCEPTANCE.md](RELEASE_ACCEPTANCE.md)。
 - 后续迭代必须重新从 GitHub main 的真实 SHA、PR 状态和 Actions 构件核对，不依赖本文件猜测进度。
