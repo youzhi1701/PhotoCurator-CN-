@@ -2792,7 +2792,7 @@ def _badge_for(tier, star):
 
 def run_cull(folder, strictness, adaptive, rescue_on, recursive=True):
     s = state['cull']
-    s.update({'running': True, 'cancel': False, 'progress': 0, 'status': '正在扫描照片…',
+    s.update({'running': True, 'cancel': False, 'progress': 0, 'processed': 0, 'total': 0, 'status': '正在扫描照片…',
               'photos': [], 'sharp': 0, 'soft': 0, 'blurry': 0, 'sharp_paths': [],
               'cache_hits': 0, 'folder_status': {}, 'current_folder': '',
               'overrides': {},
@@ -2808,6 +2808,7 @@ def run_cull(folder, strictness, adaptive, rescue_on, recursive=True):
         cull_cache = _load_cull_metrics_map(images, fingerprints)
         s['overrides'] = _load_review_overrides(images, fingerprints)
         total = len(images) or 1
+        s['total'] = len(images)
         items = []   # {name, path, region_s, q}
         cache_buffer = []
 
@@ -2913,6 +2914,7 @@ def run_cull(folder, strictness, adaptive, rescue_on, recursive=True):
                                f"已用时 {_fmt(time.time()-t0)}")
                 return
             done = idx + 1
+            s['processed'] = done
             s['progress'] = int(done / total * 100)
             elapsed = time.time() - t0
             rate = done / elapsed if elapsed > 0 else 0
@@ -3091,7 +3093,7 @@ def _sync_dedup_with_cull():
 def run_dedup(folder, threshold, ftype='all', pair='both',
               recursive=True, compare_scope='folder'):
     s = state['dedup']
-    s.update({'running': True, 'cancel': False, 'progress': 0, 'status': '正在准备…',
+    s.update({'running': True, 'cancel': False, 'progress': 0, 'processed': 0, 'total': 0, 'status': '正在准备…',
               'photos': [], 'groups': 0, 'kept_paths': [], 'groups_data': [],
               'singleton_paths': [], 'all_singleton_paths': [], 'seen_paths': set(),
               'applied': False, 'complete': False, 'src_folder': str(folder),
@@ -3152,6 +3154,7 @@ def run_dedup(folder, threshold, ftype='all', pair='both',
                        for _, ps in sorted(by_parent.items(), key=lambda kv: kv[0])]
 
         total = len(paths)
+        s['total'] = total
         shared_fingerprints = _shared_scan_fingerprints(folder, recursive)
         cull_metric_cache = _load_cull_metrics_map(paths, shared_fingerprints or None)
         processed = 0
@@ -3183,6 +3186,7 @@ def run_dedup(folder, threshold, ftype='all', pair='both',
                 if s.get('cancel'):
                     break
                 processed += 1
+                s['processed'] = processed
                 s['progress'] = int(processed / total * 100)
                 elapsed = time.time() - t0
                 rate = processed / elapsed if elapsed > 0 else 0
@@ -3368,7 +3372,7 @@ def build_topn(weights=None, topn=None):
 
 def run_rank(folder, ftype='all', pair='both', recursive=True):
     s = state['rank']
-    s.update({'running': True, 'cancel': False, 'progress': 0, 'status': '正在准备…',
+    s.update({'running': True, 'cancel': False, 'progress': 0, 'processed': 0, 'status': '正在准备…',
               'scores': [], 'total': 0, 'analyzed': 0, 'preview': [], 'preview_at': 0.0,
               'preview_score_count': 0,
               'cache_hits': 0, 'pending_paths': set(), 'complete': False,
@@ -3425,6 +3429,7 @@ def run_rank(folder, ftype='all', pair='both', recursive=True):
                                f"已用时 {_fmt(time.time()-t0)}")
                 return
             done = idx + 1
+            s['processed'] = done
             s['progress'] = int(done / total * 100)
             elapsed = time.time() - t0
             rate = done / elapsed if elapsed > 0 else 0
@@ -8533,6 +8538,8 @@ def api_task_center():
             'running': bool(step.get('running')),
             'complete': bool(step.get('complete')),
             'progress': int(step.get('progress') or 0),
+            'processed': int(step.get('processed') or 0),
+            'total': int(step.get('total') or 0),
             'status': str(step.get('status') or ''),
             'src_folder': step.get('src_folder'),
         }
