@@ -7260,9 +7260,9 @@ document.getElementById('moveBlurryBtn').onclick=async function(){
   const names=(review.items||[]).map((p,i)=>
     (i+1)+'. '+(p.name||p.path)+' · '+(p.tier||'未分类'));
   const previewText='共 '+review.total+' 张待处理照片，只有确认后才会提交后台移动任务。'
-    +'\\n\\n'+names.join('\\n')
-    +(review.truncated?'\\n…其余照片已折叠，请先在「待删除」筛选中逐一复核':'')
-    +'\\n\\n目标：PhotoCurator 软件回收站，可恢复。';
+    +'\n\n'+names.join('\n')
+    +(review.truncated?'\n…其余照片已折叠，请先在「待删除」筛选中逐一复核':'')
+    +'\n\n目标：PhotoCurator 软件回收站，可恢复。';
   const ok=await askBatchConfirm(
     '集中复核 · '+review.total+' 张待删除照片',previewText,'确认移入回收站'
   );
