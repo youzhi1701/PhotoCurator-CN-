@@ -751,7 +751,7 @@ def _prune_index_db():
 threading.Thread(target=_prune_index_db, daemon=True,
                  name='photocurator-index-prune').start()
 
-APP_VERSION = "1.7.3-dev.5"
+APP_VERSION = "1.7.3-dev.6"
 IS_CODESPACES = os.environ.get('CODESPACES', '').strip().lower() == 'true'
 CODESPACE_NAME = os.environ.get('CODESPACE_NAME', '').strip()
 _CODESPACES_DOMAIN_RAW = os.environ.get(
@@ -4035,6 +4035,47 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
 
   @media(max-width:1050px){.library-sidebar{width:270px!important;flex-basis:270px!important}}
   @media(max-width:900px){.library-sidebar{width:250px!important;flex-basis:250px!important}.source-pill{display:none}}
+
+  /* Aurora Bubble Glass: vivid atmospheric shell, limited-cost frosted controls.
+     Gallery images intentionally do not use backdrop-filter. */
+  :root{--bg:#f4faff;--panel:#ffffff;--panel2:#eff8ff;--accent:#347cf5;
+    --border:rgba(112,156,216,.23);--shadow:rgba(43,100,184,.13)}
+  body{background:
+    radial-gradient(ellipse 55% 58% at 9% 2%,rgba(81,192,255,.33),transparent 83%),
+    radial-gradient(ellipse 42% 55% at 91% 10%,rgba(177,119,255,.27),transparent 84%),
+    radial-gradient(ellipse 48% 48% at 57% 92%,rgba(93,234,199,.19),transparent 88%),
+    linear-gradient(137deg,#eef8ff 0%,#f9fcff 47%,#faf5ff 100%)!important}
+  .appbar{background:linear-gradient(115deg,rgba(244,252,255,.80),rgba(229,241,255,.71) 49%,rgba(250,235,255,.73))!important;
+    border-bottom:1px solid rgba(255,255,255,.94)!important;
+    box-shadow:0 5px 23px rgba(56,105,186,.09),inset 0 1px rgba(255,255,255,.93);
+    backdrop-filter:blur(26px) saturate(176%);-webkit-backdrop-filter:blur(26px) saturate(176%)}
+  .workspace-tabs,.source-pill{border:1px solid rgba(255,255,255,.93)!important;
+    border-radius:999px!important;background:linear-gradient(145deg,rgba(255,255,255,.77),rgba(222,238,255,.51))!important;
+    box-shadow:inset 0 1px rgba(255,255,255,.97),inset 0 -1px rgba(122,162,219,.10),0 5px 17px rgba(58,103,176,.10)}
+  .workspace-tabs .step{border-radius:999px!important;transition:background-color .18s ease,box-shadow .18s ease,color .18s ease,transform .14s ease}
+  .workspace-tabs .step:hover{background:rgba(255,255,255,.72)!important;transform:translateY(-1px)}
+  .workspace-tabs .step.active{background:linear-gradient(150deg,rgba(255,255,255,.99),rgba(205,229,255,.92))!important;
+    color:#245fd4!important;box-shadow:inset 0 1px 1px #fff,0 4px 13px rgba(62,119,224,.20)}
+  .library-sidebar{background:linear-gradient(148deg,rgba(255,255,255,.79),rgba(230,247,255,.66) 58%,rgba(244,237,255,.67))!important;
+    border-right:1px solid rgba(255,255,255,.91)!important;
+    box-shadow:inset -1px 0 rgba(104,153,215,.08),8px 0 25px rgba(73,132,210,.06)!important}
+  .source-card{border-color:rgba(145,186,236,.24)!important;border-radius:14px!important;
+    background:linear-gradient(145deg,rgba(255,255,255,.88),rgba(232,245,255,.67))!important;
+    box-shadow:inset 0 1px rgba(255,255,255,.95),0 4px 15px rgba(71,123,194,.06)}
+  .source-card>summary{transition:background-color .17s ease}
+  .source-card>summary:hover{background:rgba(185,224,255,.29)}
+  .pc-modal{background:linear-gradient(140deg,rgba(255,255,255,.88),rgba(228,242,255,.79) 60%,rgba(240,230,255,.79))!important;
+    border:1px solid rgba(255,255,255,.95)!important;border-radius:24px!important;
+    box-shadow:inset 0 2px rgba(255,255,255,.97),0 24px 65px rgba(48,90,159,.21)!important;
+    backdrop-filter:blur(25px) saturate(170%);-webkit-backdrop-filter:blur(25px) saturate(170%)}
+  .workspace-action,.sidebar-actions button{transition:background-color .17s ease,box-shadow .17s ease,transform .13s ease}
+  .workspace-action:hover,.sidebar-actions button:hover{transform:translateY(-1px)}
+  .workspace-action:active,.sidebar-actions button:active{transform:translateY(0)}
+  button:focus-visible,.step:focus-visible{outline:2px solid #3b82f6;outline-offset:2px}
+  @media(prefers-reduced-motion:reduce){
+    .workspace-tabs .step,.source-card>summary,.workspace-action,.sidebar-actions button{transition:none!important;transform:none!important}
+  }
+
 </style></head><body>
 <header class="appbar pywebview-drag-region">
   <div class="app-brand" aria-label="PhotoCurator">
