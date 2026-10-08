@@ -7269,7 +7269,9 @@ document.getElementById('moveBlurryBtn').onclick=async function(){
   if(!ok)return;
   this.disabled=true;this.textContent='正在提交 '+before.selected+' 张…';
   try{
-    const r=await fetch('/api/move-blurry',{method:'POST'});
+    const r=await fetch('/api/move-blurry',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({review_token:review.review_token})});
     const d=await r.json();
     if(!r.ok||d.error)throw new Error(d.error||('HTTP '+r.status));
     (photos||[]).forEach(p=>{
@@ -8594,10 +8596,9 @@ def api_select_blurry():
     })
 
 
-@app.route('/api/review-pending', methods=['GET'])
-def api_review_pending():
-    """Non-destructive preview of the exact manually marked review set."""
-    rows = [
+def _pending_review_rows():
+    """Single source of truth for review preview and submitted file intents."""
+    return [
         p for p in state['cull'].get('photos', [])
         if p.get('move_selected') is True
         and p.get('lifecycle') not in
@@ -8605,10 +8606,27 @@ def api_review_pending():
          'trashed', 'permanently_deleted', 'pending_restore')
         and p.get('path')
     ]
+
+
+def _pending_review_token(rows):
+    basis = {
+        'folder': str(state.get('folder') or ''),
+        'paths': sorted(str(p['path']) for p in rows),
+    }
+    return hashlib.sha256(
+        json.dumps(basis, ensure_ascii=False, sort_keys=True).encode('utf-8')
+    ).hexdigest()
+
+
+@app.route('/api/review-pending', methods=['GET'])
+def api_review_pending():
+    """Non-destructive preview of the exact manually marked review set."""
+    rows = _pending_review_rows()
     # Return bounded details for the confirmation dialog. No filesystem
     # mutation, thumbnails or image decoding occurs on this endpoint.
     return jsonify({
         'total': len(rows),
+        'review_token': _pending_review_token(rows),
         'items': [
             {'path': str(p['path']),
              'name': str(p.get('name') or Path(p['path']).name),
@@ -8626,13 +8644,12 @@ def api_move_blurry():
     folder = state.get('folder')
     if not folder or not Path(folder).is_dir():
         return jsonify({'error': '未选择有效的照片文件夹'}), 400
-    rows = [
-        pp for pp in state['cull'].get('photos', [])
-        if pp.get('move_selected', False)
-        and pp.get('lifecycle') not in
-        ('pending_trash','pending_permanent_delete','trashed','permanently_deleted')
-        and pp.get('path')
-    ]
+    rows = _pending_review_rows()
+    preview_token = (request.get_json(silent=True) or {}).get('review_token')
+    if preview_token is not None and preview_token != _pending_review_token(rows):
+        return jsonify({
+            'error': '待删除照片列表已发生变化，请重新集中复核后确认',
+        }), 409
     # Validate the complete selection before changing any lifecycle state.
     # A disconnected volume, replaced symlink or stale result must never
     # enqueue partial destructive operations against an unrelated path.
