@@ -62,7 +62,13 @@ for ($pass=1; $pass -le 2; $pass++) {
               ('/DIR="' + $installRoot + '"'),('/LOG="' + $logPath + '"'))
     $chosenInstaller = if ($pass -eq 1) { $priorInstaller } else { $installer }
     $expectedVersion = if ($pass -eq 1) { $priorVersion } else { $Version }
-    $process = Start-Process -FilePath $chosenInstaller -ArgumentList $args -PassThru -Wait
+    $process = Start-Process -FilePath $chosenInstaller -ArgumentList $args -PassThru
+    # Do not burn unlimited Actions minutes if a WebView bootstrapper or
+    # legacy setup gets stuck on a network-dependent silent installation.
+    if (-not $process.WaitForExit(180000)) {
+        Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+        throw "Installer pass ${pass} timed out after 180 seconds"
+    }
     if ($process.ExitCode -ne 0) {
         if (Test-Path $logPath) {
             Get-Content $logPath -Tail 35 | Out-Host
