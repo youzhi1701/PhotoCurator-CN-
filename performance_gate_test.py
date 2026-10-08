@@ -172,4 +172,4 @@ activity = block("def _activity(", "def _cached_cull_metrics(")
 require("_ACTIVITY_TRIM_EVERY" in SOURCE and "% _ACTIVITY_TRIM_EVERY" in activity,
         "activity-log cleanup must stay amortized")
 
-print("Performance regression gate OK: v1.7.2 hot paths, rendering, scan metadata, thumbnail scheduling, Lightbox prefetch and compact task heartbeat are intact")
+print(f"Performance regression gate OK: v{version.group(1)} hot paths, rendering, scan metadata, thumbnail scheduling, Lightbox prefetch and compact task heartbeat are intact")
