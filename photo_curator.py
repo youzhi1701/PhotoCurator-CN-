@@ -751,7 +751,7 @@ def _prune_index_db():
 threading.Thread(target=_prune_index_db, daemon=True,
                  name='photocurator-index-prune').start()
 
-APP_VERSION = "1.7.3-dev.3"
+APP_VERSION = "1.7.3-dev.4"
 IS_CODESPACES = os.environ.get('CODESPACES', '').strip().lower() == 'true'
 CODESPACE_NAME = os.environ.get('CODESPACE_NAME', '').strip()
 _CODESPACES_DOMAIN_RAW = os.environ.get(
@@ -5873,7 +5873,10 @@ startBtn.onclick=()=>{
 };
 function cullRowsForPayload(d){
   const rows=d.photos||[];
-  if(!d.running)cullLiveStore.clear();
+  // A terminal progress payload may contain only a bounded preview. Only a
+  // confirmed complete snapshot may replace user-loaded result pages.
+  if(!d.running && d.truncated===false && Number(d.result_total)===rows.length)
+    cullLiveStore.clear();
   rows.forEach(p=>{if(p&&p.path)cullLiveStore.set(p.path,p);});
   return Array.from(cullLiveStore.values());
 }
@@ -5894,7 +5897,10 @@ async function loadCullPage(reset=false){
     renderCullStep(photos);
     setupFilterBar();
     updateCullLoadMore();
-  }catch(err){toast('载入清晰度结果失败：'+(err.message||'未知错误'),'bad');}
+  }catch(err){
+    if(token===cullChunkToken&&currentStep==='cull'&&folder===sourceAtRequest)
+      toast('载入清晰度结果失败：'+(err.message||'未知错误'),'bad');
+  }
 }
 function updateCullLoadMore(){
   const btn=document.getElementById('cullLoadMore');
@@ -5910,7 +5916,9 @@ function maybeLoadAllCull(d){
 }
 function dedupRowsForPayload(d){
   const rows=d.photos||[];
-  if(!d.running)dedupLiveStore.clear();
+  // Keep paged groups when progress only returns the first result window.
+  if(!d.running && d.truncated===false && Number(d.result_total)===rows.length)
+    dedupLiveStore.clear();
   rows.forEach(g=>{if(g&&g.group_id!=null)dedupLiveStore.set(String(g.group_id),g);});
   return Array.from(dedupLiveStore.values());
 }
@@ -5931,7 +5939,10 @@ async function loadDedupPage(reset=false){
     renderDedupGroups(photos);
     setupFilterBar();
     updateDedupLoadMore();
-  }catch(err){toast('载入相似组失败：'+(err.message||'未知错误'),'bad');}
+  }catch(err){
+    if(token===dedupChunkToken&&currentStep==='dedup'&&folder===sourceAtRequest&&dedupStatusFilter===filterAtRequest)
+      toast('载入相似组失败：'+(err.message||'未知错误'),'bad');
+  }
 }
 function updateDedupLoadMore(){
   const btn=document.getElementById('dedupLoadMore');
