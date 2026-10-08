@@ -2677,9 +2677,14 @@ def _shared_list_images(folder, recursive=True, max_age=2.0):
         if scan_real != demo_real:
             try:
                 scan_session = begin_catalog_scan(INDEX_DB, folder)
-            except Exception:
-                scan_session = None
-                logger.warning("catalog scan session start failed", exc_info=True)
+            except Exception as exc:
+                # A real library scan cannot silently become a transient,
+                # unindexed analysis. Otherwise users believe the session is
+                # saved when no durable catalog session exists.
+                logger.exception("catalog scan session start failed")
+                raise RuntimeError(
+                    "图库索引无法建立，本次扫描未开始；请检查数据库或存储设备后重试"
+                ) from exc
 
         def _scan_walk_error(exc):
             logger.warning("filesystem scan read error: %s", exc)
@@ -2889,7 +2894,7 @@ def run_cull(folder, strictness, adaptive, rescue_on, recursive=True):
                                # classification itself. Blurry frames start
                                # selected, but the user may uncheck any of them
                                # before the explicit Move action.
-                               'move_selected': (overrides.get(it['path']) or {}).get('move_selected', tier == 'blurry')})
+                               'move_selected': (overrides.get(it['path']) or {}).get('move_selected', False)})
             # Newest-processed first in the live grid (no scrolling to bottom).
             # Only the display order is reversed; `kept` stays in capture order
             # so Dedup/Rank still receive survivors in their natural sequence.
@@ -3575,7 +3580,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   .empty .lines b{color:var(--accent)}
   .photo-card{position:relative;border-radius:9px;overflow:hidden;background:var(--panel2);border:2px solid transparent;cursor:pointer}
   .photo-card:hover{border-color:var(--accent);box-shadow:0 4px 12px var(--shadow)}
-  .photo-card.kept{border-color:var(--good)} .photo-card.rejected{opacity:.5}
+  .photo-card.kept{border-color:var(--good)} .photo-card.rejected{opacity:1}
   .photo-card.soft{border-color:var(--warn)}
   .badge.soft{background:var(--warn)}
   .filter-bar{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap}
@@ -3595,10 +3600,12 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   .rank-num{position:absolute;top:6px;left:6px;background:var(--accent);color:#fff;min-width:24px;height:24px;padding:0 6px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;z-index:5}
   .badge{position:absolute;top:6px;right:6px;color:#fff;padding:2px 7px;border-radius:4px;font-size:10px;font-weight:700;z-index:5}
   .badge.good{background:var(--good)} .badge.bad{background:var(--bad)}
-  .move-select{position:absolute;top:6px;left:6px;z-index:8;width:25px;height:25px;border:2px solid #fff;border-radius:6px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;padding:0;font-size:15px;font-weight:900;cursor:pointer;box-shadow:0 1px 6px rgba(0,0,0,.28)}
+  .move-select{position:absolute;top:0;right:0;z-index:8;width:44px;height:44px;border:0;background:transparent;color:#fff;display:flex;align-items:flex-start;justify-content:flex-end;padding:5px 5px 0 0;font-size:17px;font-weight:900;cursor:pointer;text-shadow:0 1px 2px rgba(0,0,0,.3)}
+  .move-select:not(.off)::before{content:'';position:absolute;inset:0;background:#dc2626;clip-path:polygon(0 0,100% 0,100% 100%);z-index:-1}
+  .photo-card[data-tier] .badge-tier{right:auto;left:6px}
   .move-select:hover{transform:scale(1.06)}
-  .move-select.off{background:rgba(255,255,255,.82);color:#667085;border-color:#94a3b8;box-shadow:0 1px 5px rgba(0,0,0,.16)}
-  .move-select.off:hover{color:var(--accent);border-color:var(--accent);background:#fff}
+  .move-select.off{background:transparent;color:transparent;text-shadow:none;opacity:0}
+  .photo-card:hover .move-select.off,.move-select.off:focus-visible{opacity:1;color:#64748b;background:rgba(255,255,255,.9);border-radius:0 0 0 12px}
   .move-summary{display:inline-flex;align-items:center;gap:4px;padding:5px 8px;border-radius:8px;background:var(--panel2);font-size:11px;color:var(--muted)}
   .move-summary b{color:var(--accent);font-size:12px}
   .chip.move-bulk{padding-left:9px;padding-right:9px}
@@ -3619,7 +3626,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   .delete-btn:hover{background:#dc2626;color:#fff}
   .photo-card.pending-delete{border-color:#f59e0b!important;background:color-mix(in srgb,#f59e0b 7%,var(--panel2))}
   .photo-card.trashed{border-color:#ef4444!important;background:color-mix(in srgb,#ef4444 6%,var(--panel2))}
-  .photo-card.pending-delete .photo-img,.photo-card.trashed .photo-img{filter:saturate(.82) brightness(.92)}
+  .photo-card.pending-delete .photo-img,.photo-card.trashed .photo-img{filter:none}
   .lifecycle-badge{position:absolute;top:7px;right:7px;z-index:3;padding:4px 7px;border-radius:7px;font-size:10px;font-weight:800;color:#fff;background:#d97706}
   .lifecycle-badge.trash{background:#dc2626}
   .dedup-choice.pending-delete{border-color:#f59e0b;background:color-mix(in srgb,#f59e0b 7%,var(--panel2))}
@@ -5030,7 +5037,7 @@ function setupFilterBar(){
       bar.innerHTML='';
       return;
     }
-    const opts=[['all','全部'],['sharp','清晰'],['soft','轻微软 ★'],['blurry','模糊']];
+    const opts=[['all','全部'],['sharp','清晰'],['soft','轻微软 ★'],['blurry','模糊'],['pending','待删除']];
     // Per-format chips (NEF, CR2, ARW, ...) built from what's actually loaded.
     const rawFmts=[...new Set(photos.filter(p=>p.raw).map(p=>p.fmt||'RAW'))].sort();
     const hasHeic=photos.some(p=>p.heic);
@@ -5040,7 +5047,7 @@ function setupFilterBar(){
     if(!types.some(([k])=>k===cullType))cullType='all';
     bar.style.display='flex';
     const blurry=photos.filter(p=>p.tier==='blurry'&&!['pending_trash','pending_permanent_delete','trashed','permanently_deleted'].includes(p.lifecycle));
-    const moveSelected=blurry.filter(p=>p.move_selected!==false).length;
+    const moveSelected=blurry.filter(p=>p.move_selected===true).length;
     bar.innerHTML=opts.map(([k,l])=>`<button class="chip${k===cullFilter?' active':''}" data-f="${k}">${l}</button>`).join('')
       +`<span class="chip-sep"></span>`
       +types.map(([k,l])=>`<button class="chip${k===cullType?' active':''}" data-t="${k}">${l}</button>`).join('')
@@ -6579,9 +6586,9 @@ function cullLifecycleInfo(p){
 function cullCardHtml(p,idx){const path=escHtml(p.path);
   const life=cullLifecycleInfo(p),deleted=!!life;
   const cls=(p.tier==='sharp'?'kept':p.tier==='soft'?'soft':'rejected')+(life?' '+life[1]:'');
-  const moveOn=p.move_selected!==false;
+  const moveOn=p.move_selected===true;
   const moveSel=!deleted&&p.tier==='blurry'
-    ?`<button class="move-select${moveOn?'':' off'}" data-path="${path}" data-selected="${moveOn?'1':'0'}" title="${moveOn?'已加入本次删除，点击保留在原位置':'保留在原位置，点击重新加入本次删除'}">${moveOn?'✓':'□'}</button>`
+    ?`<button class="move-select${moveOn?'':' off'}" data-path="${path}" data-selected="${moveOn?'1':'0'}" title="${moveOn?'已加入本次删除，点击保留在原位置':'保留在原位置，点击重新加入本次删除'}" >${moveOn?'🗑︎':'＋'}</button>`
     :'';
   const stateBadge=life
     ?((p.lifecycle==='trashed'&&p.trash_id)
@@ -6596,7 +6603,7 @@ function cullCardHtml(p,idx){const path=escHtml(p.path);
     ${p.thumb?`<img class="photo-img" src="${p.thumb}" loading="lazy" decoding="async">`:'<div class="photo-img" style="display:grid;place-items:center;background:var(--panel2)">文件已删除</div>'}
     <div class="photo-info"><div class="pi-row"><span class="photo-name">${escHtml(p.name)}</span><span class="ftype${p.raw?'':(p.heic?' heic':' jpg')}">${p.fmt||(p.raw?'RAW':p.heic?'HEIC':'JPG')}</span>${deleted?'':`<button class="delete-btn" data-step="cull" data-path="${path}" title="删除">🗑 删除</button>`}</div><div class="source-path">${escHtml(p.rel_dir||'当前文件夹')}</div></div></div>`;}
 function syncCullCardNode(node,p,idx){
-  const moveOn=p.move_selected!==false,life=cullLifecycleInfo(p),deleted=!!life;
+  const moveOn=p.move_selected===true,life=cullLifecycleInfo(p),deleted=!!life;
   node.dataset.i=idx;node.dataset.tier=p.tier;node.dataset.life=p.lifecycle||'normal';
   node.dataset.moveSelected=moveOn?'1':'0';
   node.classList.toggle('kept',p.tier==='sharp');
@@ -6616,7 +6623,7 @@ function syncCullCardNode(node,p,idx){
   const ms=node.querySelector('.move-select');
   if(p.tier==='blurry'&&ms&&!deleted){
     ms.dataset.selected=moveOn?'1':'0';ms.classList.toggle('off',!moveOn);
-    ms.textContent=moveOn?'✓':'□';
+    ms.textContent=moveOn?'🗑︎':'＋';
   }
 }
 
@@ -6627,7 +6634,7 @@ function renderCullStep(items){
   if(fSig!==lastFmtSig){lastFmtSig=fSig;setupFilterBar();}
 
   const filtered=items.filter(p=>visibleInReview(p)
-    &&(cullFilter==='all'||p.tier===cullFilter)
+    &&(cullFilter==='all'||(cullFilter==='pending' ? p.tier==='blurry'&&p.move_selected===true : p.tier===cullFilter))
     &&(cullType==='all'||(cullType==='raw'?!!p.raw
       :cullType==='heic'?!!p.heic
       :cullType==='standard'?(!p.raw&&!p.heic)
@@ -6647,9 +6654,9 @@ function renderCullStep(items){
   }
 
   const moveSig=items.filter(p=>p.tier==='blurry')
-    .map(p=>p.path+':'+(p.move_selected===false?'0':'1')).join('|');
+    .map(p=>p.path+':'+(p.move_selected===true?'1':'0')).join('|');
   if(moveSig!==lastCullMoveSig){lastCullMoveSig=moveSig;setupFilterBar();}
-  const sig=gPage+'#'+cullView.map(p=>p.path+':'+p.tier+':'+(p.lifecycle||'normal')+':'+(p.move_selected===false?'0':'1')).join('|');
+  const sig=gPage+'#'+cullView.map(p=>p.path+':'+p.tier+':'+(p.lifecycle||'normal')+':'+(p.move_selected===true?'1':'0')).join('|');
   if(recursiveScan){
     if(sig===lastCullSig&&lastStep===currentStep){
       document.getElementById('sShowing').textContent=filtered.length;
@@ -6691,7 +6698,7 @@ function renderCullStep(items){
 }
 function cullMoveCounts(){
   const blurry=photos.filter(p=>p.tier==='blurry'&&!['pending_trash','pending_permanent_delete','trashed','permanently_deleted'].includes(p.lifecycle));
-  return {total:blurry.length,selected:blurry.filter(p=>p.move_selected!==false).length};
+  return {total:blurry.length,selected:blurry.filter(p=>p.move_selected===true).length};
 }
 function updateCullMoveButton(){
   const mb=document.getElementById('moveBlurryBtn');if(!mb)return;
@@ -6929,7 +6936,7 @@ function showLb(){
   ms.style.display=(currentStep==='cull'&&p.tier==='blurry')?'inline-block':'none';
   if(currentStep==='cull')tg.textContent='⇄ '+(TIER_NAME[p.tier]||'清晰')+' → '+(TIER_NAME[NEXT_TIER[p.tier||'sharp']]);
   if(currentStep==='cull'&&p.tier==='blurry'){
-    const on=p.move_selected!==false;
+    const on=p.move_selected===true;
     ms.textContent=on?'☑ 本次移动':'☐ 保留原位';
     ms.classList.toggle('toggle',on);ms.classList.toggle('restore',!on);
   }
@@ -7062,7 +7069,7 @@ document.getElementById('lbToggle').onclick=()=>{const p=lbList[lbIndex];if(!p)r
     p.tier=d.tier;p.move_selected=!!d.move_selected;if(d.path)p.path=d.path;
     lastCullSig='';lastCullMoveSig='';renderCullStep(photos);updateCullMoveButton();showLb();});};
 document.getElementById('lbPhoneBg').onclick=()=>{const p=lbList[lbIndex];if(p)togglePhoneBg(p.path);};
-document.getElementById('lbMoveSelect').onclick=()=>{const p=lbList[lbIndex];if(p&&p.tier==='blurry')setBlurryMoveSelection(p.path,p.move_selected===false);};
+document.getElementById('lbMoveSelect').onclick=()=>{const p=lbList[lbIndex];if(p&&p.tier==='blurry')setBlurryMoveSelection(p.path,p.move_selected!==true);};
 document.addEventListener('keydown',e=>{
   if(!document.getElementById('lightbox').classList.contains('open'))return;
   if(e.key==='Escape')closeLb();
@@ -7128,7 +7135,7 @@ document.getElementById('moveBlurryBtn').onclick=async function(){
     const d=await r.json();
     if(!r.ok||d.error)throw new Error(d.error||('HTTP '+r.status));
     (photos||[]).forEach(p=>{
-      if(p&&p.tier==='blurry'&&p.move_selected!==false&&visibleInReview(p)){
+      if(p&&p.tier==='blurry'&&p.move_selected===true&&visibleInReview(p)){
         p.lifecycle='pending_trash';
         p.move_selected=false;
       }
@@ -7316,7 +7323,9 @@ def api_library_root_remove():
     if any(state.get(key, {}).get('running') for key in ('cull', 'dedup', 'rank')):
         return jsonify({'error': '分析任务运行中，请等待分析完成后再移除图库索引'}), 409
     try:
-        preview_result = catalog_clear_offline_previews(DATA_ROOT, INDEX_DB, root_id)
+        # Removing a library record is metadata-only. Cached offline previews
+        # are managed by the separate, explicitly requested cleanup action.
+        # Never delete preview files before the catalog transaction succeeds.
         result = catalog_remove_library_root(INDEX_DB, root_id)
         if not result:
             return jsonify({'error': '图库不存在'}), 404
@@ -7326,7 +7335,8 @@ def api_library_root_remove():
             'ok': True,
             'media_count': int(result.get('media_count') or 0),
             'source_removed': bool(result.get('source_removed')),
-            'preview_removed': int(preview_result.get('removed') or 0),
+            'preview_removed': 0,
+            'preview_preserved': True,
         })
     except Exception as exc:
         logger.warning("library index removal failed", exc_info=True)
@@ -7793,7 +7803,7 @@ def api_progress(step):
                                   'soft': s['soft'], 'blurry': s['blurry'],
                                   'move_selected': sum(
                                       1 for p in all_photos
-                                      if p.get('tier') == 'blurry' and p.get('move_selected', True)
+                                      if p.get('tier') == 'blurry' and p.get('move_selected', False)
                                   ),
                                   'cache_hits': s.get('cache_hits',0),
                                   'folder_status': s.get('folder_status',{})}})
@@ -8361,8 +8371,8 @@ def api_toggle_status():
         return jsonify({'error': '未找到照片'}), 404
     now_kept = tier != 'blurry'
     s.setdefault('overrides', {}).setdefault(path, {})['tier'] = tier
-    s['overrides'][path]['move_selected'] = (tier == 'blurry')
-    _save_review_overrides([(path, tier, tier == 'blurry')])
+    s['overrides'][path]['move_selected'] = False
+    _save_review_overrides([(path, tier, False)])
     _activity('人工分类', path, tier)
     # Manual review is classification-only. Never move a file merely because
     # its badge was changed; disk changes happen only via an explicit Move action.
@@ -8374,7 +8384,7 @@ def api_toggle_status():
                   # Moving is a separate user choice. Entering Blurry selects
                   # the photo by default; leaving Blurry removes it from the
                   # pending-move set.
-                  'move_selected': tier == 'blurry'})
+                  'move_selected': False})
     sp = s['sharp_paths']
     for old in (path, new_path):
         if old in sp:
@@ -8391,7 +8401,7 @@ def api_toggle_status():
     move_total = sum(1 for p in s['photos'] if p.get('tier') == 'blurry')
     move_selected = sum(
         1 for p in s['photos']
-        if p.get('tier') == 'blurry' and p.get('move_selected', True)
+        if p.get('tier') == 'blurry' and p.get('move_selected', False)
     )
     return jsonify({'ok': True, 'tier': tier, 'kept': now_kept, 'badge': badge,
                     'badgeType': bt, 'path': new_path, 'thumb': photo['thumb'],
@@ -8403,7 +8413,7 @@ def api_toggle_status():
 def _blurry_move_counts():
     photos = state['cull'].get('photos', [])
     blurry = [p for p in photos if p.get('tier') == 'blurry']
-    selected = [p for p in blurry if p.get('move_selected', True)]
+    selected = [p for p in blurry if p.get('move_selected', False)]
     return len(selected), len(blurry)
 
 
@@ -8425,7 +8435,7 @@ def api_select_blurry():
                 photo['move_selected'] = selected
                 state['cull'].setdefault('overrides', {}).setdefault(photo.get('path'), {})['move_selected'] = selected
         _save_review_overrides([
-            (p.get('path'), p.get('tier'), p.get('move_selected', True))
+            (p.get('path'), p.get('tier'), p.get('move_selected', False))
             for p in photos if p.get('tier') == 'blurry' and p.get('path')
         ])
         count, total = _blurry_move_counts()
@@ -8461,7 +8471,7 @@ def api_move_blurry():
     rows = [
         pp for pp in state['cull'].get('photos', [])
         if pp.get('tier') == 'blurry'
-        and pp.get('move_selected', True)
+        and pp.get('move_selected', False)
         and pp.get('lifecycle') not in
         ('pending_trash','pending_permanent_delete','trashed','permanently_deleted')
         and pp.get('path')
