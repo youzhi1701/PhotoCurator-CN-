@@ -932,6 +932,7 @@ jobs:
       - name: Performance architecture regression gate
         run: |
           python performance_gate_test.py
+          python test_desktop_instance_guard.py
 
       - name: Real desktop UI interaction smoke test
         run: |
