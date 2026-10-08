@@ -1348,7 +1348,7 @@ def _photo_sidecars(path):
         if key in seen:
             continue
         seen.add(key)
-        if candidate.is_file():
+        if candidate.is_file() and not candidate.is_symlink():
             out.append(candidate)
     return out
 
@@ -1428,11 +1428,65 @@ def _safe_move_file(src, dst):
             pass
 
 
-def _move_photo_bundle(src, dst):
+def _sidecar_review_snapshot(path):
+    """Freeze identity of the auxiliary files belonging to a reviewed photo."""
+    return [
+        {'path': str(aux), 'signature': _file_action_signature(aux)}
+        for aux in _photo_sidecars(path)
+    ]
+
+
+def _check_reviewed_sidecars(photo, records, *, destination=None):
+    """Never move or delete newly added/replaced XMP/AAE without review."""
+    if not isinstance(records, list):
+        raise RuntimeError('后台任务缺少照片辅件快照，已停止以保护原片')
+    original = Path(photo)
+    expected = []
+    for rec in records:
+        if not isinstance(rec, dict):
+            raise RuntimeError('照片辅件记录无效')
+        aux = Path(str(rec.get('path') or ''))
+        if (aux.parent != original.parent or aux.stem != original.stem
+                or aux.suffix.lower() not in ('.xmp', '.aae')
+                or aux.is_symlink()):
+            raise RuntimeError('照片辅件路径非法')
+        _verify_file_action_source(aux, rec.get('signature'))
+        if destination and Path(destination).with_suffix(aux.suffix).exists():
+            raise FileExistsError('照片辅件目标已存在')
+        expected.append(aux)
+    existing = {os.path.normcase(str(p)) for p in _photo_sidecars(photo)}
+    if existing != {os.path.normcase(str(p)) for p in expected} or len(expected) != len(existing):
+        raise RuntimeError('照片辅件在提交任务后发生变化，须重新复核')
+    return expected
+
+
+def _resume_sidecar_bundle(photo, destination, records):
+    """Reconcile partially moved sidecars only when identity still matches."""
+    if not isinstance(records, list):
+        raise RuntimeError('缺少辅件身份记录，拒绝自动恢复')
+    original = Path(photo)
+    for rec in records:
+        if not isinstance(rec, dict):
+            raise RuntimeError('辅件身份记录损坏')
+        aux = Path(str(rec.get('path') or ''))
+        if (aux.parent != original.parent or aux.stem != original.stem
+                or aux.suffix.lower() not in ('.xmp', '.aae')
+                or aux.is_symlink()):
+            raise RuntimeError('辅件恢复路径不匹配')
+        dest = Path(destination).with_suffix(aux.suffix)
+        if aux.is_file():
+            _verify_file_action_source(aux, rec.get('signature'))
+            _safe_move_file(aux, dest)
+        else:
+            _verify_file_action_source(aux, rec.get('signature'), moved_to=dest)
+
+
+def _move_photo_bundle(src, dst, sidecar_records=None):
     """Move a photo and its XMP/AAE sidecars as one rollback-capable bundle."""
     src = Path(src)
     dst = Path(dst)
-    sidecars = _photo_sidecars(src)
+    sidecars = (_photo_sidecars(src) if sidecar_records is None else
+                _check_reviewed_sidecars(src, sidecar_records, destination=dst))
     moved = []
     try:
         _safe_move_file(src, dst)
@@ -1440,6 +1494,8 @@ def _move_photo_bundle(src, dst):
         for sidecar in sidecars:
             side_dst = dst.with_suffix(sidecar.suffix)
             if side_dst.exists():
+                if sidecar_records is not None:
+                    raise FileExistsError('辅件目标被占用，不覆盖任何文件')
                 side_dst = _unique_destination(side_dst)
             _safe_move_file(sidecar, side_dst)
             moved.append((side_dst, sidecar))
@@ -1567,7 +1623,7 @@ def _ensure_software_trash_record(original, trash_path, source_step):
     return trash_id
 
 
-def _move_to_software_trash(src, root, source_step, planned_trash_path=None):
+def _move_to_software_trash(src, root, source_step, planned_trash_path=None, sidecar_records=None):
     """Move one photo into the reversible trash using a persisted planned path.
 
     The planned path is stored in the background-task payload before filesystem
@@ -1593,7 +1649,7 @@ def _move_to_software_trash(src, root, source_step, planned_trash_path=None):
     else:
         dst = _trash_destination(src, root)
 
-    _move_photo_bundle(src, dst)
+    _move_photo_bundle(src, dst, sidecar_records=sidecar_records)
     trash_path = str(dst.resolve())
     try:
         trash_id = _ensure_software_trash_record(
@@ -1675,7 +1731,7 @@ def _restore_trash_item(trash_id):
     return str(restored)
 
 
-def _purge_trash_item(trash_id):
+def _purge_trash_item(trash_id, sidecar_records=None):
     with _DB_LOCK, connect_db(INDEX_DB, timeout=15) as db:
         row = db.execute(
             "SELECT trash_path FROM software_trash WHERE id=?", (int(trash_id),)
@@ -1690,7 +1746,8 @@ def _purge_trash_item(trash_id):
         raise FileNotFoundError(
             "无法确认回收站照片已删除：文件不可访问或设备离线，记录已保留"
         )
-    sidecars = _photo_sidecars(target)
+    sidecars = (_photo_sidecars(target) if sidecar_records is None else
+                _check_reviewed_sidecars(target, sidecar_records))
     target.unlink()
     for sidecar in sidecars:
         try:
@@ -1874,6 +1931,7 @@ def _background_move_to_trash(payload):
     try:
         if target is not None and Path(target).is_file():
             _verify_file_action_source(target, payload.get('source_identity'))
+            _check_reviewed_sidecars(target, payload.get('sidecar_records'))
         if target is None or not Path(target).is_file():
             row = _media_state_get(original)
             if row and row.get('state') == 'trashed':
@@ -1884,6 +1942,8 @@ def _background_move_to_trash(payload):
             if planned_trash and Path(planned_trash).is_file():
                 _verify_file_action_source(original, payload.get('source_identity'),
                                            moved_to=planned_trash)
+                _resume_sidecar_bundle(original, planned_trash,
+                                       payload.get('sidecar_records'))
                 trash_id = _ensure_software_trash_record(
                     original, planned_trash, source_step
                 )
@@ -1902,7 +1962,8 @@ def _background_move_to_trash(payload):
 
         trash_id, trash_path = _move_to_software_trash(
             target, folder, source_step,
-            planned_trash_path=(planned_trash or None)
+            planned_trash_path=(planned_trash or None),
+            sidecar_records=payload.get('sidecar_records')
         )
         _delete_review_override(original)
         _apply_media_lifecycle(original, trash_path, 'trashed', source_step, trash_id)
@@ -1935,7 +1996,7 @@ def _background_permanent_delete(payload):
                 "无法确认照片已永久删除：文件不可访问或设备离线，状态已保留"
             )
         _verify_file_action_source(target, payload.get('source_identity'))
-        sidecars = _photo_sidecars(target)
+        sidecars = _check_reviewed_sidecars(target, payload.get('sidecar_records'))
         target.unlink()
         for sidecar in sidecars:
             try:
@@ -1977,6 +2038,8 @@ def _background_restore_trash(payload):
             _verify_file_action_source(str(payload.get('trash_path') or ''),
                                        payload.get('source_identity'),
                                        moved_to=restore_hint)
+            _resume_sidecar_bundle(str(payload.get('trash_path') or ''),
+                                    restore_hint, payload.get('sidecar_records'))
             _apply_media_lifecycle(
                 original_hint, restore_hint, 'normal',
                 str(payload.get('source_step') or '')
@@ -1996,15 +2059,20 @@ def _background_restore_trash(payload):
 
         if trash_file.is_file():
             _verify_file_action_source(trash_file, payload.get('source_identity'))
+            _check_reviewed_sidecars(trash_file, payload.get('sidecar_records'),
+                                     destination=restored_file)
             restored_file.parent.mkdir(parents=True, exist_ok=True)
             if restored_file.exists():
                 raise FileExistsError("计划的恢复目标已存在，未覆盖任何文件")
-            _move_photo_bundle(trash_file, restored_file)
+            _move_photo_bundle(trash_file, restored_file,
+                               sidecar_records=payload.get('sidecar_records'))
         elif not restored_file.is_file():
             raise FileNotFoundError("回收站中的照片和计划恢复目标均不存在")
         else:
             _verify_file_action_source(trash_file, payload.get('source_identity'),
                                        moved_to=restored_file)
+            _resume_sidecar_bundle(trash_file, restored_file,
+                                    payload.get('sidecar_records'))
 
         with _DB_LOCK, connect_db(INDEX_DB, timeout=15) as db:
             db.execute("DELETE FROM software_trash WHERE id=?", (trash_id,))
@@ -2034,7 +2102,7 @@ def _background_purge_trash(payload):
     original, trash_path, source_step = map(str, row)
     try:
         _verify_file_action_source(trash_path, payload.get('source_identity'))
-        _purge_trash_item(trash_id)
+        _purge_trash_item(trash_id, sidecar_records=payload.get('sidecar_records'))
         _apply_media_lifecycle(original, trash_path, 'permanently_deleted', source_step)
         return {'ok': True, 'original_path': original, 'deleted_path': trash_path}
     except Exception:
@@ -8388,7 +8456,7 @@ def api_dedup_apply():
             {'kind': 'move_to_trash',
              'payload': {'path': path, 'folder': str(folder), 'step': 'dedup',
                          'trash_path': trash_path,
-                         'source_identity': _file_action_signature(path)},
+                         'source_identity': _file_action_signature(path), 'sidecar_records': _sidecar_review_snapshot(path)},
              'priority': 12,
              'idempotency_key': f"move_to_trash:{original}"}
             for path, original, trash_path in prepared
@@ -8473,7 +8541,7 @@ def api_trash_restore():
              'trash_path': row['path'],
              'source_step': row.get('source_step') or '',
              'restore_path': restore_path,
-             'source_identity': _file_action_signature(row['path'])},
+             'source_identity': _file_action_signature(row['path']), 'sidecar_records': _sidecar_review_snapshot(row['path'])},
             priority=8,
             idempotency_key=f"restore_trash:{trash_id}"
         )
@@ -8506,7 +8574,7 @@ def api_trash_purge():
             submitted = TASK_MANAGER.enqueue_many([
                 {'kind': 'purge_trash', 'payload': {
                     'trash_id': row['id'],
-                    'source_identity': _file_action_signature(row['path'])},
+                    'source_identity': _file_action_signature(row['path']), 'sidecar_records': _sidecar_review_snapshot(row['path'])},
                  'priority': 12, 'idempotency_key': f"purge_trash:{row['id']}"}
                 for row in rows
             ])
@@ -8528,7 +8596,7 @@ def api_trash_purge():
         return jsonify({'error': '回收站文件暂不可用，请重连设备后再复核'}), 409
     try:
         task_id, created = TASK_MANAGER.enqueue(
-            'purge_trash', {'trash_id': trash_id, 'source_identity': _file_action_signature(candidate['path'])}, priority=7,
+            'purge_trash', {'trash_id': trash_id, 'source_identity': _file_action_signature(candidate['path']), 'sidecar_records': _sidecar_review_snapshot(candidate['path'])}, priority=7,
             idempotency_key=f"purge_trash:{trash_id}"
         )
     except Exception:
@@ -8563,7 +8631,7 @@ def api_trash_restore_all():
                              'trash_path': row['path'],
                              'source_step': row.get('source_step') or '',
                              'restore_path': restore_path,
-                             'source_identity': _file_action_signature(row['path'])},
+                             'source_identity': _file_action_signature(row['path']), 'sidecar_records': _sidecar_review_snapshot(row['path'])},
                  'priority': 15,
                  'idempotency_key': f"restore_trash:{row['id']}"}
                 for row, restore_path in planned_rows
@@ -8673,6 +8741,7 @@ def api_delete_photo():
         'previous_lifecycle': previous_lifecycle,
         'previous_group_status': previous_group_status,
         'source_identity': source_identity,
+        'sidecar_records': _sidecar_review_snapshot(target),
     }
     if mode == 'trash':
         task_payload['trash_path'] = str(
@@ -9045,7 +9114,7 @@ def api_move_blurry():
                 'kind': 'move_to_trash',
                 'payload': {'path': path, 'folder': str(folder), 'step': 'cull',
                             'trash_path': planned_trash,
-                            'source_identity': _file_action_signature(path)},
+                            'source_identity': _file_action_signature(path), 'sidecar_records': _sidecar_review_snapshot(path)},
                 'priority': 12,
                 'idempotency_key': f"move_to_trash:{original}",
             }
