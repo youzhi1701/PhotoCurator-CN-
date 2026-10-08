@@ -640,8 +640,13 @@ def main():
         delete_task = wait_task(photo_curator, deleted_again.get_json()["task_id"])
         purge_id = delete_task["result"]["trash_id"]
         purge_row = next(x for x in photo_curator._trash_rows(root) if x["id"] == purge_id)
+        purge_preview = client.get(
+            "/api/trash",
+            headers={"Host": f"127.0.0.1:{photo_curator.PORT}"},
+        ).get_json()
         purged = client.post(
-            "/api/trash-purge", json={"id": purge_id},
+            "/api/trash-purge",
+            json={"id": purge_id, "purge_token": purge_preview["purge_token"]},
             headers={"Host": f"127.0.0.1:{photo_curator.PORT}"},
         )
         assert_true(purged.status_code == 202,
