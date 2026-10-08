@@ -199,6 +199,14 @@ def main():
         require("发生错误" not in str(photo_curator.state["dedup"].get("status") or ""),
                 f"UI Dedup 错误：{photo_curator.state['dedup'].get('status')}")
 
+        # A quality model must not silently opt photos into real file movement.
+        default_selected = [
+            p.get("path") for p in photo_curator.state["cull"].get("photos", [])
+            if p.get("tier") == "blurry" and p.get("move_selected") is True
+        ]
+        require(not default_selected,
+                f"模糊算法不能默认选择照片待删除: {default_selected[:5]}")
+
         # Release layout contract: all auxiliary panels belong to the one left
         # control column.  Nothing may reopen as a fixed right/bottom drawer.
         driver.find_element(By.CSS_SELECTOR, ".step[data-step='dedup']").click()
