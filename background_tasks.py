@@ -130,6 +130,57 @@ class BackgroundTaskManager:
             self._cv.notify()
         return task_id, True
 
+    def enqueue_many(self, requests):
+        """Commit a review batch all-or-nothing before workers can observe it.
+
+        Each request is a dict with kind, payload and optional priority/key.
+        Idempotency is resolved within one IMMEDIATE transaction. An invalid
+        entry or DB failure rolls back the entire submission.
+        """
+        entries = list(requests)
+        if not entries:
+            return []
+        now = time.time()
+        pending = []
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            for entry in entries:
+                kind = str(entry["kind"])
+                payload = entry.get("payload") or {}
+                priority = int(entry.get("priority", 50))
+                key = entry.get("idempotency_key")
+                key = str(key) if key else None
+                row = db.execute(
+                    "SELECT id,state FROM background_task WHERE idempotency_key=?",
+                    (key,),
+                ).fetchone() if key else None
+                if row and row[1] in ("queued", "running"):
+                    pending.append((int(row[0]), False, priority))
+                    continue
+                if row:
+                    db.execute(
+                        "UPDATE background_task SET idempotency_key=NULL WHERE id=?",
+                        (int(row[0]),),
+                    )
+                cur = db.execute(
+                    """INSERT INTO background_task
+                       (kind,payload_json,priority,state,idempotency_key,created_at,updated_at)
+                       VALUES(?,?,?,'queued',?,?,?)""",
+                    (kind, json.dumps(payload, ensure_ascii=False),
+                     priority, key, now, now),
+                )
+                pending.append((int(cur.lastrowid), True, priority))
+            db.commit()
+        with self._cv:
+            for task_id, created, priority in pending:
+                if created:
+                    self._seq += 1
+                    heapq.heappush(self._heap, (priority, self._seq, task_id))
+            if any(created for _, created, _ in pending):
+                self._foreground_pressure.set()
+                self._cv.notify_all()
+        return [(task_id, created) for task_id, created, _ in pending]
+
     def _next_task(self):
         with self._cv:
             while not self._stop and not self._heap:

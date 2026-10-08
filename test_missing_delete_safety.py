@@ -168,13 +168,11 @@ class MissingFileDeleteSafetyTests(unittest.TestCase):
                  patch.object(photo_curator, "_apply_media_lifecycle") as lifecycle, \
                  patch.object(photo_curator, "_find_original_for_path",
                               return_value=str(photo)), \
-                 patch.object(photo_curator.TASK_MANAGER, "enqueue",
+                 patch.object(photo_curator.TASK_MANAGER, "enqueue_many",
                               side_effect=OSError("queue unavailable")):
                 response = photo_curator.app.test_client().post("/api/move-blurry")
             self.assertEqual(response.status_code, 503, response.get_json())
-            self.assertEqual(lifecycle.call_count, 2)
-            self.assertEqual(lifecycle.call_args_list[0].args[2], "pending_trash")
-            self.assertEqual(lifecycle.call_args_list[1].args[2], "normal")
+            lifecycle.assert_not_called()
             self.assertTrue(photo.exists())
 
 if __name__ == "__main__":
