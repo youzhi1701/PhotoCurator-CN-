@@ -2890,10 +2890,8 @@ def run_cull(folder, strictness, adaptive, rescue_on, recursive=True):
                                'raw': it['raw'], 'fmt': it['fmt'],
                                'heic': it['heic'],
                                'kept': tier != 'blurry', 'rejected': tier == 'blurry',
-                               # File-action selection is separate from the
-                               # classification itself. Blurry frames start
-                               # selected, but the user may uncheck any of them
-                               # before the explicit Move action.
+                               # File-action selection is entirely manual and
+                               # independent from algorithmic quality classes.
                                'move_selected': (overrides.get(it['path']) or {}).get('move_selected', False)})
             # Newest-processed first in the live grid (no scrolling to bottom).
             # Only the display order is reversed; `kept` stays in capture order
@@ -5174,7 +5172,7 @@ function setupFilterBar(){
       ...(rawFmts.length>1?rawFmts.map(f=>['ext:'+f.toLowerCase(),'仅 '+f]):[])];
     if(!types.some(([k])=>k===cullType))cullType='all';
     bar.style.display='flex';
-    const markable=photos.filter(p=>!['pending_trash','pending_permanent_delete','trashed','permanently_deleted'].includes(p.lifecycle));
+    const markable=photos.filter(p=>!['pending_trash','pending_permanent_delete','trashed','permanently_deleted','pending_restore'].includes(p.lifecycle));
     const moveSelected=markable.filter(p=>p.move_selected===true).length;
     bar.innerHTML=opts.map(([k,l])=>`<button class="chip${k===cullFilter?' active':''}" data-f="${k}">${l}</button>`).join('')
       +`<span class="chip-sep"></span>`
@@ -8510,9 +8508,8 @@ def api_toggle_status():
     photo.update({'path': new_path, 'thumb': thumb_url(new_path), 'tier': tier,
                   'kept': now_kept, 'rejected': not now_kept,
                   'badge': badge, 'badgeType': bt,
-                  # Moving is a separate user choice. Entering Blurry selects
-                  # the photo by default; leaving Blurry removes it from the
-                  # pending-move set.
+                  # A manual quality change does not override an independent
+                  # delete marker; the original file is untouched.
                   'move_selected': previous_selection})
     sp = s['sharp_paths']
     for old in (path, new_path):
@@ -8545,10 +8542,10 @@ def _blurry_move_counts():
 
 @app.route('/api/select-blurry', methods=['POST'])
 def api_select_blurry():
-    """Select/unselect reviewed blurry photos for the next explicit Move action.
+    """Mark/unmark a reviewed photo without touching its original file.
 
-    Classification and file movement are intentionally separate: unselecting a
-    blurry photo keeps its Blurry badge but leaves the source file in place.
+    The route name remains for older clients. Any quality tier may be marked;
+    'all' retains legacy behavior of selecting only blurry recommendations.
     """
 
     data = request.get_json() or {}
