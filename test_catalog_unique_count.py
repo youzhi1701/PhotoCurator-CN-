@@ -19,9 +19,10 @@ class CatalogUniqueCountTests(unittest.TestCase):
                 )
                 for rid, root in (("parent", "F:/photos"), ("child", "F:/photos/trip")):
                     db.execute(
-                        """INSERT INTO library_root(root_id,source_id,original_root,current_root,
-                           display_name,created_at,photo_count) VALUES(?,?,?,?,?,?,?)""",
-                        (rid, "disk1", root, root, rid, 1.0, 2 if rid == "parent" else 1),
+                        """INSERT INTO library_root(root_id,source_id,relative_root,original_root,current_root,
+                           display_name,created_at,photo_count) VALUES(?,?,?,?,?,?,?,?)""",
+                        (rid, "disk1", "" if rid == "parent" else "trip",
+                         root, root, rid, 1.0, 2 if rid == "parent" else 1),
                     )
                 for media_id, rid, path, state in (
                     ("m1", "parent", "F:/photos/trip/A.JPG", "present"),
