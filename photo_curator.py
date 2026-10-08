@@ -2889,7 +2889,7 @@ def run_cull(folder, strictness, adaptive, rescue_on, recursive=True):
                                # classification itself. Blurry frames start
                                # selected, but the user may uncheck any of them
                                # before the explicit Move action.
-                               'move_selected': (overrides.get(it['path']) or {}).get('move_selected', tier == 'blurry')})
+                               'move_selected': (overrides.get(it['path']) or {}).get('move_selected', False)})
             # Newest-processed first in the live grid (no scrolling to bottom).
             # Only the display order is reversed; `kept` stays in capture order
             # so Dedup/Rank still receive survivors in their natural sequence.
@@ -3575,7 +3575,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   .empty .lines b{color:var(--accent)}
   .photo-card{position:relative;border-radius:9px;overflow:hidden;background:var(--panel2);border:2px solid transparent;cursor:pointer}
   .photo-card:hover{border-color:var(--accent);box-shadow:0 4px 12px var(--shadow)}
-  .photo-card.kept{border-color:var(--good)} .photo-card.rejected{opacity:.5}
+  .photo-card.kept{border-color:var(--good)} .photo-card.rejected{opacity:1}
   .photo-card.soft{border-color:var(--warn)}
   .badge.soft{background:var(--warn)}
   .filter-bar{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap}
@@ -3595,10 +3595,12 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   .rank-num{position:absolute;top:6px;left:6px;background:var(--accent);color:#fff;min-width:24px;height:24px;padding:0 6px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;z-index:5}
   .badge{position:absolute;top:6px;right:6px;color:#fff;padding:2px 7px;border-radius:4px;font-size:10px;font-weight:700;z-index:5}
   .badge.good{background:var(--good)} .badge.bad{background:var(--bad)}
-  .move-select{position:absolute;top:6px;left:6px;z-index:8;width:25px;height:25px;border:2px solid #fff;border-radius:6px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;padding:0;font-size:15px;font-weight:900;cursor:pointer;box-shadow:0 1px 6px rgba(0,0,0,.28)}
+  .move-select{position:absolute;top:0;right:0;z-index:8;width:44px;height:44px;border:0;background:transparent;color:#fff;display:flex;align-items:flex-start;justify-content:flex-end;padding:5px 5px 0 0;font-size:17px;font-weight:900;cursor:pointer;text-shadow:0 1px 2px rgba(0,0,0,.3)}
+  .move-select:not(.off)::before{content:'';position:absolute;inset:0;background:#dc2626;clip-path:polygon(0 0,100% 0,100% 100%);z-index:-1}
+  .photo-card[data-tier] .badge-tier{right:auto;left:6px}
   .move-select:hover{transform:scale(1.06)}
-  .move-select.off{background:rgba(255,255,255,.82);color:#667085;border-color:#94a3b8;box-shadow:0 1px 5px rgba(0,0,0,.16)}
-  .move-select.off:hover{color:var(--accent);border-color:var(--accent);background:#fff}
+  .move-select.off{background:transparent;color:transparent;text-shadow:none;opacity:0}
+  .photo-card:hover .move-select.off,.move-select.off:focus-visible{opacity:1;color:#64748b;background:rgba(255,255,255,.9);border-radius:0 0 0 12px}
   .move-summary{display:inline-flex;align-items:center;gap:4px;padding:5px 8px;border-radius:8px;background:var(--panel2);font-size:11px;color:var(--muted)}
   .move-summary b{color:var(--accent);font-size:12px}
   .chip.move-bulk{padding-left:9px;padding-right:9px}
@@ -3619,7 +3621,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   .delete-btn:hover{background:#dc2626;color:#fff}
   .photo-card.pending-delete{border-color:#f59e0b!important;background:color-mix(in srgb,#f59e0b 7%,var(--panel2))}
   .photo-card.trashed{border-color:#ef4444!important;background:color-mix(in srgb,#ef4444 6%,var(--panel2))}
-  .photo-card.pending-delete .photo-img,.photo-card.trashed .photo-img{filter:saturate(.82) brightness(.92)}
+  .photo-card.pending-delete .photo-img,.photo-card.trashed .photo-img{filter:none}
   .lifecycle-badge{position:absolute;top:7px;right:7px;z-index:3;padding:4px 7px;border-radius:7px;font-size:10px;font-weight:800;color:#fff;background:#d97706}
   .lifecycle-badge.trash{background:#dc2626}
   .dedup-choice.pending-delete{border-color:#f59e0b;background:color-mix(in srgb,#f59e0b 7%,var(--panel2))}
@@ -6579,9 +6581,9 @@ function cullLifecycleInfo(p){
 function cullCardHtml(p,idx){const path=escHtml(p.path);
   const life=cullLifecycleInfo(p),deleted=!!life;
   const cls=(p.tier==='sharp'?'kept':p.tier==='soft'?'soft':'rejected')+(life?' '+life[1]:'');
-  const moveOn=p.move_selected!==false;
+  const moveOn=p.move_selected===true;
   const moveSel=!deleted&&p.tier==='blurry'
-    ?`<button class="move-select${moveOn?'':' off'}" data-path="${path}" data-selected="${moveOn?'1':'0'}" title="${moveOn?'已加入本次删除，点击保留在原位置':'保留在原位置，点击重新加入本次删除'}">${moveOn?'✓':'□'}</button>`
+    ?`<button class="move-select${moveOn?'':' off'}" data-path="${path}" data-selected="${moveOn?'1':'0'}" title="${moveOn?'已加入本次删除，点击保留在原位置':'保留在原位置，点击重新加入本次删除'}" >${moveOn?'🗑︎':'＋'}</button>`
     :'';
   const stateBadge=life
     ?((p.lifecycle==='trashed'&&p.trash_id)
@@ -6596,7 +6598,7 @@ function cullCardHtml(p,idx){const path=escHtml(p.path);
     ${p.thumb?`<img class="photo-img" src="${p.thumb}" loading="lazy" decoding="async">`:'<div class="photo-img" style="display:grid;place-items:center;background:var(--panel2)">文件已删除</div>'}
     <div class="photo-info"><div class="pi-row"><span class="photo-name">${escHtml(p.name)}</span><span class="ftype${p.raw?'':(p.heic?' heic':' jpg')}">${p.fmt||(p.raw?'RAW':p.heic?'HEIC':'JPG')}</span>${deleted?'':`<button class="delete-btn" data-step="cull" data-path="${path}" title="删除">🗑 删除</button>`}</div><div class="source-path">${escHtml(p.rel_dir||'当前文件夹')}</div></div></div>`;}
 function syncCullCardNode(node,p,idx){
-  const moveOn=p.move_selected!==false,life=cullLifecycleInfo(p),deleted=!!life;
+  const moveOn=p.move_selected===true,life=cullLifecycleInfo(p),deleted=!!life;
   node.dataset.i=idx;node.dataset.tier=p.tier;node.dataset.life=p.lifecycle||'normal';
   node.dataset.moveSelected=moveOn?'1':'0';
   node.classList.toggle('kept',p.tier==='sharp');
@@ -6616,7 +6618,7 @@ function syncCullCardNode(node,p,idx){
   const ms=node.querySelector('.move-select');
   if(p.tier==='blurry'&&ms&&!deleted){
     ms.dataset.selected=moveOn?'1':'0';ms.classList.toggle('off',!moveOn);
-    ms.textContent=moveOn?'✓':'□';
+    ms.textContent=moveOn?'🗑︎':'＋';
   }
 }
 
@@ -8361,8 +8363,8 @@ def api_toggle_status():
         return jsonify({'error': '未找到照片'}), 404
     now_kept = tier != 'blurry'
     s.setdefault('overrides', {}).setdefault(path, {})['tier'] = tier
-    s['overrides'][path]['move_selected'] = (tier == 'blurry')
-    _save_review_overrides([(path, tier, tier == 'blurry')])
+    s['overrides'][path]['move_selected'] = False
+    _save_review_overrides([(path, tier, False)])
     _activity('人工分类', path, tier)
     # Manual review is classification-only. Never move a file merely because
     # its badge was changed; disk changes happen only via an explicit Move action.
@@ -8374,7 +8376,7 @@ def api_toggle_status():
                   # Moving is a separate user choice. Entering Blurry selects
                   # the photo by default; leaving Blurry removes it from the
                   # pending-move set.
-                  'move_selected': tier == 'blurry'})
+                  'move_selected': False})
     sp = s['sharp_paths']
     for old in (path, new_path):
         if old in sp:
