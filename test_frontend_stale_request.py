@@ -18,4 +18,6 @@ cull=source.split("function renderCullStep(items){",1)[1].split("function cullMo
 assert "cullType==='standard'?(!p.raw&&!p.heic)" in cull
 assert "workspaceScrollByStep.set(workspaceViewKey(currentStep,folder)" in source
 assert "workspaceScrollByStep.get(workspaceViewKey(requestedStep,requestedFolder))" in tabs
+assert "if(requestedStep==='dedup')return;" in tabs
+assert "workspaceScrollByStep.get(workspaceViewKey('dedup',requestFolder))" in dedup
 print("Navigation, scroll restoration and format filter guards OK")
