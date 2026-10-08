@@ -818,11 +818,16 @@ def finish_catalog_scan(db_path, session, *, full_scan=True):
     """Commit a generation; only an error-free full walk may mark media missing."""
     now = time.time()
     with _connect(db_path) as db:
+        # Finalization is serialized with cancellation and new scans.
+        db.execute("BEGIN IMMEDIATE")
         row = db.execute(
-            "SELECT state,error_count FROM scan_session WHERE session_id=?",
+            """SELECT state,error_count,generation,root_id FROM scan_session
+               WHERE session_id=?""",
             (session["session_id"],),
         ).fetchone()
-        if not row or str(row["state"]) != "running":
+        if (not row or str(row["state"]) != "running"
+                or int(row["generation"]) != int(session["generation"])
+                or str(row["root_id"]) != str(session["root_id"])):
             raise RuntimeError("scan session is not active")
         error_count = int(row["error_count"] or 0)
         reconcile_missing = bool(full_scan and error_count == 0)
