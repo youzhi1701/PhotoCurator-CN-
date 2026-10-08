@@ -88,6 +88,9 @@ class BackgroundTaskManager:
     def enqueue(self, kind, payload, priority=50, idempotency_key=None):
         now = time.time()
         with self._connect() as db:
+            # Serialize the read/retire/insert sequence across connections.
+            # Concurrent submissions otherwise race on the unique index.
+            db.execute("BEGIN IMMEDIATE")
             if idempotency_key:
                 row = db.execute("SELECT id,state FROM background_task WHERE idempotency_key=?", (str(idempotency_key),)).fetchone()
                 if row and row[1] in ("queued", "running"):
