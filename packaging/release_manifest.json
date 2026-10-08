@@ -1,8 +1,8 @@
 {
   "product": "PhotoCurator",
   "channel": "candidate",
-  "version": "1.7.1",
-  "installer": "PhotoCurator-Setup-v1.7.1.exe",
+  "version": "1.7.2",
+  "installer": "PhotoCurator-Setup-v1.7.2.exe",
   "upgrade_mode": "in_place",
   "same_app_id": true,
   "data_root": "%LOCALAPPDATA%/PhotoCurator/data",
@@ -24,7 +24,7 @@
   "replace": [
     "app"
   ],
-  "notes": "v1.7.1 性能架构升级：在 v1.7.0 发布级数据与文件安全底座上，统一任务中心轻量心跳并按忙闲自适应轮询；Rank 预览只在输入变化时重算；Cull/Dedup 共用不可变扫描快照并移除扫描过程的大列表重复复制；递归 Cull 与相似组增加无变化渲染短路；离线历史图库改为最多 800 张前台卡片的双向窗口化分页；缩略图缩放合并到浏览器动画帧并延迟偏好写入；移除照片卡片级高频毛玻璃合成；新增性能架构回归门禁，并接入源码、Windows Candidate 与正式 Release 验证。",
+  "notes": "v1.7.2 发布级加固：隔离分析期间的跨图库切换；跨盘移动升级为 SHA-256 内容校验并支持断电后的双副本提交恢复与 XMP/AAE 续传；修复 Dedup 完成后 Rank 预览失效；后台文件任务幂等入队改为原子事务并保留历史；盘符重绑定冲突不再覆盖另一图库状态；高密度照片/相似组取消逐卡毛玻璃合成；诊断包路径脱敏，精确反向地理编码改为用户显式触发；Candidate/Release 增加可选依赖审计、WebView2 微软签名验证以及从当前 Stable 到候选版本的真实静默覆盖升级测试。",
   "release_date": "2026-10-08",
   "published_version": "1.5.0",
   "published_installer": "PhotoCurator-Setup-v1.5.0.exe"
