@@ -6727,7 +6727,7 @@ function cullCardHtml(p,idx){const path=escHtml(p.path);
   return `<div class="photo-card ${cls}" data-i="${idx}" data-path="${path}" data-tier="${p.tier}" data-life="${p.lifecycle||'normal'}" data-move-selected="${moveOn?'1':'0'}">
     ${moveSel}${tierBadge}${stateBadge}
     ${p.thumb?`<img class="photo-img" src="${p.thumb}" loading="lazy" decoding="async">`:'<div class="photo-img" style="display:grid;place-items:center;background:var(--panel2)">文件已删除</div>'}
-    <div class="photo-info"><div class="pi-row"><span class="photo-name">${escHtml(p.name)}</span><span class="ftype${p.raw?'':(p.heic?' heic':' jpg')}">${p.fmt||(p.raw?'RAW':p.heic?'HEIC':'JPG')}</span>${deleted?'':`<button class="delete-btn" data-step="cull" data-path="${path}" title="删除">🗑 删除</button>`}</div><div class="source-path">${escHtml(p.rel_dir||'当前文件夹')}</div></div></div>`;}
+    <div class="photo-info"><div class="pi-row"><span class="photo-name">${escHtml(p.name)}</span><span class="ftype${p.raw?'':(p.heic?' heic':' jpg')}">${p.fmt||(p.raw?'RAW':p.heic?'HEIC':'JPG')}</span></div><div class="source-path">${escHtml(p.rel_dir||'当前文件夹')}</div></div></div>`;}
 function syncCullCardNode(node,p,idx){
   const moveOn=p.move_selected===true,life=cullLifecycleInfo(p),deleted=!!life;
   node.dataset.i=idx;node.dataset.tier=p.tier;node.dataset.life=p.lifecycle||'normal';
