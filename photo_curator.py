@@ -4982,12 +4982,14 @@ function setupFilterBar(){
       ...(rawFmts.length>1?rawFmts.map(f=>['ext:'+f.toLowerCase(),'仅 '+f]):[])];
     if(!types.some(([k])=>k===cullType))cullType='all';
     bar.style.display='flex';
-    const blurry=photos.filter(p=>p.tier==='blurry'&&!['pending_trash','pending_permanent_delete','trashed','permanently_deleted'].includes(p.lifecycle));
-    const moveSelected=blurry.filter(p=>!!p.move_selected).length;
+    const available=photos.filter(p=>!['pending_trash','pending_permanent_delete','trashed','permanently_deleted'].includes(p.lifecycle));
+    const blurry=available.filter(p=>p.tier==='blurry');
+    const moveSelected=available.filter(p=>!!p.move_selected).length;
     bar.innerHTML=opts.map(([k,l])=>`<button class="chip${k===cullFilter?' active':''}" data-f="${k}">${l}</button>`).join('')
       +`<span class="chip-sep"></span>`
       +types.map(([k,l])=>`<button class="chip${k===cullType?' active':''}" data-t="${k}">${l}</button>`).join('')
-      +(blurry.length?`<span class="chip-sep"></span><span class="move-summary">待删除 <b id="cullMoveCount">${moveSelected}/${blurry.length}</b></span><button class="chip move-bulk" id="moveSelAll">全选</button><button class="chip move-bulk" id="moveSelNone">全不选</button>`:'')
+      +(available.length?`<span class="chip-sep"></span><span class="move-summary">待删除 <b id="cullMoveCount">${moveSelected}/${available.length}</b></span>`:'')
+      +(blurry.length?`<button class="chip move-bulk" id="moveSelAll">标记模糊</button><button class="chip move-bulk" id="moveSelNone">撤销模糊标记</button>`:'')
       +`<span class="chip-sep"></span><button class="chip" id="cullLoadMore" style="display:none"></button>`;
     bar.querySelectorAll('.chip[data-f]').forEach(c=>c.onclick=()=>{cullFilter=c.dataset.f;gPage=0;
       bar.querySelectorAll('.chip[data-f]').forEach(x=>x.classList.toggle('active',x.dataset.f===cullFilter));
@@ -6703,12 +6705,16 @@ function updateCullMoveButton(){
   }
 }
 function applyMoveSelectionResponse(path,d){
-  if(path){
-    const pp=photos.find(x=>x.path===path);
-    if(pp)pp.move_selected=!!d.move_selected;
-  }
+  const pp=path?(photos||[]).find(x=>x.path===path):null;
+  if(pp)pp.move_selected=!!d.move_selected;
+  // Update the existing card in place; replacing the gallery on each click
+  // moved controls beneath the pointer and caused accidental repeat actions.
+  const node=path?Array.from(document.querySelectorAll('#gallery .photo-card'))
+    .find(x=>x.dataset.path===path):null;
+  if(node&&pp)syncCullCardNode(node,pp,Number(node.dataset.i)||0);
+  else if(currentStep==='cull')renderCullStep(photos);
   lastCullSig='';lastCullMoveSig='';
-  renderCullStep(photos);
+  setupFilterBar();
   updateCullMoveButton();
   if(document.getElementById('lightbox').classList.contains('open')&&currentStep==='cull')showLb();
 }
@@ -7780,7 +7786,9 @@ def api_progress(step):
                                   'soft': s['soft'], 'blurry': s['blurry'],
                                   'move_selected': sum(
                                       1 for p in all_photos
-                                      if p.get('tier') == 'blurry' and p.get('move_selected', False)
+                                      if p.get('move_selected', False)
+                                      and p.get('lifecycle') not in
+                                      ('pending_trash','pending_permanent_delete','trashed','permanently_deleted')
                                   ),
                                   'cache_hits': s.get('cache_hits',0),
                                   'folder_status': s.get('folder_status',{})}})
