@@ -28,7 +28,7 @@ def block(start, end):
 
 
 # Version changes must not break performance checks unrelated to the version.
-version = re.search(r'^APP_VERSION\\s*=\\s*"(\\d+\\.\\d+\\.\\d+)"', SOURCE, re.M)
+version = re.search(r'^APP_VERSION\s*=\s*"(\d+\.\d+\.\d+)"', SOURCE, re.M)
 require(version is not None, "core version must use numeric semver x.y.z")
 
 # 1) Task center: one lightweight heartbeat, adaptive cadence, no idle
