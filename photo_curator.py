@@ -751,7 +751,7 @@ def _prune_index_db():
 threading.Thread(target=_prune_index_db, daemon=True,
                  name='photocurator-index-prune').start()
 
-APP_VERSION = "1.7.3-dev.7"
+APP_VERSION = "1.7.3-dev.8"
 IS_CODESPACES = os.environ.get('CODESPACES', '').strip().lower() == 'true'
 CODESPACE_NAME = os.environ.get('CODESPACE_NAME', '').strip()
 _CODESPACES_DOMAIN_RAW = os.environ.get(
@@ -5318,12 +5318,24 @@ function renderSources(){
     const current=!!(selectedSource&&selectedSource.source_id===source.source_id);
     const open=source.connected||current;
     const state=source.connected?'已连接':'未连接 · 历史保留';
-    const roots=(source.roots||[]).map(root=>{
+    // Nested registered roots are views inside the same physical data source.
+    // Show their actual ancestry rather than implying they are sibling drives.
+    const rootRows=(source.roots||[]).slice();
+    const rel=r=>String(r.relative_root||'').replace(/\\\\/g,'/').replace(/^\\/+|\\/+$/g,'').toLowerCase();
+    rootRows.sort((a,b)=>rel(a).split('/').length-rel(b).split('/').length||rel(a).localeCompare(rel(b),'zh-CN'));
+    const roots=rootRows.map(root=>{
       const path=root.current_root||root.original_root||'';
+      const key=rel(root);
+      const ancestors=rootRows.filter(other=>{
+        const parent=rel(other);
+        return other!==root&&parent!==key&&(parent===''?key!=='':key.startsWith(parent+'/'));
+      }).length;
+      const indent=Math.min(ancestors,4);
       const title=(root.display_name||path||'照片库')+' · '+Number(root.photo_count||0)+' 张';
       return '<button class="source-root-btn" data-source-root="'+escHtml(path)+'"'
         +' data-root-id="'+escHtml(root.root_id)+'" data-source-id="'+escHtml(source.source_id)+'"'
-        +' data-connected="'+(source.connected?'1':'0')+'" title="'+escHtml(path)+'">'+escHtml(title)+'</button>';
+        +' data-connected="'+(source.connected?'1':'0')+'" style="padding-left:'+(12+indent*16)+'px"'
+        +' title="'+escHtml(path)+'">'+(indent?'↳ ':'')+escHtml(title)+'</button>';
     }).join('');
     return '<details class="source-card '+(source.connected?'connected':'offline')+(current?' current':'')+'" '+(open?'open':'')+'>'
       +'<summary><span class="source-dot '+(source.connected?'online':'offline')+'"></span>'
