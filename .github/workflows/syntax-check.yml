@@ -42,6 +42,8 @@ jobs:
             photo_ranking_v3.py \
             quality_annotations.py \
             test_quality_annotations.py \
+            scene_labels.py \
+            test_scene_labels.py \
             raw_loader.py \
             "基础冒烟测试.py" \
             "Codespaces冒烟测试.py" \
@@ -937,6 +939,7 @@ jobs:
           python -m unittest -v test_missing_delete_safety
           python -m unittest -v test_exact_duplicates
           python -m unittest -v test_quality_annotations
+          python -m unittest -v test_scene_labels
           python -m unittest -v test_db_runtime_wal
           python -m unittest -v test_safe_move_integrity
 
