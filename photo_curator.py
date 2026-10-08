@@ -159,6 +159,12 @@ def _db_init():
             path TEXT PRIMARY KEY, size INTEGER NOT NULL, mtime_ns INTEGER NOT NULL,
             tier TEXT NOT NULL, move_selected INTEGER NOT NULL, updated_at REAL NOT NULL
         )""")
+        # Explicit human deletion intent is independent of algorithm keepers.
+        db.execute("""CREATE TABLE IF NOT EXISTS review_delete_intent (
+            path TEXT PRIMARY KEY,
+            size INTEGER NOT NULL, mtime_ns INTEGER NOT NULL,
+            marked_at REAL NOT NULL
+        )""")
         db.execute("""CREATE TABLE IF NOT EXISTS activity_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL NOT NULL,
             action TEXT NOT NULL, path TEXT, detail TEXT
@@ -7855,6 +7861,10 @@ def api_dedup_results_chunk():
     if status_filter in ('pending','reviewed','updated'):
         all_groups = [g for g in all_groups if str(g.get('status') or 'pending') == status_filter]
     rows = all_groups[offset:offset + limit]
+    members = [m for g in rows for m in g.get('members', []) if m.get('path')]
+    manual_marks = _review_delete_marks(m.get('path') for m in members)
+    for member in members:
+        member['marked_delete'] = member['path'] in manual_marks
     counts = {
         key: sum(1 for g in s.get('photos', []) if str(g.get('status') or 'pending') == key)
         for key in ('pending','reviewed','updated')
@@ -8004,27 +8014,67 @@ def api_dedup_group_action():
                     'kept': len(s['kept_paths'])})
 
 
+
+@app.route('/api/review-delete-mark', methods=['POST'])
+def api_review_delete_mark():
+    """Toggle explicit deletion intent only, leaving file and layout untouched."""
+    data = request.get_json(silent=True) or {}
+    step = str(data.get('step') or '')
+    path = str(data.get('path') or '')
+    if step not in ('dedup', 'rank') or not path:
+        return jsonify({'error': '无效的人工筛选标记'}), 400
+    if path not in _known_step_paths(step):
+        return jsonify({'error': '当前工作区没有这张照片'}), 404
+    marked = bool(data.get('marked', False))
+    try:
+        _set_review_delete_mark(path, marked)
+    except OSError as exc:
+        return jsonify({'error': '照片暂时无法访问：' + str(exc)}), 409
+    except sqlite3.DatabaseError:
+        logger.exception('review delete intent database error')
+        return jsonify({'error': '数据库未能保存标记，请稍后重试'}), 503
+    changed = []
+    if step == 'dedup':
+        for group in state['dedup'].get('groups_data', []):
+            for member in group.get('members', []):
+                if member.get('path') == path:
+                    member['marked_delete'] = marked
+                    changed.append(group)
+                    # Every explicit mark is a review event. A group with no
+                    # marks may remain pending; newly discovered items need review.
+                    current = group.get('status') or 'pending'
+                    if current != 'updated':
+                        group['status'] = 'reviewed' if any(
+                            m.get('marked_delete') for m in group.get('members', [])
+                        ) else 'pending'
+                    if group.get('group_key'):
+                        _set_similarity_group_status(group['group_key'], group['status'])
+    _activity('待删除标记' if marked else '撤销待删除', path, step)
+    return jsonify({'ok': True, 'path': path, 'marked': marked,
+                    'groups': [{'group_id': g.get('group_id'), 'status': g.get('status')}
+                               for g in changed]})
+
+
 @app.route('/api/dedup-apply', methods=['POST'])
 def api_dedup_apply():
-    """Compatibility batch action: queue non-kept duplicates into software trash."""
+    """Queue only photos that a human explicitly marked, never algorithm non-keepers."""
     folder = state.get('folder')
     s = state['dedup']
     if not folder or not Path(folder).is_dir():
         return jsonify({'error': '未选择有效的照片文件夹'}), 400
     _sync_dedup_with_cull()
-    allowed = _cull_allowed_for_dedup()
+    all_paths = {str(m.get('path')) for g in s.get('groups_data', [])
+                 for m in g.get('members', []) if m.get('path')}
+    marks = _review_delete_marks(all_paths)
     queued = []
+    seen = set()
     for group in s.get('groups_data', []):
-        if group.get('status') not in ('reviewed',):
-            continue
-        selected = set(group.get('selected_paths') or [])
         for m in group.get('members', []):
-            p = m.get('path')
-            if not p or p in selected:
+            p = str(m.get('path') or '')
+            if not p or p not in marks or p in seen:
                 continue
+            seen.add(p)
             if m.get('lifecycle') in ('pending_trash','pending_permanent_delete','trashed','permanently_deleted'):
-                continue
-            if allowed is not None and p not in allowed:
                 continue
             original = _find_original_for_path(p)
             planned_trash = str(_trash_destination(Path(p), folder).resolve())
@@ -8037,6 +8087,49 @@ def api_dedup_apply():
             )
             queued.append(task_id)
     return jsonify({'ok': True, 'queued': len(queued), 'task_ids': queued}), 202
+
+
+
+def _review_delete_marks(paths):
+    """Return only explicit and still-valid human deletion marks."""
+    keys = [str(p) for p in dict.fromkeys(paths) if p]
+    if not keys:
+        return set()
+    try:
+        rows = _query_cache_rows(
+            'review_delete_intent', 'path,size,mtime_ns', keys
+        )
+        marked = set()
+        for path, size, mtime_ns in rows:
+            try:
+                st = Path(path).stat()
+                if int(st.st_size) == int(size) and int(st.st_mtime_ns) == int(mtime_ns):
+                    marked.add(str(path))
+            except OSError:
+                pass
+        return marked
+    except Exception:
+        logger.warning("unable to load explicit deletion marks", exc_info=True)
+        return set()
+
+
+def _set_review_delete_mark(path, marked):
+    """Commit one reversible mark; the operation never modifies photo bytes."""
+    target = Path(path)
+    if marked:
+        st = target.stat()
+        with _DB_LOCK, connect_db(INDEX_DB, timeout=15) as db:
+            db.execute("""INSERT INTO review_delete_intent(path,size,mtime_ns,marked_at)
+                          VALUES(?,?,?,?)
+                          ON CONFLICT(path) DO UPDATE SET
+                            size=excluded.size,mtime_ns=excluded.mtime_ns,
+                            marked_at=excluded.marked_at""",
+                       (str(target), int(st.st_size), int(st.st_mtime_ns), time.time()))
+            db.commit()
+    else:
+        with _DB_LOCK, connect_db(INDEX_DB, timeout=15) as db:
+            db.execute("DELETE FROM review_delete_intent WHERE path=?", (str(target),))
+            db.commit()
 
 
 def _known_step_paths(step):
