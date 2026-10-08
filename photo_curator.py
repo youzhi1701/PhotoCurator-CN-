@@ -1810,6 +1810,7 @@ def _background_move_to_trash(payload):
                     original, planned_trash, source_step
                 )
                 _delete_review_override(original)
+                _clear_review_delete_mark(original)
                 _apply_media_lifecycle(
                     original, planned_trash, 'trashed', source_step, trash_id
                 )
@@ -1827,6 +1828,7 @@ def _background_move_to_trash(payload):
             planned_trash_path=(planned_trash or None)
         )
         _delete_review_override(original)
+        _clear_review_delete_mark(original)
         _apply_media_lifecycle(original, trash_path, 'trashed', source_step, trash_id)
         return {'ok': True, 'original_path': original, 'trash_path': trash_path,
                 'trash_id': trash_id}
@@ -1863,6 +1865,7 @@ def _background_permanent_delete(payload):
             db.commit()
         _apply_media_lifecycle(original, path, 'permanently_deleted',
                                str(payload.get('step') or ''))
+        _clear_review_delete_mark(original)
         _activity('永久删除', original, path)
         return {'ok': True, 'original_path': original, 'deleted_path': path}
     except Exception:
@@ -8372,6 +8375,16 @@ def api_dedup_apply():
             queued.append(task_id)
     return jsonify({'ok': True, 'queued': len(queued), 'task_ids': queued}), 202
 
+
+
+def _clear_review_delete_mark(path):
+    """Remove obsolete deletion intent after a verified destructive operation."""
+    try:
+        with _DB_LOCK, connect_db(INDEX_DB, timeout=15) as db:
+            db.execute("DELETE FROM review_delete_intent WHERE path=?", (str(path),))
+            db.commit()
+    except Exception:
+        logger.warning("unable to clear consumed photo deletion intent", exc_info=True)
 
 
 def _requested_review_paths(data):
