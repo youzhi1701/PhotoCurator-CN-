@@ -102,7 +102,7 @@ def main():
         """)
         require(visual["topHeight"] >= 53,
                 f"Aurora 顶栏高度未生效: {visual}")
-        require(260 <= visual["sidebarWidth"] <= 310,
+        require(220 <= visual["sidebarWidth"] <= 260,
                 f"Aurora 侧栏布局未生效: {visual}")
         require("blur(" in visual["glass"],
                 f"Aurora 固定侧栏玻璃材质未生效: {visual}")
@@ -207,34 +207,57 @@ def main():
         require(not default_selected,
                 f"模糊算法不能默认选择照片待删除: {default_selected[:5]}")
 
-        # Release layout contract: all auxiliary panels belong to the one left
-        # control column.  Nothing may reopen as a fixed right/bottom drawer.
+        # V2 tool ownership: the source rail remains compact, tools float
+        # independently and must be movable without reloading the gallery.
         driver.find_element(By.CSS_SELECTOR, ".step[data-step='dedup']").click()
         wait.until(lambda d: "相似照片" in d.find_element(By.ID, "workspaceTitle").text)
-
-        panels = driver.execute_script("""
+        floating = driver.execute_script("""
           const host=document.getElementById('sidebarUtilityHost');
-          const ids=['inspector','taskCenter','activityPanel','toolboxPanel'];
-          const result={};
-          for(const id of ids){
-            const el=document.getElementById(id);
-            const cs=getComputedStyle(el);
-            result[id]={
-              parent:el.parentElement&&el.parentElement.id,
-              position:cs.position,
-              display:cs.display,
-              width:el.getBoundingClientRect().width
-            };
-          }
-          return result;
+          return ['inspector','taskCenter','activityPanel','toolboxPanel'].map(id=>{
+            const p=document.getElementById(id);
+            return {id,inside:host.contains(p),visible:getComputedStyle(p).display!=='none'};
+          });
         """)
-        for panel_id, info in panels.items():
-            require(info["parent"] == "sidebarUtilityHost",
-                    f"{panel_id} 没有归入左侧控制栏：{info}")
-            require(info["position"] != "fixed",
-                    f"{panel_id} 仍然是浮动窗口：{info}")
-            require(info["display"] != "none",
-                    f"{panel_id} 在左侧控制栏中不可见：{info}")
+        require(all(not p["inside"] and not p["visible"] for p in floating),
+                f"浮动工具不应永久占据图库侧栏: {floating}")
+        moved = driver.execute_script("""
+          document.getElementById('settingsQuick').click();
+          const p=document.getElementById('inspector');
+          const header=p.querySelector('.inspector-head');
+          const before=p.getBoundingClientRect();
+          header.setPointerCapture=()=>{};
+          header.dispatchEvent(new PointerEvent('pointerdown',{
+            bubbles:true,pointerId:42,button:0,
+            clientX:before.left+30,clientY:before.top+15
+          }));
+          header.dispatchEvent(new PointerEvent('pointermove',{
+            bubbles:true,pointerId:42,clientX:before.left+90,
+            clientY:before.top+55
+          }));
+          header.dispatchEvent(new PointerEvent('pointerup',{
+            bubbles:true,pointerId:42,clientX:before.left+90,
+            clientY:before.top+55
+          }));
+          const after=p.getBoundingClientRect();
+          return {open:p.classList.contains('is-open'),
+                  pos:getComputedStyle(p).position,
+                  deltaX:after.left-before.left,deltaY:after.top-before.top};
+        """)
+        require(moved["open"] and moved["pos"] == "fixed"
+                and moved["deltaX"] >= 40 and moved["deltaY"] >= 20,
+                f"筛选窗口不能拖动或位置不正确: {moved}")
+        driver.find_element(By.ID, "inspectorClose").click()
+        require(driver.execute_script(
+            "return !document.getElementById('inspector').classList.contains('is-open')"
+        ), "关闭设置窗口失败")
+        for button, panel in (("taskToggle", "taskCenter"),
+                              ("toolboxOpen", "toolboxPanel"),
+                              ("logsQuick", "activityPanel")):
+            driver.execute_script("document.getElementById(arguments[0]).click()", button)
+            require(driver.execute_script(
+                "return document.getElementById(arguments[0]).classList.contains('is-open')",
+                panel), f"{panel} 没有打开")
+            driver.execute_script("closeFloatingPanel(document.getElementById(arguments[0]))", panel)
 
         # One global thumbnail size must materially change duplicate-card width.
         cards = driver.find_elements(By.CSS_SELECTOR, "#gallery .dedup-choice")
@@ -250,7 +273,7 @@ def main():
             require(after > before + 40,
                     f"相似照片缩放没有改变真实卡片宽度：before={before}, after={after}")
 
-        print("UI 冒烟测试通过：启动 / 分析 / 左侧控制栏 / 相似照片真实缩放均符合 v1.7.8 契约")
+        print("UI 冒烟测试通过：启动 / 分析 / 可移动工具窗口 / 相似照片真实缩放均符合 v1.7.8 契约")
     finally:
         try:
             if driver is not None:

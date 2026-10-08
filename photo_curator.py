@@ -4167,6 +4167,47 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   @media(prefers-reduced-motion:reduce){
     .photo-card,.dedup-choice,.workspace-tabs .step{transition:none!important;animation:none!important}
   }
+  /* V2: fixed source rail + freely movable, reusable tool windows. */
+  .library-sidebar{width:240px!important;flex:0 0 240px!important;overflow:hidden!important;padding:10px!important}
+  .library-sidebar .source-browser{flex:1 1 auto!important;min-height:80px!important;max-height:none!important;overflow-y:auto!important}
+  .sidebar-utility-host{display:none!important}
+  #settingsQuick,#taskToggle,#toolboxOpen{display:inline-flex!important;align-items:center;justify-content:center}
+  .pc-floating-window{
+    position:fixed!important;inset:auto!important;
+    top:var(--float-y,88px)!important;left:var(--float-x,calc(50vw - 220px))!important;
+    right:auto!important;bottom:auto!important;
+    width:min(440px,calc(100vw - 16px));height:min(66vh,600px);
+    min-width:280px;min-height:220px;max-width:calc(100vw - 12px);max-height:calc(100vh - 56px);
+    border:1px solid rgba(114,134,193,.28)!important;border-radius:16px!important;
+    box-shadow:0 20px 52px rgba(54,72,120,.20)!important;
+    background:rgba(249,251,255,.94)!important;
+    backdrop-filter:blur(24px) saturate(140%)!important;
+    transform:none!important;opacity:1!important;
+    pointer-events:auto!important;overflow:hidden!important;resize:both;
+    padding:13px!important;display:none!important
+  }
+  .pc-floating-window.is-open{display:flex!important;flex-direction:column!important}
+  .pc-floating-window .inspector-head,.pc-floating-window .task-center-head,
+  .pc-floating-window .toolbox-head,.pc-floating-window .activity-panel-head{
+    cursor:move;user-select:none;touch-action:none;flex:0 0 auto;
+    display:flex!important;align-items:center;justify-content:space-between;
+    border-bottom:1px solid rgba(114,134,193,.16);padding:0 0 10px!important;margin-bottom:10px
+  }
+  .pc-floating-window .inspector-head button,.pc-floating-window .task-center-head button,
+  .pc-floating-window .toolbox-head button,.pc-floating-window .activity-panel-head button{
+    display:inline-flex!important;cursor:pointer
+  }
+  .pc-floating-window .inspector-scroll{flex:1;min-height:0;overflow:auto}
+  #taskCenter.pc-floating-window.is-open{display:grid!important;grid-auto-rows:min-content;align-content:start;gap:8px}
+  #toolboxPanel.pc-floating-window.is-open{display:flex!important}
+  #activityPanel.pc-floating-window.is-open{display:flex!important}
+  #activityPanel .activity-log{flex:1;min-height:0;overflow:auto!important;max-height:none!important}
+  .pc-floating-window .activity-panel-head>div{display:flex;gap:10px}
+  @media(max-width:780px){
+    .library-sidebar{width:190px!important;flex-basis:190px!important}
+    .pc-floating-window{max-width:calc(100vw - 12px)!important}
+    .appbar-actions{gap:3px}.appbar-btn{padding:0 7px}
+  }
 </style></head><body>
 <header class="appbar pywebview-drag-region">
   <div class="app-brand" aria-label="PhotoCurator">
@@ -4190,6 +4231,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
     <button class="appbar-btn" id="settingsQuick">筛选</button>
     <button class="appbar-btn" id="taskToggle">任务</button>
     <button class="appbar-btn icon-btn" id="toolboxOpen" title="工具箱">⌘</button>
+    <button class="appbar-btn" id="logsQuick">日志</button>
   </div>
   <div class="window-controls" aria-label="窗口控制">
     <button id="winMin" title="最小化">—</button>
@@ -4382,10 +4424,11 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
 <aside class="toolbox-panel" id="toolboxPanel">
   <div class="toolbox-head"><div><b>工具箱</b><span>低频辅助与扩展功能</span></div><button id="toolboxClose">×</button></div>
   <button class="tool-card" id="openRankTool"><b>✦ 照片评分 / 精选推荐</b><span>独立扩展工具，不参与默认清理主流程。</span></button>
+  <button class="tool-card" id="resetFloatingLayout"><b>↺ 恢复工具窗口默认布局</b><span>重置位置与尺寸，不影响照片或后台任务。</span></button>
 </aside>
 
 <aside class="activity-panel-sidebar" id="activityPanel">
-  <div class="activity-panel-head"><b>☷ 系统运行日志</b><button id="activityRefresh">刷新</button></div>
+  <div class="activity-panel-head"><b>☷ 系统运行日志</b><div><button id="activityRefresh">刷新</button><button id="activityClose" title="关闭日志">×</button></div></div>
   <div id="activityLog" class="activity-log">暂无记录</div>
 </aside>
 
@@ -4708,33 +4751,118 @@ setTimeout(()=>{
   }
 },1200);
 
-const sidebarUtilityHost=document.getElementById('sidebarUtilityHost');
+/* Independent movable tools: the left rail remains a source tree, not a
+   permanently expanded control column. Closing a tool never cancels tasks. */
 const inspectorPanel=document.getElementById('inspector');
 const toolboxPanel=document.getElementById('toolboxPanel');
 const activityPanel=document.getElementById('activityPanel');
 const taskCenter=document.getElementById('taskCenter');
-[inspectorPanel,taskCenter,activityPanel,toolboxPanel].forEach(panel=>{
-  if(panel)sidebarUtilityHost.appendChild(panel);
-});
-if(inspectorPanel)inspectorPanel.setAttribute('aria-hidden','false');
-function focusSidebarPanel(panel){
-  if(document.body.classList.contains('sidebar-collapsed'))setSidebarCollapsed(false);
-  if(panel)panel.scrollIntoView({behavior:'smooth',block:'nearest'});
+const floatingPanels=[inspectorPanel,taskCenter,activityPanel,toolboxPanel].filter(Boolean);
+let floatingZ=120;
+function floatLayoutKey(panel){return 'pc-floating-layout-v2:'+panel.id;}
+function saveFloatingLayout(panel){
+  const box=panel.getBoundingClientRect();
+  if(!box.width||!box.height)return;
+  try{localStorage.setItem(floatLayoutKey(panel),JSON.stringify({
+    x:Math.round(box.left),y:Math.round(box.top),
+    w:Math.round(box.width),h:Math.round(box.height)
+  }));}catch(_){}
 }
-function setInspectorOpen(on){
-  if(on){
-    const d=document.getElementById('settingsDetails');if(d)d.open=true;
-    loadStorageSummary(true);
-    focusSidebarPanel(inspectorPanel);
+function positionFloatingPanel(panel,x,y){
+  const w=panel.getBoundingClientRect().width||420;
+  const h=panel.getBoundingClientRect().height||320;
+  const left=Math.max(6,Math.min(Number(x)||6,Math.max(6,innerWidth-w-6)));
+  const top=Math.max(48,Math.min(Number(y)||48,Math.max(48,innerHeight-h-8)));
+  panel.style.setProperty('--float-x',left+'px');
+  panel.style.setProperty('--float-y',top+'px');
+}
+function openFloatingPanel(panel){
+  if(!panel)return;
+  const wasOpen=panel.classList.contains('is-open');
+  panel.classList.add('is-open');
+  panel.setAttribute('aria-hidden','false');
+  panel.style.zIndex=String(++floatingZ);
+  if(!wasOpen){
+    let saved=null;
+    try{saved=JSON.parse(localStorage.getItem(floatLayoutKey(panel))||'null');}catch(_){}
+    if(saved&&Number.isFinite(saved.w)&&Number.isFinite(saved.h)){
+      panel.style.width=Math.max(280,Math.min(innerWidth-12,saved.w))+'px';
+      panel.style.height=Math.max(220,Math.min(innerHeight-60,saved.h))+'px';
+    }
+    const n=floatingPanels.indexOf(panel);
+    positionFloatingPanel(panel,saved?.x??Math.max(12,(innerWidth-440)/2+n*20),
+                          saved?.y??(74+n*22));
   }
 }
-document.getElementById('settingsQuick').onclick=()=>setInspectorOpen(true);
-document.getElementById('inspectorClose').onclick=()=>{};
+function closeFloatingPanel(panel){
+  if(!panel)return;
+  if(panel.classList.contains('is-open'))saveFloatingLayout(panel);
+  panel.classList.remove('is-open');
+  panel.setAttribute('aria-hidden','true');
+}
+function toggleFloatingPanel(panel){
+  if(panel.classList.contains('is-open'))closeFloatingPanel(panel);
+  else openFloatingPanel(panel);
+}
+const floatingHeaders={
+  inspector:'.inspector-head',taskCenter:'.task-center-head',
+  activityPanel:'.activity-panel-head',toolboxPanel:'.toolbox-head'
+};
+floatingPanels.forEach(panel=>{
+  panel.classList.add('pc-floating-window');
+  panel.setAttribute('aria-hidden','true');
+  const header=panel.querySelector(floatingHeaders[panel.id]);
+  if(!header)return;
+  let drag=null;
+  header.addEventListener('pointerdown',e=>{
+    if(e.button!==0||e.target.closest('button,input,select,a'))return;
+    const rect=panel.getBoundingClientRect();
+    drag={id:e.pointerId,x:e.clientX-rect.left,y:e.clientY-rect.top};
+    panel.style.zIndex=String(++floatingZ);
+    header.setPointerCapture?.(e.pointerId);
+    e.preventDefault();
+  });
+  header.addEventListener('pointermove',e=>{
+    if(!drag||drag.id!==e.pointerId)return;
+    positionFloatingPanel(panel,e.clientX-drag.x,e.clientY-drag.y);
+  });
+  const done=e=>{
+    if(!drag||drag.id!==e.pointerId)return;
+    drag=null;saveFloatingLayout(panel);
+  };
+  header.addEventListener('pointerup',done);
+  header.addEventListener('pointercancel',done);
+});
+window.addEventListener('resize',()=>{
+  floatingPanels.filter(p=>p.classList.contains('is-open')).forEach(panel=>{
+    const box=panel.getBoundingClientRect();
+    positionFloatingPanel(panel,box.left,box.top);
+  });
+});
+function setInspectorOpen(on){
+  if(!on){closeFloatingPanel(inspectorPanel);return;}
+  const d=document.getElementById('settingsDetails');if(d)d.open=true;
+  openFloatingPanel(inspectorPanel);
+  loadStorageSummary(true);
+}
+document.getElementById('settingsQuick').onclick=()=>toggleFloatingPanel(inspectorPanel);
+document.getElementById('inspectorClose').onclick=()=>setInspectorOpen(false);
 document.getElementById('drawerScrim').onclick=()=>{};
-document.getElementById('toolboxOpen').onclick=()=>focusSidebarPanel(toolboxPanel);
-document.getElementById('toolboxClose').onclick=()=>{};
-document.getElementById('taskToggle').onclick=()=>focusSidebarPanel(taskCenter);
-document.getElementById('taskClose').onclick=()=>{};
+document.getElementById('toolboxOpen').onclick=()=>toggleFloatingPanel(toolboxPanel);
+document.getElementById('toolboxClose').onclick=()=>closeFloatingPanel(toolboxPanel);
+document.getElementById('taskToggle').onclick=()=>toggleFloatingPanel(taskCenter);
+document.getElementById('taskClose').onclick=()=>closeFloatingPanel(taskCenter);
+document.getElementById('logsQuick').onclick=()=>toggleFloatingPanel(activityPanel);
+document.getElementById('activityClose').onclick=()=>closeFloatingPanel(activityPanel);
+document.getElementById('resetFloatingLayout').onclick=()=>{
+  floatingPanels.forEach((panel,i)=>{
+    try{localStorage.removeItem(floatLayoutKey(panel));}catch(_){}
+    panel.style.width='';panel.style.height='';
+    if(panel.classList.contains('is-open'))positionFloatingPanel(
+      panel,Math.max(12,(innerWidth-440)/2+i*20),74+i*22
+    );
+  });
+};
 document.getElementById('openRankTool').onclick=()=>{
   activateStep('rank');
   fetch('/api/progress/rank').then(r=>r.json()).then(d=>{renderRank(d.photos||[]);updateVisibleStepStatus('rank',d);}).catch(()=>{});
