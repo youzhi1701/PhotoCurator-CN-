@@ -411,6 +411,14 @@ def main():
         require_marks = photo_curator._review_delete_marks([str(drop_c)])
         assert_true(str(drop_c) in require_marks, "明确删除意图未持久化")
 
+        # An explicit path is insufficient if the saved mark has changed.
+        stale = client.post(
+            "/api/dedup-apply", json={"paths": [str(keep_b)]},
+            headers={"Host": f"127.0.0.1:{photo_curator.PORT}"},
+        )
+        assert_true(stale.status_code == 409,
+                    "不得处理任何未被用户显式标记的成员")
+
         cancel_mark = client.post(
             "/api/review-delete-mark",
             json={"step": "dedup", "path": str(drop_c), "marked": False},
@@ -423,7 +431,7 @@ def main():
                     json={"step": "dedup", "path": str(drop_c), "marked": True},
                     headers={"Host": f"127.0.0.1:{photo_curator.PORT}"})
         applied = client.post(
-            "/api/dedup-apply", json={},
+            "/api/dedup-apply", json={"paths":[str(drop_c)]},
             headers={"Host": f"127.0.0.1:{photo_curator.PORT}"},
         )
         assert_true(applied.status_code == 202,
@@ -773,7 +781,7 @@ def main():
         assert_true(marked_sync.status_code == 200 and marked_sync.get_json().get("marked"),
                     f"跨阶段待删除标记保存失败：{marked_sync.get_json()}")
         applied_sync = client.post(
-            "/api/dedup-apply", json={},
+            "/api/dedup-apply", json={"paths":[str(drop_c)]},
             headers={"Host": f"127.0.0.1:{photo_curator.PORT}"},
         )
         assert_true(applied_sync.status_code == 202,
