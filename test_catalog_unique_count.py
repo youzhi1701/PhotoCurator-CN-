@@ -121,8 +121,8 @@ class CatalogRelinkCollisionTests(unittest.TestCase):
             new_root.mkdir()
             db_path = Path(tmp) / "catalog.sqlite"
             init_catalog_schema(db_path)
-            old_path = str(old_root / "a.jpg")
-            new_path = str(new_root / "a.jpg")
+            old_path = catalog._canonical_path(old_root / "a.jpg")
+            new_path = catalog._canonical_path(new_root / "a.jpg")
             with connect_db(db_path) as db:
                 db.execute(
                     "INSERT INTO data_source(source_id,identity_key,kind,display_name,created_at) "
@@ -179,7 +179,7 @@ class CatalogPhysicalSourceGuardTest(unittest.TestCase):
             with connect_db(db_path) as db:
                 media_state = db.execute(
                     "SELECT state FROM media_catalog WHERE original_path=?",
-                    (str(old_photo),)).fetchone()
+                    (catalog._canonical_path(old_photo),)).fetchone()
                 scan_state = db.execute(
                     "SELECT state FROM scan_session WHERE session_id=?",
                     (session["session_id"],)).fetchone()
@@ -247,7 +247,7 @@ class CatalogBatchVolumeIdentityTests(unittest.TestCase):
                 rows = db.execute(
                     "SELECT original_path,state FROM media_catalog").fetchall()
             self.assertEqual([(r[0], r[1]) for r in rows],
-                             [(str(original), "present")])
+                             [(catalog._canonical_path(original), "present")])
 
 
 class EmptyScanCatalogGuardTests(unittest.TestCase):
