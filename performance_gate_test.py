@@ -62,6 +62,10 @@ require("entry['paths'] = list(paths)" not in scan,
 require("snapshot = tuple(paths)" in scan, "final shared scan must be immutable")
 require("'paths': snapshot" in scan and "return snapshot" in scan,
         "Cull/Dedup must reuse the same immutable scan result")
+require("'fingerprints': fingerprints" in scan,
+        "shared scan must publish one reusable file-metadata snapshot")
+require("def _shared_scan_fingerprints(" in SOURCE,
+        "shared scan fingerprint accessor missing")
 
 # 4) Rendering: unchanged recursive Cull / similarity payloads must not
 #    rebuild the whole gallery.
@@ -99,6 +103,13 @@ require("_load_cull_metrics_map(images, fingerprints)" in cull,
         "Cull cache lookup must reuse the shared fingerprint pass")
 require("_load_review_overrides(images, fingerprints)" in cull,
         "review overrides must reuse the shared fingerprint pass")
+require("_shared_scan_fingerprints(folder, recursive)" in cull,
+        "Cull must consume shared scan fingerprints")
+dedup = block("def run_dedup(", "# --------------------------------------------------------------------------- #\n#  RANK")
+require("_shared_scan_fingerprints(folder, recursive)" in dedup,
+        "Dedup must consume shared scan fingerprints")
+require(".parent.resolve()" not in dedup,
+        "Dedup folder grouping must not resolve every photo path")
 relative = block("def relative_folder(", "def _path_reservation_key(")
 require(".resolve()" not in relative,
         "relative folder formatting must not perform per-photo filesystem resolve I/O")
@@ -109,6 +120,8 @@ require("_THUMB_BUILD_SEMAPHORE" in SOURCE and "with _THUMB_BUILD_SEMAPHORE:" in
         "thumbnail decode concurrency guard missing")
 require("os.replace(tmp, out)" in thumb_py,
         "thumbnail cache writes must remain atomic")
+require("preview-v2" in SOURCE,
+        "bounded RAW/HEIF display preview cache version must stay current")
 
 # 9) Lightbox navigation preloads adjacent images/EXIF and bounds client cache.
 lightbox = block("const exifCache=new Map()", "/* GPS map")
