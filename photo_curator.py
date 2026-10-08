@@ -8613,31 +8613,35 @@ def api_move_blurry():
                 'path': path,
             }), 409
         checked.append((pp, path))
-    task_ids = []
+    prepared = []
     for pp, path in checked:
         original = _find_original_for_path(path)
         planned_trash = str(_trash_destination(Path(path), folder).resolve())
-        _apply_media_lifecycle(original, path, 'pending_trash', 'cull')
-        try:
-            task_id, _ = TASK_MANAGER.enqueue(
-                'move_to_trash',
-                {'path': path, 'folder': str(folder), 'step': 'cull',
-                 'trash_path': planned_trash},
-                priority=12, idempotency_key=f"move_to_trash:{original}"
-            )
-        except Exception:
-            # Failed queue submission must never leave a false pending-delete
-            # state for a photo that no worker can process.
-            logger.exception("failed to queue reviewed photo move: %s", path)
-            try:
-                _apply_media_lifecycle(original, path, 'normal', 'cull')
-            except Exception:
-                logger.exception("failed to restore photo lifecycle: %s", path)
-            return jsonify({
-                'error': '任务提交失败，未提交的照片仍保留原位，请检查任务中心后重试',
-                'queued': len(task_ids), 'task_ids': task_ids,
-            }), 503
-        task_ids.append(task_id)
+        prepared.append((original, path, planned_trash))
+    # Submit the entire file-action batch in a single DB transaction.
+    # Never leave a partial accepted queue if an individual task insert fails.
+    try:
+        submitted = TASK_MANAGER.enqueue_many([
+            {
+                'kind': 'move_to_trash',
+                'payload': {'path': path, 'folder': str(folder), 'step': 'cull',
+                            'trash_path': planned_trash},
+                'priority': 12,
+                'idempotency_key': f"move_to_trash:{original}",
+            }
+            for original, path, planned_trash in prepared
+        ])
+    except Exception:
+        logger.exception("failed to atomically queue reviewed photo batch")
+        return jsonify({'error': '整批任务提交失败，未移动任何照片，请重试',
+                        'queued': 0, 'task_ids': []}), 503
+    task_ids = [task_id for task_id, _ in submitted]
+    # Workers may already have completed an item. Do not overwrite its
+    # actual lifecycle with a stale pending state.
+    for (original, path, _), (task_id, created) in zip(prepared, submitted):
+        task = TASK_MANAGER.get(task_id)
+        if task and task.get('state') in ('queued', 'running'):
+            _apply_media_lifecycle(original, path, 'pending_trash', 'cull')
     selected_left, eligible_total = _blurry_move_counts()
     return jsonify({'ok': True, 'queued': len(task_ids), 'task_ids': task_ids,
                     'selected': selected_left, 'total': eligible_total}), 202
