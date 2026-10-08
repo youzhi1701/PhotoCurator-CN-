@@ -78,12 +78,26 @@ class BackgroundTaskManager:
     def enqueue(self, kind, payload, priority=50, idempotency_key=None):
         now = time.time()
         with self._connect() as db:
+            # Admission must be atomic. Two concurrent Flask requests can submit
+            # the same file operation within the same millisecond; BEGIN IMMEDIATE
+            # serializes the idempotency lookup + insert instead of relying on a
+            # UNIQUE-index exception after the fact.
+            db.execute("BEGIN IMMEDIATE")
             if idempotency_key:
-                row = db.execute("SELECT id,state FROM background_task WHERE idempotency_key=?", (str(idempotency_key),)).fetchone()
+                row = db.execute(
+                    "SELECT id,state FROM background_task WHERE idempotency_key=?",
+                    (str(idempotency_key),)
+                ).fetchone()
                 if row and row[1] in ("queued", "running"):
+                    db.commit()
                     return int(row[0]), False
                 if row:
-                    db.execute("DELETE FROM background_task WHERE id=?", (int(row[0]),))
+                    # Keep completed/failed attempts for audit history while
+                    # freeing the live idempotency key for a new attempt.
+                    db.execute(
+                        "UPDATE background_task SET idempotency_key=NULL WHERE id=?",
+                        (int(row[0]),)
+                    )
             cur = db.execute(
                 """INSERT INTO background_task
                    (kind,payload_json,priority,state,idempotency_key,created_at,updated_at)
