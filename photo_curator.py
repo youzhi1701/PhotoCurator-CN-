@@ -6438,30 +6438,39 @@ function selectDedupPhoto(groupId,path){
     })
     .catch(err=>toast('切换失败：'+(err.message||'未知错误'),'bad'));
 }
-function applyDedupSelection(){
+async function applyDedupSelection(){
   const btn=document.getElementById('dedupApplyBtn');
-  btn.disabled=true;btn.textContent='正在处理…';
-  fetch('/api/dedup-apply',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})
-    .then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;})
-    .then(d=>{
-      const first=(d.photos||[]);
-      dedupLiveStore.clear();first.forEach(g=>{if(g&&g.group_id!=null)dedupLiveStore.set(String(g.group_id),g);});
-      const remain=Number(d.result_total!=null?d.result_total:first.length);
-      renderDedupGroups(first);
-      if(d.truncated)loadRemainingDedup(remain,first.length);
-      if(remain===0){
-        btn.style.display='none';
-        document.getElementById('gallery').innerHTML='<div class="empty"><div class="icon">✓</div><div class="title">相似照片处理完成</div><p>未保留照片已按当前设置处理。</p></div>';
-        document.getElementById('resultTools').style.display='none';
-      }else{
-        btn.style.display='block';
-      }
-      const extra=(d.failed||0)?('，'+d.failed+' 张处理失败，可再次尝试'):'';
-      toast('已处理 '+(d.moved||0)+' 张相似照片'+extra,(d.failed||0)?'bad':'good');
-      document.getElementById('progressText').textContent=(remain===0?'处理完成':'部分处理完成')+' · 已移动 '+(d.moved||0)+' 张未保留照片'+extra;
-    })
-    .catch(err=>toast('处理失败：'+(err.message||'未知错误'),'bad'))
-    .finally(()=>{btn.disabled=false;btn.textContent='✓ 确认处理未保留照片';});
+  if(btn.disabled)return;
+  try{
+    const preview=await fetch('/api/review-dedup-apply');
+    const review=await preview.json();
+    if(!preview.ok||review.error)throw new Error(review.error||('HTTP '+preview.status));
+    if(!review.total){
+      toast('当前没有已复核且待处理的相似照片','info');
+      return;
+    }
+    const names=(review.items||[]).slice(0,8).map(row=>'· '+row.name).join('\\n');
+    const detail='将 '+review.total+' 张已确认不保留的相似照片移入可恢复的软件回收站。'
+      +(names?'\\n'+names:'')+(review.total>8?'\\n…其余照片请在相似组中复核':'');
+    const confirmed=await askBatchConfirm(
+      '相似照片集中复核',detail,'确认移入回收站'
+    );
+    if(!confirmed)return;
+    btn.disabled=true;btn.textContent='正在提交…';
+    const r=await fetch('/api/dedup-apply',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({review_token:review.review_token})
+    });
+    const d=await r.json();
+    if(!r.ok||d.error)throw new Error(d.error||('HTTP '+r.status));
+    toast('已提交后台处理 '+(d.queued||0)+' 张相似照片','good');
+    document.getElementById('progressText').textContent=
+      '已提交 '+(d.queued||0)+' 张未保留照片 · 可在任务中心查看结果';
+    lastDedupSig='';
+    await syncCurrentView();
+    refreshTaskCenter();
+  }catch(err){toast('相似照片批量处理失败：'+(err.message||'未知错误'),'bad');}
+  finally{btn.disabled=false;btn.textContent='✓ 确认处理未保留照片';}
 }
 document.getElementById('dedupApplyBtn').onclick=applyDedupSelection;
 
@@ -8179,39 +8188,111 @@ def api_dedup_group_action():
                     'kept': len(s['kept_paths'])})
 
 
-@app.route('/api/dedup-apply', methods=['POST'])
-def api_dedup_apply():
-    """Compatibility batch action: queue non-kept duplicates into software trash."""
-    folder = state.get('folder')
-    s = state['dedup']
-    if not folder or not Path(folder).is_dir():
-        return jsonify({'error': '未选择有效的照片文件夹'}), 400
-    _sync_dedup_with_cull()
+def _dedup_apply_rows():
+    """Construct reviewed non-kept intents without changing file state."""
     allowed = _cull_allowed_for_dedup()
-    queued = []
-    for group in s.get('groups_data', []):
-        if group.get('status') not in ('reviewed',):
+    rows = []
+    for group in state['dedup'].get('groups_data', []):
+        if group.get('status') != 'reviewed':
             continue
         selected = set(group.get('selected_paths') or [])
-        for m in group.get('members', []):
-            p = m.get('path')
-            if not p or p in selected:
+        keep_fingerprint = '|'.join(sorted(str(p) for p in selected))
+        group_key = str(group.get('group_key') or group.get('group_id') or '')
+        for member in group.get('members', []):
+            path = str(member.get('path') or '')
+            if not path or path in selected:
                 continue
-            if m.get('lifecycle') in ('pending_trash','pending_permanent_delete','trashed','permanently_deleted'):
+            if member.get('lifecycle') in (
+                    'pending_trash', 'pending_permanent_delete', 'trashed',
+                    'permanently_deleted', 'pending_restore'):
                 continue
-            if allowed is not None and p not in allowed:
+            if allowed is not None and path not in allowed:
                 continue
-            original = _find_original_for_path(p)
-            planned_trash = str(_trash_destination(Path(p), folder).resolve())
-            _apply_media_lifecycle(original, p, 'pending_trash', 'dedup')
-            task_id, _ = TASK_MANAGER.enqueue(
-                'move_to_trash',
-                {'path': p, 'folder': str(folder), 'step': 'dedup',
-                 'trash_path': planned_trash},
-                priority=12, idempotency_key=f"move_to_trash:{original}"
-            )
-            queued.append(task_id)
-    return jsonify({'ok': True, 'queued': len(queued), 'task_ids': queued}), 202
+            rows.append({
+                'path': path, 'group': group_key, 'keep': keep_fingerprint,
+            })
+    return rows
+
+
+def _dedup_apply_grant_rows(rows):
+    """Review cannot be reused after any selected keeper or group changes."""
+    return [{
+        'path': 'dedup|{}|{}|{}'.format(
+            row['group'], row['keep'], row['path']
+        )
+    } for row in rows]
+
+
+@app.route('/api/review-dedup-apply', methods=['GET'])
+def api_review_dedup_apply():
+    """Preview all currently reviewed duplicate decisions; no file moves."""
+    folder = state.get('folder')
+    if not folder or not Path(folder).is_dir():
+        return jsonify({'error': '请先选择有效的照片文件夹'}), 400
+    _sync_dedup_with_cull()
+    rows = _dedup_apply_rows()
+    return jsonify({
+        'total': len(rows),
+        'review_token': (_issue_pending_review_grant(
+            _dedup_apply_grant_rows(rows)) if rows else ''),
+        'items': [{'path': row['path'], 'name': Path(row['path']).name,
+                   'group': row['group']} for row in rows[:30]],
+        'truncated': len(rows) > 30,
+    })
+
+
+@app.route('/api/dedup-apply', methods=['POST'])
+def api_dedup_apply():
+    """Queue reviewed non-kept duplicate photos atomically after explicit consent."""
+    folder = state.get('folder')
+    if not folder or not Path(folder).is_dir():
+        return jsonify({'error': '请先选择有效的照片文件夹'}), 400
+    _sync_dedup_with_cull()
+    rows = _dedup_apply_rows()
+    token = (request.get_json(silent=True) or {}).get('review_token')
+    if not rows or not _consume_pending_review_grant(
+            token, _dedup_apply_grant_rows(rows)):
+        return jsonify({'error': '相似照片复核凭证缺失、失效或保留选择已变化，请重新复核'}), 409
+    source_root = os.path.normcase(os.path.realpath(str(folder)))
+    checked = []
+    seen = set()
+    for row in rows:
+        path = row['path']
+        real = os.path.normcase(os.path.realpath(path))
+        try:
+            inside = os.path.commonpath([source_root, real]) == source_root
+        except (ValueError, OSError):
+            inside = False
+        if not inside or not Path(real).is_file() or real in seen:
+            return jsonify({'error': '相似组文件已移走、重复、离线或不属于当前图库，请重新复核',
+                            'path': path}), 409
+        seen.add(real)
+        checked.append((path, _find_original_for_path(path)))
+    prepared = []
+    try:
+        for path, original in checked:
+            planned_trash = str(_trash_destination(Path(path), folder).resolve())
+            prepared.append((path, original, planned_trash))
+        submitted = TASK_MANAGER.enqueue_many([
+            {'kind': 'move_to_trash',
+             'payload': {'path': path, 'folder': str(folder), 'step': 'dedup',
+                         'trash_path': trash_path},
+             'priority': 12,
+             'idempotency_key': f"move_to_trash:{original}"}
+            for path, original, trash_path in prepared
+        ])
+    except Exception:
+        logger.exception('reviewed dedup batch enqueue failed')
+        return jsonify({'error': '整批相似照片处理任务提交失败，没有移动任何照片',
+                        'queued': 0, 'task_ids': []}), 503
+    task_ids = [task_id for task_id, _ in submitted]
+    for (path, original, _), (task_id, _) in zip(prepared, submitted):
+        task = TASK_MANAGER.get(task_id)
+        if task and task.get('state') in ('queued', 'running'):
+            _apply_media_lifecycle(original, path, 'pending_trash', 'dedup')
+    _activity('提交相似照片集中处理', folder, f'已提交 {len(task_ids)} 张')
+    return jsonify({'ok': True, 'queued': len(task_ids),
+                    'task_ids': task_ids}), 202
 
 
 def _known_step_paths(step):
