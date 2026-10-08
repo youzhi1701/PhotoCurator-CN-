@@ -4183,7 +4183,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
     background:rgba(249,251,255,.94)!important;
     backdrop-filter:blur(24px) saturate(140%)!important;
     transform:none!important;opacity:1!important;
-    pointer-events:auto!important;overflow:auto!important;resize:both;
+    pointer-events:auto!important;overflow:hidden!important;resize:both;
     padding:13px!important;display:none!important
   }
   .pc-floating-window.is-open{display:flex!important;flex-direction:column!important}
