@@ -444,6 +444,9 @@ jobs:
           if "selected_path': selected" in source:
               raise SystemExit("Legacy single-keeper dedup state returned")
 
+          scan_region = source.split("def _scan_snapshot_key", 1)[1].split(
+              "# --------------------------------------------------------------------------- #\n#  CULL", 1
+          )[0]
           helper = source.split("def _shared_list_images", 1)[1].split(
               "# --------------------------------------------------------------------------- #\n#  CULL", 1
           )[0]
@@ -469,8 +472,10 @@ jobs:
               "custom_output = ''",
               "output_mode,",
               "custom_output,",
+              "def _scan_snapshot_key(",
+              "key = _scan_snapshot_key(folder, recursive)",
           ):
-              if required_key_part not in helper:
+              if required_key_part not in scan_region:
                   raise SystemExit("Shared scan key is missing configuration identity: " + required_key_part)
 
           cull_block = source.split("def run_cull(", 1)[1].split(
