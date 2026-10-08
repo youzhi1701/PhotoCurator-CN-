@@ -578,7 +578,7 @@ jobs:
           )
           missing_ui = [item for item in required_ui if item not in ui]
           if missing_ui:
-              raise SystemExit("v1.7.6 workspace contract missing: " + repr(missing_ui))
+              raise SystemExit("v1.7.7 workspace contract missing: " + repr(missing_ui))
 
           shortcuts = core.split("@app.route('/api/shortcuts')", 1)[1].split(
               "@app.route('/api/sources')", 1
@@ -931,6 +931,7 @@ jobs:
           python -m unittest -v test_background_task_history
           python -m unittest -v test_catalog_unique_count
           python -m unittest -v test_missing_delete_safety
+          python -m unittest -v test_db_runtime_wal
 
       - name: Performance architecture regression gate
         run: |
