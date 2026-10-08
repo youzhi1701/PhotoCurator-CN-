@@ -1,8 +1,8 @@
 {
   "product": "PhotoCurator",
   "channel": "candidate",
-  "version": "1.7.3",
-  "installer": "PhotoCurator-Setup-v1.7.3.exe",
+  "version": "1.7.4",
+  "installer": "PhotoCurator-Setup-v1.7.4.exe",
   "upgrade_mode": "in_place",
   "same_app_id": true,
   "data_root": "%LOCALAPPDATA%/PhotoCurator/data",
@@ -24,7 +24,7 @@
   "replace": [
     "app"
   ],
-  "notes": "v1.7.3 测试候选：明确提示旧实例阻止新版启动；修复相似组和页面切换时过期异步响应串页；修正普通图片筛选；校正 Windows 数字版本与应用/安装器/自动测试版本一致性。其余全系统改进继续推进中。",
+  "notes": "v1.7.4 Aurora Bubble Glass 测试候选：统一视觉层与桌面导航、侧栏、工作区、操作按钮和照片卡片层级；保持照片内容原样和滚动卡片无实时毛玻璃；使用实际浏览器断言视觉样式以防修改未进入安装包。这是整体升级中的界面阶段，数据与文件安全等其他阶段仍需继续验证。",
   "release_date": "2026-10-08",
   "published_version": "1.5.0",
   "published_installer": "PhotoCurator-Setup-v1.5.0.exe"

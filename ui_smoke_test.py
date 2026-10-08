@@ -86,6 +86,31 @@ def main():
                 f"Dashboard 没有占满主工作区：{layout}")
         require(not layout["duplicateBrand"], "原生标题栏模式不应再显示第二套软件品牌标题")
 
+        # Visual regression: verify the installed UI actually uses the
+        # Aurora Bubble Glass design rather than silently rendering old CSS.
+        visual = driver.execute_script("""
+          const sidebar=document.querySelector('.library-sidebar');
+          const top=document.querySelector('.appbar');
+          const tabs=document.querySelector('.workspace-tabs');
+          return {
+            sidebarWidth:sidebar.getBoundingClientRect().width,
+            topHeight:top.getBoundingClientRect().height,
+            glass:getComputedStyle(sidebar).backdropFilter,
+            tabRadius:getComputedStyle(tabs).borderTopLeftRadius,
+            bodyBg:getComputedStyle(document.body).backgroundImage
+          };
+        """)
+        require(visual["topHeight"] >= 53,
+                f"Aurora 顶栏高度未生效: {visual}")
+        require(260 <= visual["sidebarWidth"] <= 310,
+                f"Aurora 侧栏布局未生效: {visual}")
+        require("blur(" in visual["glass"],
+                f"Aurora 固定侧栏玻璃材质未生效: {visual}")
+        require(visual["tabRadius"] == "17px",
+                f"Bubble 导航圆角未生效: {visual}")
+        require("gradient" in visual["bodyBg"],
+                f"Aurora 背景没有加载: {visual}")
+
         start = wait.until(lambda d: d.find_element(By.ID, "startBtn"))
         require(start.get_attribute("disabled") is not None,
                 "未选择文件夹时“开始分析”必须禁用")
@@ -191,7 +216,7 @@ def main():
             require(after > before + 40,
                     f"相似照片缩放没有改变真实卡片宽度：before={before}, after={after}")
 
-        print("UI 冒烟测试通过：启动 / 分析 / 左侧控制栏 / 相似照片真实缩放均符合 v1.7.3 契约")
+        print("UI 冒烟测试通过：启动 / 分析 / 左侧控制栏 / 相似照片真实缩放均符合 v1.7.4 契约")
     finally:
         try:
             if driver is not None:

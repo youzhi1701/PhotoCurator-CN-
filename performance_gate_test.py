@@ -27,7 +27,7 @@ def block(start, end):
     return SOURCE[a:b]
 
 
-require('APP_VERSION = "1.7.3"' in SOURCE, "expected v1.7.3 source version")
+require('APP_VERSION = "1.7.4"' in SOURCE, "expected v1.7.4 source version")
 
 # 1) Task center: one lightweight heartbeat, adaptive cadence, no idle
 #    fan-out to the three result-bearing progress endpoints.
@@ -170,4 +170,4 @@ activity = block("def _activity(", "def _cached_cull_metrics(")
 require("_ACTIVITY_TRIM_EVERY" in SOURCE and "% _ACTIVITY_TRIM_EVERY" in activity,
         "activity-log cleanup must stay amortized")
 
-print("Performance regression gate OK: v1.7.3 hot paths, rendering, scan metadata, thumbnail scheduling, Lightbox prefetch and compact task heartbeat are intact")
+print("Performance regression gate OK: v1.7.4 hot paths, rendering, scan metadata, thumbnail scheduling, Lightbox prefetch and compact task heartbeat are intact")
