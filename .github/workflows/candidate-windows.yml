@@ -266,6 +266,12 @@ jobs:
           $installer = "release\PhotoCurator-Setup-v$env:CANDIDATE_VERSION.exe"
           if (!(Test-Path $installer)) { throw "Candidate installer not built: $installer" }
 
+      - name: Verify real silent in-place upgrade preserves user data
+        shell: powershell
+        run: |
+          & "packaging\\test_candidate_upgrade.ps1" -Version "$env:CANDIDATE_VERSION"
+          if ($LASTEXITCODE -ne 0) { throw "Candidate in-place installation preservation test failed" }
+
       - name: Upload v1.7.9 test installer
         uses: actions/upload-artifact@v7
         with:
