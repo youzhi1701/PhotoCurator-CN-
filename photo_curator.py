@@ -1360,28 +1360,37 @@ def _safe_move_file(src, dst):
     except OSError:
         pass
 
-    tmp = dst.with_name(dst.name + '.photocurator-part')
-    if tmp.exists():
-        tmp.unlink()
+    # Never delete another attempt's fixed-name .part file. Create a unique
+    # staging file on the destination volume so the final rename is local.
+    with tempfile.NamedTemporaryFile(
+        prefix=dst.name + '.', suffix='.photocurator-part',
+        dir=str(dst.parent), delete=False
+    ) as staging:
+        tmp = Path(staging.name)
     try:
         shutil.copy2(str(src), str(tmp))
         if int(tmp.stat().st_size) != int(src.stat().st_size):
             raise IOError("跨盘复制校验失败：文件大小不一致")
-        try:
-            with open(tmp, 'rb') as fh:
-                os.fsync(fh.fileno())
-        except OSError:
-            pass
+        def digest(path):
+            h = hashlib.sha256()
+            with open(path, 'rb') as fh:
+                for block in iter(lambda: fh.read(1024 * 1024), b''):
+                    h.update(block)
+            return h.digest()
+        if digest(src) != digest(tmp):
+            raise IOError("跨盘复制校验失败：文件内容不一致")
+        with open(tmp, 'rb') as fh:
+            os.fsync(fh.fileno())
+        if dst.exists():
+            raise FileExistsError(str(dst))
         os.replace(str(tmp), str(dst))
         src.unlink()
         return dst
-    except Exception:
+    finally:
         try:
-            if tmp.exists():
-                tmp.unlink()
+            tmp.unlink(missing_ok=True)
         except OSError:
             pass
-        raise
 
 
 def _move_photo_bundle(src, dst):
