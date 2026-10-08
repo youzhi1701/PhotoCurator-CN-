@@ -4092,6 +4092,16 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
     transition:background-color .15s ease,color .15s ease,box-shadow .15s ease}
   @media(prefers-reduced-motion:reduce){.photo-card .move-select{transition:none!important}}
 
+
+  /* Two-state similarity review, never reflow a marked thumbnail. */
+  .dedup-choice.review-marked{outline:3px solid #db3245!important;outline-offset:-3px;
+    background:rgba(255,237,240,.97)!important}
+  .dedup-choice.review-marked .dedup-recommend{background:#d7283b!important;color:#fff!important;
+    box-shadow:0 4px 12px rgba(205,42,61,.18)}
+  .dedup-choice .dedup-recommend{min-height:29px;min-width:106px;
+    transition:background-color .14s ease,color .14s ease}
+  @media(prefers-reduced-motion:reduce){.dedup-choice .dedup-recommend{transition:none!important}}
+
 </style></head><body>
 <header class="appbar pywebview-drag-region">
   <div class="app-brand" aria-label="PhotoCurator">
@@ -4424,7 +4434,7 @@ let lastRankSig='', lastCullSig='', lastDedupSig='', lastStep=null, weightTimer=
 // a later lexical declaration and abort the rest of the interaction bindings.
 let cullChunkToken=0, cullVisibleTotal=0;
 let dedupChunkToken=0;
-let dedupStatusFilter='pending', dedupVisibleTotal=0;
+let dedupStatusFilter='all', dedupVisibleTotal=0;
 let dedupStatusCounts={pending:0,reviewed:0,updated:0};
 // These controls are needed by setupFilterBar() during initial page boot.
 // Define them before the first setupFilterBar() call to avoid TDZ failures
@@ -5013,7 +5023,7 @@ function setupFilterBar(){
   if(currentStep==='dedup'){
     bar.style.display='flex';
     const counts=dedupStatusCounts||{};
-    const opts=[['pending','待筛选'],['reviewed','已筛选'],['updated','新增待复核']];
+    const opts=[['all','全部'],['reviewed','已筛选'],['pending','未筛选']];
     bar.innerHTML=opts.map(([k,l])=>`<button class="chip${dedupStatusFilter===k?' active':''}" data-dstatus="${k}">${l} <span>${Number(counts[k]||0)}</span></button>`).join('')
       +'<span class="chip-sep"></span><button class="chip" id="dedupLoadMore" style="display:none"></button>';
     bar.querySelectorAll('[data-dstatus]').forEach(b=>b.onclick=()=>{
@@ -6165,13 +6175,12 @@ function dedupGroupStatusLabel(status){
 }
 function dedupMemberState(group,p){
   const life=p.lifecycle||'normal';
-  if(life==='pending_trash')return ['待移入回收站','state-pending','pending-delete'];
-  if(life==='pending_permanent_delete')return ['待彻底删除','state-pending','pending-delete'];
+  if(life==='pending_trash')return ['正在移入回收站','state-pending','pending-delete'];
+  if(life==='pending_permanent_delete')return ['正在彻底删除','state-pending','pending-delete'];
   if(life==='trashed')return ['↩ 已删除 · 恢复','state-trash','trashed'];
   if(life==='permanently_deleted')return ['已彻底删除','state-trash','trashed'];
-  if(group.status==='reviewed'&&p.selected)return ['✓ 保留','','selected'];
-  if(p.selected)return ['推荐保留','',''];
-  return ['待筛选','state-neutral',''];
+  if(p.marked_delete)return ['↶ 撤销待删除','state-trash','review-marked'];
+  return ['🗑 标记待删除','state-neutral',''];
 }
 function renderDedupGroups(groups){
   showPhotoView();
@@ -6182,7 +6191,7 @@ function renderDedupGroups(groups){
   const g=document.getElementById('gallery');
   document.getElementById('sShowing').textContent=reviewGroups.length;
   const dedupSig=reviewGroups.map(group=>String(group.group_id)+':'+String(group.status||'pending')+':'
-    +(group.members||[]).filter(visibleInReview).map(p=>p.path+':'+(p.selected?1:0)+':'+(p.lifecycle||'normal')+':'+String(p.score??'')+':'+String(p.name||'')).join(',')).join('|');
+    +(group.members||[]).filter(visibleInReview).map(p=>p.path+':'+(p.marked_delete?1:0)+':'+(p.lifecycle||'normal')+':'+String(p.score??'')+':'+String(p.name||'')).join(',')).join('|');
   if(dedupSig===lastDedupSig&&lastStep===currentStep){updateResultTools();return;}
   lastDedupSig=dedupSig;lastStep=currentStep;
   if(!reviewGroups.length){
@@ -6208,35 +6217,28 @@ function renderDedupGroups(groups){
       const members=allMembers.filter(visibleInReview);
       const deleted=allMembers.length-members.length;
       const active=members.length;
-      const kept=members.filter(p=>p.selected).length;
+      const marked=members.filter(p=>p.marked_delete).length;
       const [statusText,statusClass]=dedupGroupStatusLabel(group.status||'pending');
       html+='<div class="dedup-group" data-group="'+group.group_id+'">';
       html+='<div class="dedup-group-head">'
         +'<div class="dedup-group-title"><b>相似组 '+seq+' · '+members.length+' 张</b>'
         +'<span class="group-status '+statusClass+'">'+statusText+'</span>'
-        +'<span class="dedup-group-meta">保留 '+kept+' · 删除 '+deleted+' · 待处理 '+Math.max(0,active-kept)+'</span></div>'
-        +'<div class="dedup-group-actions">'
-        +'<button class="chip group-complete" data-group="'+group.group_id+'">完成本组</button>'
-        +'<details class="dedup-more"><summary title="更多操作">更多操作</summary><div class="dedup-quick">'
-        +'<button data-dmode="best1" data-group="'+group.group_id+'">保留最佳 1 张</button>'
-        +'<button data-dmode="best2" data-group="'+group.group_id+'">保留最佳 2 张</button>'
-        +'<button data-dmode="all" data-group="'+group.group_id+'">全部保留</button>'
-        +'</div></details></div></div>';
+        +'<span class="dedup-group-meta">待删除 '+marked+' · 已处理 '+deleted+' · 共 '+active+' 张</span></div>'
+        +'<div class="dedup-group-actions"></div></div>';
       html+='<div class="dedup-choices">';
       members.forEach(p=>{
         const [label,badgeClass,cardState]=dedupMemberState(group,p);
-        const selectedClass=(group.status==='reviewed'&&p.selected)?' selected':'';
+        const selectedClass='';
         html+='<div class="dedup-choice'+selectedClass+(cardState?' '+cardState:'')+'" data-group="'+group.group_id+'" data-path="'+escHtml(p.path)+'">';
         const life=p.lifecycle||'normal';
         const disabled=['pending_trash','pending_permanent_delete','permanently_deleted','pending_restore'].includes(life)?' disabled':'';
-        const title=life==='trashed'?'恢复这张照片':(disabled?'后台处理中':'切换保留状态');
+        const title=life==='trashed'?'恢复这张照片':(disabled?'后台处理中':(p.marked_delete?'撤销待删除标记':'标记为待删除'));
         html+='<button class="dedup-recommend '+badgeClass+'" data-group="'+group.group_id+'" data-path="'+escHtml(p.path)+'" data-life="'+escHtml(life)+'" data-trash-id="'+escHtml(p.trash_id||'')+'" title="'+title+'"'+disabled+'>'+label+'</button>';
         if(p.thumb)html+='<img src="'+p.thumb+'" loading="lazy" decoding="async">';
         else html+='<div style="aspect-ratio:3/2;display:grid;place-items:center;background:var(--panel2);color:var(--muted)">文件已删除</div>';
         html+='<div class="dedup-choice-meta"><div><div class="dedup-choice-name">'+escHtml(p.name)+'</div>';
         html+='<div class="source-path">'+escHtml(p.rel_dir||'当前文件夹')+'</div></div>';
-        if(!['pending_trash','pending_permanent_delete','trashed','permanently_deleted'].includes(p.lifecycle))
-          html+='<button class="delete-btn" data-step="dedup" data-path="'+escHtml(p.path)+'" title="删除">🗑</button>';
+
         html+='</div></div>';
       });
       html+='</div></div>';
