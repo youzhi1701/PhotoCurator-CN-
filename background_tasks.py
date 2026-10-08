@@ -170,12 +170,45 @@ class BackgroundTaskManager:
         except Exception:
             pass
 
+    def _counts(self, db):
+        rows = db.execute(
+            "SELECT state,COUNT(*) FROM background_task GROUP BY state"
+        ).fetchall()
+        return {str(k): int(v) for k, v in rows}
+
+    def heartbeat(self):
+        """Minimal periodic UI snapshot.
+
+        The task-center polls this endpoint while the app is open. Returning
+        only aggregate counts plus the newest failure avoids reading and
+        serializing 30 historical rows every heartbeat.
+        """
+        with self._connect() as db:
+            counts = self._counts(db)
+            failed = db.execute(
+                """SELECT id,kind,state,priority,created_at,updated_at,error
+                   FROM background_task
+                   WHERE state='failed'
+                   ORDER BY id DESC LIMIT 1"""
+            ).fetchone()
+        items = []
+        if failed:
+            items.append({
+                "id": int(failed[0]), "kind": failed[1], "state": failed[2],
+                "priority": int(failed[3]), "created_at": float(failed[4]),
+                "updated_at": float(failed[5]), "error": failed[6] or "",
+            })
+        return {
+            "counts": counts,
+            "active": counts.get("queued", 0) + counts.get("running", 0),
+            "items": items,
+        }
+
     def summary(self):
         with self._connect() as db:
-            rows = db.execute("SELECT state,COUNT(*) FROM background_task GROUP BY state").fetchall()
+            counts = self._counts(db)
             latest = db.execute("""SELECT id,kind,state,priority,created_at,updated_at,error
                                    FROM background_task ORDER BY id DESC LIMIT 30""").fetchall()
-        counts = {str(k): int(v) for k, v in rows}
         return {
             "counts": counts,
             "active": counts.get("queued", 0) + counts.get("running", 0),

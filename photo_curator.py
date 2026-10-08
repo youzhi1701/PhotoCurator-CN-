@@ -116,6 +116,8 @@ _RUN_GATE_LOCK = threading.Lock()
 _FILE_PLAN_LOCK = threading.Lock()
 _GEOCODE_LOCK = threading.Lock()
 _GEOCODE_LAST_AT = 0.0
+_ACTIVITY_TRIM_EVERY = 64
+_activity_write_count = 0
 CULL_METRICS_VERSION = 1
 RUNTIME_SCHEMA_VERSION = 2
 
@@ -423,12 +425,20 @@ def _set_similarity_group_status(group_key, status):
 
 
 def _activity(action, path='', detail=''):
+    global _activity_write_count
     try:
         with _DB_LOCK, connect_db(INDEX_DB, timeout=10) as db:
             db.execute("INSERT INTO activity_log(ts,action,path,detail) VALUES(?,?,?,?)",
                        (time.time(), str(action), str(path or ''), str(detail or '')))
-            db.execute("""DELETE FROM activity_log
-                          WHERE id NOT IN (SELECT id FROM activity_log ORDER BY id DESC LIMIT 5000)""")
+            _activity_write_count += 1
+            # Trimming on every click/file action turns a tiny append into a
+            # repeated 5k-row maintenance query. Keep the same bound but prune
+            # only periodically.
+            if _activity_write_count % _ACTIVITY_TRIM_EVERY == 0:
+                db.execute("""DELETE FROM activity_log
+                              WHERE id <= COALESCE(
+                                (SELECT MAX(id) - 5000 FROM activity_log), 0
+                              )""")
             db.commit()
     except Exception:
         logger.debug("activity log write failed", exc_info=True)
@@ -488,9 +498,18 @@ def _query_cache_rows(table, columns, path_keys, chunk_size=400):
     return rows
 
 
-def _load_cull_metrics_map(paths):
+def _load_cull_metrics_map(paths, fingerprints=None):
     """Bulk-load valid clear/quality metrics without opening SQLite per photo."""
-    fps = _fingerprints(paths)
+    if fingerprints is None:
+        fps = _fingerprints(paths)
+    else:
+        # A shared scan snapshot may contain the whole source while this
+        # consumer uses only a filtered subset. Keep cache queries bounded to
+        # exactly the requested paths without touching the filesystem again.
+        fps = {
+            str(p): fingerprints[str(p)]
+            for p in paths if str(p) in fingerprints
+        }
     out = {}
     try:
         rows = _query_cache_rows(
@@ -505,9 +524,18 @@ def _load_cull_metrics_map(paths):
     return out
 
 
-def _load_rank_scores_map(paths):
+def _load_rank_scores_map(paths, fingerprints=None):
     """Bulk-load valid rank scores; stale file versions are ignored."""
-    fps = _fingerprints(paths)
+    if fingerprints is None:
+        fps = _fingerprints(paths)
+    else:
+        # A shared scan snapshot may contain the whole source while this
+        # consumer uses only a filtered subset. Keep cache queries bounded to
+        # exactly the requested paths without touching the filesystem again.
+        fps = {
+            str(p): fingerprints[str(p)]
+            for p in paths if str(p) in fingerprints
+        }
     out = {}
     try:
         rows = _query_cache_rows(
@@ -529,9 +557,18 @@ def _load_rank_scores_map(paths):
     return out
 
 
-def _load_review_overrides(paths):
+def _load_review_overrides(paths, fingerprints=None):
     """Load valid manual decisions only for this scan, never the whole table."""
-    fps = _fingerprints(paths)
+    if fingerprints is None:
+        fps = _fingerprints(paths)
+    else:
+        # A shared scan snapshot may contain the whole source while this
+        # consumer uses only a filtered subset. Keep cache queries bounded to
+        # exactly the requested paths without touching the filesystem again.
+        fps = {
+            str(p): fingerprints[str(p)]
+            for p in paths if str(p) in fingerprints
+        }
     out = {}
     try:
         rows = _query_cache_rows(
@@ -714,7 +751,7 @@ def _prune_index_db():
 threading.Thread(target=_prune_index_db, daemon=True,
                  name='photocurator-index-prune').start()
 
-APP_VERSION = "1.7.1"
+APP_VERSION = "1.7.2"
 IS_CODESPACES = os.environ.get('CODESPACES', '').strip().lower() == 'true'
 CODESPACE_NAME = os.environ.get('CODESPACE_NAME', '').strip()
 _CODESPACES_DOMAIN_RAW = os.environ.get(
@@ -891,6 +928,10 @@ THUMB_DIR = DATA_ROOT / 'cache' / 'thumbnails'
 OFFLINE_PREVIEW_DIR = DATA_ROOT / 'offline_previews'
 THUMB_DIR.mkdir(parents=True, exist_ok=True)
 OFFLINE_PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
+# Keep thumbnail decode work below the level where it starves foreground
+# analysis or WebView input. Browser lazy-loading can otherwise fan out many
+# concurrent requests on a large first screen.
+_THUMB_BUILD_SEMAPHORE = threading.Semaphore(2)
 DEDUP_SIGNATURE_VERSION = 1
 DEDUP_CACHE_DIR = DATA_ROOT / 'config' / 'dedup_features'
 DEDUP_CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -1194,11 +1235,21 @@ def list_images(folder, recursive=False):
 
 
 def relative_folder(path, root):
-    """Human-readable source folder relative to the selected scan root."""
+    """Human-readable source folder without filesystem resolution I/O.
+
+    Scan/analysis paths are already absolute. Using resolve() here caused an
+    extra filesystem lookup for every rendered/analyzed photo, which is
+    especially expensive on USB HDDs. Keep this hot path lexical.
+    """
     try:
-        rel = Path(path).resolve().parent.relative_to(Path(root).resolve())
-        txt = str(rel).replace('\\', ' / ')
-        return txt if txt not in ('', '.') else '当前文件夹'
+        parent = os.path.abspath(os.path.dirname(os.path.normpath(str(path))))
+        root_abs = os.path.abspath(os.path.normpath(str(root)))
+        rel = os.path.relpath(parent, root_abs)
+        if rel == os.curdir:
+            return '当前文件夹'
+        if rel == os.pardir or rel.startswith(os.pardir + os.sep):
+            return os.path.basename(parent) or '当前文件夹'
+        return rel.replace('\\', ' / ')
     except Exception:
         return Path(path).parent.name or '当前文件夹'
 
@@ -1927,18 +1978,32 @@ def make_thumb_file(image_path, size=300):
     out = _thumb_cache_path(image_path)
     if out.exists():
         return out
-    try:
-        with open_image_pil(image_path) as src:   # RAW-aware
-            src.draft('RGB', (size * 2, size * 2))
-            # Honor EXIF orientation and fully detach from the source file
-            # before saving, so Windows never keeps the original photo locked.
-            img = ImageOps.exif_transpose(src).convert('RGB')
-            img.thumbnail((size, size), Image.Resampling.BILINEAR)
-            img.save(out, format='JPEG', quality=80)
-        return out
-    except Exception as e:
-        logger.warning(f"thumb fail {image_path}: {e}")
-        return None
+    with _THUMB_BUILD_SEMAPHORE:
+        # Another request may have produced the same thumbnail while this one
+        # waited for a decode slot.
+        if out.exists():
+            return out
+        tmp = out.with_name(
+            out.name + f".{os.getpid()}.{threading.get_ident()}.tmp"
+        )
+        try:
+            with open_image_pil(image_path) as src:   # RAW-aware
+                src.draft('RGB', (size * 2, size * 2))
+                # Honor EXIF orientation and fully detach from the source file
+                # before saving, so Windows never keeps the original photo locked.
+                img = ImageOps.exif_transpose(src).convert('RGB')
+                img.thumbnail((size, size), Image.Resampling.BILINEAR)
+                img.save(tmp, format='JPEG', quality=80)
+            os.replace(tmp, out)
+            return out
+        except Exception as e:
+            try:
+                if tmp.exists():
+                    tmp.unlink()
+            except OSError:
+                pass
+            logger.warning(f"thumb fail {image_path}: {e}")
+            return None
 
 
 def _background_build_offline_previews(payload):
@@ -2513,6 +2578,46 @@ _SCAN_SNAPSHOT_CV = threading.Condition()
 _SCAN_SNAPSHOTS = {}
 
 
+def _scan_snapshot_key(folder, recursive=True):
+    scan_cfg = state.get('scan') or {}
+    output_mode = str(scan_cfg.get('output_mode') or 'source')
+    custom_output = ''
+    if output_mode == 'custom' and scan_cfg.get('custom_output'):
+        custom_output = os.path.normcase(os.path.realpath(
+            os.path.expanduser(str(scan_cfg.get('custom_output')))
+        ))
+    return (
+        os.path.normcase(os.path.realpath(str(folder))),
+        bool(recursive),
+        output_mode,
+        custom_output,
+    )
+
+
+def _shared_scan_fingerprints(folder, recursive=True):
+    """Return immutable-scan file metadata without re-statting the source."""
+    key = _scan_snapshot_key(folder, recursive)
+    with _SCAN_SNAPSHOT_CV:
+        entry = _SCAN_SNAPSHOTS.get(key) or {}
+        return entry.get('fingerprints') or {}
+
+
+def _release_heavy_scan_snapshot(key, snapshot_at):
+    """Drop large shared path/metadata references after consumers have started.
+
+    The lightweight state/count remains available for diagnostics. Cull/Dedup
+    keep ordinary local references to the immutable tuple/dict while running,
+    so releasing the global cache cannot invalidate active work.
+    """
+    with _SCAN_SNAPSHOT_CV:
+        entry = _SCAN_SNAPSHOTS.get(key)
+        if (not entry or entry.get('state') != 'ready'
+                or float(entry.get('at') or 0) != float(snapshot_at)):
+            return
+        entry['paths'] = ()
+        entry['fingerprints'] = {}
+
+
 def _shared_list_images(folder, recursive=True, max_age=2.0):
     """Enumerate a source once and persist discovery in crash-safe batches.
 
@@ -2521,19 +2626,7 @@ def _shared_list_images(folder, recursive=True, max_age=2.0):
     If the process or disk disappears mid-scan, the scan session remains
     interrupted and no older media rows are marked missing.
     """
-    scan_cfg = state.get('scan') or {}
-    output_mode = str(scan_cfg.get('output_mode') or 'source')
-    custom_output = ''
-    if output_mode == 'custom' and scan_cfg.get('custom_output'):
-        custom_output = os.path.normcase(os.path.realpath(
-            os.path.expanduser(str(scan_cfg.get('custom_output')))
-        ))
-    key = (
-        os.path.normcase(os.path.realpath(str(folder))),
-        bool(recursive),
-        output_mode,
-        custom_output,
-    )
+    key = _scan_snapshot_key(folder, recursive)
     now = time.time()
     with _SCAN_SNAPSHOT_CV:
         entry = _SCAN_SNAPSHOTS.get(key)
@@ -2548,7 +2641,7 @@ def _shared_list_images(folder, recursive=True, max_age=2.0):
                 break
         _SCAN_SNAPSHOTS[key] = {
             'state': 'scanning', 'at': time.time(), 'paths': (),
-            'discovered': 0,
+            'fingerprints': {}, 'discovered': 0,
         }
 
     scan_session = None
@@ -2624,10 +2717,15 @@ def _shared_list_images(folder, recursive=True, max_age=2.0):
 
     paths.sort(key=lambda p: os.path.normcase(str(p)))
     snapshot = tuple(paths)
+    snapshot_at = time.time()
+    # One post-walk metadata pass is shared by Cull + Dedup. Previously both
+    # engines independently stat()'d the same source after sharing the path
+    # scan, wasting I/O on large external drives.
+    fingerprints = _fingerprints(snapshot)
     with _SCAN_SNAPSHOT_CV:
         _SCAN_SNAPSHOTS[key] = {
-            'state': 'ready', 'at': time.time(), 'paths': snapshot,
-            'discovered': len(snapshot),
+            'state': 'ready', 'at': snapshot_at, 'paths': snapshot,
+            'fingerprints': fingerprints, 'discovered': len(snapshot),
         }
         if len(_SCAN_SNAPSHOTS) > 8:
             stale = sorted(
@@ -2637,6 +2735,14 @@ def _shared_list_images(folder, recursive=True, max_age=2.0):
             for old_key, _ in stale[:max(0, len(_SCAN_SNAPSHOTS) - 8)]:
                 _SCAN_SNAPSHOTS.pop(old_key, None)
         _SCAN_SNAPSHOT_CV.notify_all()
+    # The sharing window only needs to cover the parallel core startup. After
+    # that, retaining hundreds of thousands of paths/fingerprints globally
+    # would turn repeated library work into needless long-lived RAM growth.
+    expiry = threading.Timer(
+        15.0, _release_heavy_scan_snapshot, args=(key, snapshot_at)
+    )
+    expiry.daemon = True
+    expiry.start()
     return snapshot
 
 
@@ -2688,16 +2794,22 @@ def run_cull(folder, strictness, adaptive, rescue_on, recursive=True):
               'complete': False, 'src_folder': str(folder), 'recursive': bool(recursive)})
     try:
         images = _shared_list_images(folder, recursive=recursive)
-        current_paths = {str(p) for p in images}
-        cull_cache = _load_cull_metrics_map(images)
-        s['overrides'] = _load_review_overrides(images)
+        # One metadata pass feeds every path-keyed cache lookup. On external
+        # HDD/USB libraries, repeated stat() passes are measurable latency.
+        fingerprints = _shared_scan_fingerprints(folder, recursive) or _fingerprints(images)
+        cull_cache = _load_cull_metrics_map(images, fingerprints)
+        s['overrides'] = _load_review_overrides(images, fingerprints)
         total = len(images) or 1
         items = []   # {name, path, region_s, q}
         cache_buffer = []
 
         def thresholds():
             if adaptive and items:
-                M = float(np.median([it['region_s'] for it in items]))
+                region_values = np.fromiter(
+                    (it['region_s'] for it in items), dtype=np.float32,
+                    count=len(items)
+                )
+                M = float(np.median(region_values))
                 # Sharpness is ~log-distributed; keep the blur floor LOW and the
                 # Soft band WIDE so slightly-soft (Topaz-recoverable) frames are
                 # kept rather than culled. Only clearly-soft frames fall below.
@@ -2707,18 +2819,26 @@ def run_cull(folder, strictness, adaptive, rescue_on, recursive=True):
                 blur_lo, sharp_hi = BASE_BLUR, BASE_SHARP
             blur_lo *= strictness
             sharp_hi *= strictness
-            qs = [it['q'] for it in items]
-            q_rescue = float(np.percentile(qs, 70)) if qs else 65.0
+            if items:
+                quality_values = np.fromiter(
+                    (it['q'] for it in items), dtype=np.float32,
+                    count=len(items)
+                )
+                q_rescue = float(np.percentile(quality_values, 70))
+            else:
+                q_rescue = 65.0
             return blur_lo, sharp_hi, q_rescue
 
-        def classify_all():
+        def classify_all(validate_files=False):
             blur_lo, sharp_hi, q_rescue = thresholds()
             photos, kept = [], []
             sharp = soft = blurry = 0
             overrides = s.get('overrides', {})
             removed = s.get('removed_paths', set())
             for it in items:
-                if it['path'] in removed or not Path(it['path']).is_file():
+                if it['path'] in removed:
+                    continue
+                if validate_files and not Path(it['path']).is_file():
                     continue
                 tier, star = classify_sharpness(it['region_s'], it['q'],
                                                 blur_lo, sharp_hi, q_rescue, rescue_on)
@@ -2736,10 +2856,10 @@ def run_cull(folder, strictness, adaptive, rescue_on, recursive=True):
                 badge, bt = _badge_for(tier, star)
                 photos.append({'name': it['name'], 'path': it['path'],
                                'thumb': thumb_url(it['path']), 'score': f"{it['region_s']:.0f}",
-                               'rel_dir': relative_folder(it['path'], folder),
+                               'rel_dir': it['rel_dir'],
                                'badge': badge, 'badgeType': bt, 'tier': tier,
-                               'raw': is_raw(it['path']), 'fmt': fmt_of(it['path']),
-                               'heic': is_heif(it['path']),
+                               'raw': it['raw'], 'fmt': it['fmt'],
+                               'heic': it['heic'],
                                'kept': tier != 'blurry', 'rejected': tier == 'blurry',
                                # File-action selection is separate from the
                                # classification itself. Blurry frames start
@@ -2749,7 +2869,8 @@ def run_cull(folder, strictness, adaptive, rescue_on, recursive=True):
             # Newest-processed first in the live grid (no scrolling to bottom).
             # Only the display order is reversed; `kept` stays in capture order
             # so Dedup/Rank still receive survivors in their natural sequence.
-            s['photos'] = photos[::-1]
+            photos.reverse()
+            s['photos'] = photos
             s['sharp'], s['soft'], s['blurry'] = sharp, soft, blurry
             s['sharp_paths'] = kept   # kept = sharp + soft (flows to Dedup/Rank)
 
@@ -2779,7 +2900,7 @@ def run_cull(folder, strictness, adaptive, rescue_on, recursive=True):
             if s.get('cancel'):
                 _save_cull_metrics_batch(cache_buffer)
                 cache_buffer.clear()
-                classify_all()
+                classify_all(validate_files=True)
                 s['status'] = (f"已停止：{idx}/{total} · {_tiers(idx)} · "
                                f"已用时 {_fmt(time.time()-t0)}")
                 return
@@ -2805,20 +2926,22 @@ def run_cull(folder, strictness, adaptive, rescue_on, recursive=True):
                 if len(cache_buffer) >= 64:
                     _save_cull_metrics_batch(cache_buffer)
                     cache_buffer.clear()
-            items.append({'name': p.name, 'path': str(p),
-                          'region_s': region_s, 'q': quality})
+            items.append({
+                'name': p.name, 'path': str(p), 'region_s': region_s, 'q': quality,
+                'rel_dir': rel, 'raw': is_raw(p), 'fmt': fmt_of(p), 'heic': is_heif(p),
+            })
             # Reclassification is for live UI only; final output is still
             # classified once more below. Throttle it so very large folders do
             # not repeatedly rescan the entire processed list every five files.
             now = time.time()
             classify_interval = 1.0 if idx < 1000 else (3.0 if idx < 10000 else 8.0)
-            if (idx < 20 and idx % 5 == 0) or idx == len(images) - 1 \
+            if (idx < 20 and idx % 5 == 0) \
                     or now - s.get('_last_classify_at', 0.0) >= classify_interval:
                 classify_all()
                 s['_last_classify_at'] = now
         _save_cull_metrics_batch(cache_buffer)
         cache_buffer.clear()
-        classify_all()
+        classify_all(validate_files=True)
         if last_rel is not None:
             s['folder_status'][last_rel] = '已完成'
         s['current_folder'] = ''
@@ -3012,12 +3135,17 @@ def run_dedup(folder, threshold, ftype='all', pair='both',
         else:
             by_parent = {}
             for p in paths:
-                by_parent.setdefault(os.path.normcase(str(p.parent.resolve())), []).append(p)
+                # p is already absolute from the shared scan; avoid a
+                # filesystem-resolving call for every photo just to group by
+                # parent directory.
+                parent_key = os.path.normcase(os.path.abspath(str(p.parent)))
+                by_parent.setdefault(parent_key, []).append(p)
             batches = [(relative_folder(ps[0], folder), ps)
                        for _, ps in sorted(by_parent.items(), key=lambda kv: kv[0])]
 
         total = len(paths)
-        cull_metric_cache = _load_cull_metrics_map(paths)
+        shared_fingerprints = _shared_scan_fingerprints(folder, recursive)
+        cull_metric_cache = _load_cull_metrics_map(paths, shared_fingerprints or None)
         processed = 0
         all_groups = []
         singleton_paths = []
@@ -3271,7 +3399,8 @@ def run_rank(folder, ftype='all', pair='both', recursive=True):
         total = len(paths)
         s['total'] = total
         analyzer = AdvancedPhotoAnalyzer()
-        rank_cache_map = _load_rank_scores_map(paths)
+        rank_fingerprints = _fingerprints(paths)
+        rank_cache_map = _load_rank_scores_map(paths, rank_fingerprints)
         rank_cache_buffer = []
 
         t0 = time.time()
@@ -3677,7 +3806,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
       radial-gradient(circle at 12% 4%,rgba(77,208,255,.22),transparent 32%),
       radial-gradient(circle at 88% 12%,rgba(170,118,255,.20),transparent 34%),
       radial-gradient(circle at 60% 95%,rgba(255,142,213,.16),transparent 36%),
-      linear-gradient(145deg,#eef7ff 0%,#f7f5ff 46%,#fff5fb 100%);background-attachment:fixed}
+      linear-gradient(145deg,#eef7ff 0%,#f7f5ff 46%,#fff5fb 100%)}
   .top{background:
        radial-gradient(circle at 18% -80%,rgba(113,222,255,.34),transparent 44%),
        radial-gradient(circle at 78% -120%,rgba(205,148,255,.28),transparent 46%),
@@ -3686,7 +3815,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
        border-bottom:1px solid rgba(255,255,255,.28);box-shadow:0 8px 28px rgba(52,72,140,.15)}
   .sidebar{background:rgba(255,255,255,.58);backdrop-filter:blur(24px) saturate(145%);-webkit-backdrop-filter:blur(24px) saturate(145%);
            border-right:1px solid rgba(255,255,255,.65)}
-  .panel-box,.shortcut,.folder-group,.dedup-group,.photo-card,.btn-ghost,.chip,input[type=text],input[type=number],.wgroup select{
+  .panel-box,.shortcut,.btn-ghost,.chip,input[type=text],input[type=number],.wgroup select{
     backdrop-filter:blur(18px) saturate(135%);-webkit-backdrop-filter:blur(18px) saturate(135%)}
   .folder-group,.dedup-group,.photo-card{background:var(--glass);border-color:rgba(255,255,255,.72);box-shadow:0 8px 26px rgba(66,84,132,.08)}
   .folder-head{background:rgba(244,248,255,.72)}
@@ -3750,7 +3879,9 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   body.sidebar-collapsed .nav-icon{width:auto}
   body.sidebar-collapsed .task-center{left:94px}
   .top button,.top input,.top .title-action,.top .window-controls{position:relative;z-index:2}
-  .folder-grid .photo-card{content-visibility:auto;contain-intrinsic-size:190px 240px}
+  .folder-grid .photo-card,.dedup-choice,.catalog-card{
+    content-visibility:auto;contain-intrinsic-size:190px 240px
+  }
   body.processing #settingsPanel input,
   body.processing #settingsPanel select{opacity:.58;pointer-events:none}
 
@@ -6596,10 +6727,38 @@ function barRow(label,v,info,cat,color){const t=(info||'').replace(/"/g,'&quot;'
   const fillBg=color?color:barColor(v);
   const labStyle=color?` style="color:${color};font-weight:600;border-left:3px solid ${color};padding-left:6px"`:'';
   return `<div class="bar${cat?' cat':''}" title="${label}: ${t}"><span class="lab"${labStyle}>${label}</span><span class="track"><span class="fill" style="width:${v}%;background:${fillBg}"></span></span><span class="num">${v}</span></div>`;}
+const exifCache=new Map(),EXIF_CACHE_LIMIT=256;
+function imageViewUrl(path){return '/api/image?path='+encodeURIComponent(path);}
+function getExif(path){
+  if(exifCache.has(path))return Promise.resolve(exifCache.get(path));
+  return fetch('/api/exif?path='+encodeURIComponent(path)).then(r=>{
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    return r.json();
+  }).then(data=>{
+    exifCache.set(path,data);
+    if(exifCache.size>EXIF_CACHE_LIMIT){
+      const first=exifCache.keys().next().value;
+      if(first!==undefined)exifCache.delete(first);
+    }
+    return data;
+  });
+}
+function prefetchLbNeighbors(){
+  if(lbList.length<2)return;
+  const candidates=[
+    lbList[(lbIndex-1+lbList.length)%lbList.length],
+    lbList[(lbIndex+1)%lbList.length]
+  ];
+  candidates.forEach(item=>{
+    if(!item||!item.path)return;
+    const img=new Image();img.decoding='async';img.src=imageViewUrl(item.path);
+    getExif(item.path).catch(()=>{});
+  });
+}
 function showLb(){
   const p=lbList[lbIndex];if(!p)return;
   resetLbZoom();
-  document.getElementById('lbImg').src='/api/image?path='+encodeURIComponent(p.path);
+  document.getElementById('lbImg').src=imageViewUrl(p.path);
   document.getElementById('lbName').textContent=(p.rank!=null?'#'+p.rank+'  ':'')+p.name;
   const extra=(currentStep==='dedup')
     ? ((p.group>1)?('   ·   同组最佳 · 共 '+p.group+' 张（'+(p.group-1)+' 张相似照片已归组）'):'   ·   原始照片')
@@ -6639,13 +6798,14 @@ function showLb(){
     side.innerHTML=`<h3>${currentStep==='cull'?'清晰度':currentStep==='trash'?'软件回收站':'照片'}</h3><div style="font-size:13px;opacity:.9">${escHtml(p.name)}</div><div style="font-size:18px;font-weight:700;margin-top:8px">${escHtml(label)}</div>${currentStep==='trash'?`<div style="font-size:11px;opacity:.7;margin-top:8px;line-height:1.5">原位置：${escHtml(p.original_path||'')}</div>`:''}${currentStep==='rank'&&p.score!=null?`<div style="font-size:11px;opacity:.58;margin-top:4px">综合评分 ${p.score}</div>`:''}`;
   }
   loadExif(p.path,side);
+  prefetchLbNeighbors();
 }
 function exifRow(label,val,allowHtml=false){
   return `<div class="exrow"><span class="lab">${escHtml(label)}</span><span class="val">${allowHtml?val:escHtml(val)}</span></div>`;
 }
 function loadExif(path,side){
   const token=path;side.dataset.exifToken=token;
-  fetch('/api/exif?path='+encodeURIComponent(path)).then(r=>r.json()).then(e=>{
+  getExif(path).then(e=>{
     if(side.dataset.exifToken!==token)return; // user moved on
     let rows='',wantMap=null;
     if(e.date)rows+=exifRow('日期',e.date);
@@ -7162,14 +7322,18 @@ def _raw_preview_file(image_path):
         mtime = os.path.getmtime(image_path)
     except OSError:
         return None
-    key = hashlib.md5(f"{image_path}:{mtime}:preview-v1".encode()).hexdigest()
+    key = hashlib.md5(f"{image_path}:{mtime}:preview-v2".encode()).hexdigest()
     out = THUMB_DIR / f"{key}_full.jpg"
     if out.exists():
         return out
     try:
         with open_image_pil(image_path) as src:
             img = ImageOps.exif_transpose(src).convert('RGB')
-            img.save(out, format='JPEG', quality=90)
+            # Lightbox does not benefit from decoding a 40–60 MP RAW on every
+            # navigation. A 3200px display preview retains inspection detail
+            # while dramatically reducing decode, transfer and WebView memory.
+            img.thumbnail((3200, 3200), Image.Resampling.LANCZOS)
+            img.save(out, format='JPEG', quality=90, optimize=False)
         return out
     except Exception as e:
         logger.warning(f"raw preview fail {image_path}: {e}")
@@ -7944,7 +8108,7 @@ def api_task_center():
             'status': str(step.get('status') or ''),
             'src_folder': step.get('src_folder'),
         }
-    return jsonify({'analysis': analysis, 'files': TASK_MANAGER.summary()})
+    return jsonify({'analysis': analysis, 'files': TASK_MANAGER.heartbeat()})
 
 
 @app.route('/api/tasks/<int:task_id>')
