@@ -530,6 +530,8 @@ class MissingFileDeleteSafetyTests(unittest.TestCase):
                      "path": str(Path(tmp) / ("trash" + str(i) + ".jpg")),
                      "original_path": str(path), "source_step": "cull"}
                     for i, path in enumerate(originals)]
+            for row in rows:
+                Path(row["path"]).write_bytes(b"saved-in-software-trash")
             with patch.dict(photo_curator.state, {"folder": tmp}), \
                  patch.object(photo_curator, "_trash_rows", return_value=rows), \
                  patch.object(photo_curator, "_active_restore_reservations",
@@ -759,9 +761,9 @@ class BackgroundWorkerIdentityTests(unittest.TestCase):
             signature = photo_curator._file_action_signature(image)
             image.unlink()
             image.write_bytes(b"stranger")
-            with patch.object(photo_curator, "_find_original_for_path",
-                              return_value=str(image)), \\
-                 patch.object(photo_curator, "_apply_media_lifecycle"):
+            with (patch.object(photo_curator, "_find_original_for_path",
+                               return_value=str(image)),
+                  patch.object(photo_curator, "_apply_media_lifecycle")):
                 with self.assertRaisesRegex(RuntimeError, "已变化"):
                     photo_curator._background_permanent_delete({
                         "path": str(image), "source_identity": signature})
