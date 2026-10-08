@@ -413,8 +413,12 @@ def main():
             }],
         })
         photo_curator.state["dedup"]["photos"] = photo_curator.state["dedup"]["groups_data"]
+        applied_review = client.get(
+            "/api/review-dedup-apply",
+            headers={"Host": f"127.0.0.1:{photo_curator.PORT}"},
+        ).get_json()
         applied = client.post(
-            "/api/dedup-apply", json={},
+            "/api/dedup-apply", json={"review_token": applied_review["review_token"]},
             headers={"Host": f"127.0.0.1:{photo_curator.PORT}"},
         )
         assert_true(applied.status_code == 202,
@@ -757,8 +761,12 @@ def main():
         assert_true(selected_now == [str(keep_b)],
                     f"模糊化原保留项后没有自动晋升可用照片：{selected_now}")
 
+        sync_review = client.get(
+            "/api/review-dedup-apply",
+            headers={"Host": f"127.0.0.1:{photo_curator.PORT}"},
+        ).get_json()
         applied_sync = client.post(
-            "/api/dedup-apply", json={},
+            "/api/dedup-apply", json={"review_token": sync_review["review_token"]},
             headers={"Host": f"127.0.0.1:{photo_curator.PORT}"},
         )
         assert_true(applied_sync.status_code == 202,

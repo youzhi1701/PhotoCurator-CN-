@@ -269,6 +269,126 @@ class MissingFileDeleteSafetyTests(unittest.TestCase):
                 queued.assert_not_called()
             self.assertEqual(photo.read_bytes(), b"substituted file content")
 
+    def test_dedup_batch_requires_exact_review_and_atomic_acceptance(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            keep = Path(tmp) / "keep.jpg"
+            discard = Path(tmp) / "discard.jpg"
+            keep.write_bytes(b"keep")
+            discard.write_bytes(b"discard")
+            group = {
+                "group_id": 3, "group_key": "group-3",
+                "status": "reviewed", "selected_paths": [str(keep)],
+                "members": [
+                    {"path": str(keep), "selected": True, "lifecycle": "normal"},
+                    {"path": str(discard), "selected": False, "lifecycle": "normal"},
+                ],
+            }
+            with patch.dict(photo_curator.state, {"folder": tmp}), \
+                 patch.dict(photo_curator.state["dedup"],
+                            {"groups_data": [group]}, clear=False), \
+                 patch.object(photo_curator, "_sync_dedup_with_cull"), \
+                 patch.object(photo_curator, "_cull_allowed_for_dedup",
+                              return_value=None), \
+                 patch.object(photo_curator, "_find_original_for_path",
+                              side_effect=lambda x: x), \
+                 patch.object(photo_curator.TASK_MANAGER, "enqueue_many",
+                              return_value=[(707, True)]) as enqueue, \
+                 patch.object(photo_curator.TASK_MANAGER, "get",
+                              return_value=None), \
+                 patch.object(photo_curator, "_apply_media_lifecycle") as lifecycle, \
+                 patch.object(photo_curator, "_activity"):
+                client = photo_curator.app.test_client()
+                preview = client.get("/api/review-dedup-apply").get_json()
+                self.assertEqual(preview["total"], 1)
+                self.assertEqual(preview["items"][0]["path"], str(discard))
+                for payload in ({}, {"review_token": "forged"}):
+                    response = client.post("/api/dedup-apply", json=payload)
+                    self.assertEqual(response.status_code, 409, response.get_json())
+                enqueue.assert_not_called()
+                lifecycle.assert_not_called()
+                token = preview["review_token"]
+                accepted = client.post("/api/dedup-apply",
+                                       json={"review_token": token})
+                self.assertEqual(accepted.status_code, 202, accepted.get_json())
+                submitted = enqueue.call_args.args[0]
+                self.assertEqual(len(submitted), 1)
+                self.assertEqual(submitted[0]["payload"]["path"], str(discard))
+                self.assertEqual(accepted.get_json()["task_ids"], [707])
+                repeat = client.post("/api/dedup-apply",
+                                     json={"review_token": token})
+                self.assertEqual(repeat.status_code, 409)
+                enqueue.assert_called_once()
+            self.assertTrue(keep.exists())
+            self.assertTrue(discard.exists())
+
+    def test_dedup_batch_stale_keeper_change_rejected_and_queue_failure_atomic(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            a, b, c = [Path(tmp) / (name + ".jpg") for name in "abc"]
+            for photo in (a, b, c):
+                photo.write_bytes(b"test")
+            members = [{"path": str(p), "lifecycle": "normal"}
+                       for p in (a, b, c)]
+            group = {"group_id": 11, "status": "reviewed",
+                     "selected_paths": [str(a)], "members": members}
+            with patch.dict(photo_curator.state, {"folder": tmp}), \
+                 patch.dict(photo_curator.state["dedup"],
+                            {"groups_data": [group]}, clear=False), \
+                 patch.object(photo_curator, "_sync_dedup_with_cull"), \
+                 patch.object(photo_curator, "_cull_allowed_for_dedup",
+                              return_value=None), \
+                 patch.object(photo_curator.TASK_MANAGER, "enqueue_many",
+                              side_effect=OSError("database unavailable")) as enqueue, \
+                 patch.object(photo_curator, "_apply_media_lifecycle") as lifecycle:
+                client = photo_curator.app.test_client()
+                stale = client.get("/api/review-dedup-apply").get_json()["review_token"]
+                group["selected_paths"] = [str(b)]
+                changed = client.post("/api/dedup-apply",
+                                      json={"review_token": stale})
+                self.assertEqual(changed.status_code, 409, changed.get_json())
+                enqueue.assert_not_called()
+                fresh = client.get("/api/review-dedup-apply").get_json()["review_token"]
+                failed = client.post("/api/dedup-apply",
+                                     json={"review_token": fresh})
+                self.assertEqual(failed.status_code, 503, failed.get_json())
+                self.assertEqual(failed.get_json()["queued"], 0)
+                self.assertEqual(failed.get_json()["task_ids"], [])
+                enqueue.assert_called_once()
+                lifecycle.assert_not_called()
+            self.assertTrue(all(p.exists() for p in (a, b, c)))
+
+    def test_dedup_batch_rejects_outside_and_offline_path_before_queue(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp) / "source"
+            folder.mkdir()
+            keep = folder / "keep.jpg"
+            keep.write_bytes(b"k")
+            outside = Path(tmp) / "outside.jpg"
+            outside.write_bytes(b"x")
+            for invalid in (str(outside), str(folder / "offline.jpg")):
+                group = {"group_id": 8, "status": "reviewed",
+                         "selected_paths": [str(keep)],
+                         "members": [
+                            {"path": str(keep), "lifecycle": "normal"},
+                            {"path": invalid, "lifecycle": "normal"},
+                         ]}
+                with patch.dict(photo_curator.state, {"folder": str(folder)}), \
+                     patch.dict(photo_curator.state["dedup"],
+                                {"groups_data": [group]}, clear=False), \
+                     patch.object(photo_curator, "_sync_dedup_with_cull"), \
+                     patch.object(photo_curator, "_cull_allowed_for_dedup",
+                                  return_value=None), \
+                     patch.object(photo_curator.TASK_MANAGER, "enqueue_many") as enqueue, \
+                     patch.object(photo_curator, "_apply_media_lifecycle") as lifecycle:
+                    client = photo_curator.app.test_client()
+                    token = client.get("/api/review-dedup-apply").get_json()["review_token"]
+                    response = client.post("/api/dedup-apply",
+                                           json={"review_token": token})
+                    self.assertEqual(response.status_code, 409, response.get_json())
+                    enqueue.assert_not_called()
+                    lifecycle.assert_not_called()
+            self.assertTrue(keep.exists())
+            self.assertTrue(outside.exists())
+
     def test_offline_trash_listing_keeps_every_device_record(self):
         with tempfile.TemporaryDirectory() as tmp:
             a_root = Path(tmp) / "device_A"
