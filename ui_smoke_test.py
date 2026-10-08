@@ -193,8 +193,10 @@ def main():
                 "任务详情关闭按钮无效")
         # Heartbeat reports real counts, not percentages alone.
         driver.execute_script("refreshTaskCenter()")
-        wait.until(lambda d: '/' in d.find_element(By.ID, "taskCull").text)
-        require('/' in driver.find_element(By.ID, "taskDedup").text,
+        # Selenium .text is empty for hidden overlay children; inspect the
+        # element's textContent without reopening or shifting the workspace.
+        wait.until(lambda d: '/' in (d.find_element(By.ID, "taskCull").get_attribute("textContent") or ""))
+        require('/' in (driver.find_element(By.ID, "taskDedup").get_attribute("textContent") or ""),
                 "相似任务详情未包含已处理/总数")
 
         # One global thumbnail size must materially change duplicate-card width.
