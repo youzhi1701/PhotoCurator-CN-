@@ -4206,6 +4206,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
     .pc-floating-window{max-width:calc(100vw - 12px)!important}
     .appbar-actions{gap:3px}.appbar-btn{padding:0 7px}
   }
+  #confirmModalText{white-space:pre-line;max-height:45vh;overflow:auto;overflow-wrap:anywhere;line-height:1.55}
 </style></head><body>
 <header class="appbar pywebview-drag-region">
   <div class="app-brand" aria-label="PhotoCurator">
@@ -7249,10 +7250,21 @@ document.getElementById('exportPbgBtn').onclick=async function(){
 document.getElementById('moveBlurryBtn').onclick=async function(){
   const before=cullMoveCounts();
   if(!before.selected)return;
+  let review;
+  try{
+    const r=await fetch('/api/review-pending',{cache:'no-store'});
+    review=await r.json();
+    if(!r.ok||review.error)throw new Error(review.error||('HTTP '+r.status));
+  }catch(err){toast('复核列表读取失败：'+(err.message||'未知错误'),'bad');return;}
+  if(!review.total){toast('没有需要处理的人工标记照片','good');return;}
+  const names=(review.items||[]).map((p,i)=>
+    (i+1)+'. '+(p.name||p.path)+' · '+(p.tier||'未分类'));
+  const previewText='共 '+review.total+' 张待处理照片，只有确认后才会提交后台移动任务。'
+    +'\\n\\n'+names.join('\\n')
+    +(review.truncated?'\\n…其余照片已折叠，请先在「待删除」筛选中逐一复核':'')
+    +'\\n\\n目标：PhotoCurator 软件回收站，可恢复。';
   const ok=await askBatchConfirm(
-    '批量移入软件回收站',
-    '将人工标记的 '+before.selected+' 张照片移入 PhotoCurator 软件回收站。之后仍可恢复。',
-    '移入回收站'
+    '集中复核 · '+review.total+' 张待删除照片',previewText,'确认移入回收站'
   );
   if(!ok)return;
   this.disabled=true;this.textContent='正在提交 '+before.selected+' 张…';
@@ -8579,6 +8591,32 @@ def api_select_blurry():
         'move_selected': photo['move_selected'],
         'selected': count,
         'total': total,
+    })
+
+
+@app.route('/api/review-pending', methods=['GET'])
+def api_review_pending():
+    """Non-destructive preview of the exact manually marked review set."""
+    rows = [
+        p for p in state['cull'].get('photos', [])
+        if p.get('move_selected') is True
+        and p.get('lifecycle') not in
+        ('pending_trash', 'pending_permanent_delete',
+         'trashed', 'permanently_deleted', 'pending_restore')
+        and p.get('path')
+    ]
+    # Return bounded details for the confirmation dialog. No filesystem
+    # mutation, thumbnails or image decoding occurs on this endpoint.
+    return jsonify({
+        'total': len(rows),
+        'items': [
+            {'path': str(p['path']),
+             'name': str(p.get('name') or Path(p['path']).name),
+             'tier': str(p.get('tier') or ''),
+             'source': str(p.get('rel_dir') or '')}
+            for p in rows[:30]
+        ],
+        'truncated': len(rows) > 30,
     })
 
 
