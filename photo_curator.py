@@ -5321,7 +5321,7 @@ function renderSources(){
     // Nested registered roots are views inside the same physical data source.
     // Show their actual ancestry rather than implying they are sibling drives.
     const rootRows=(source.roots||[]).slice();
-    const rel=r=>String(r.relative_root||'').replace(/\\\\/g,'/').replace(/^\\/+|\\/+$/g,'').toLowerCase();
+    const rel=r=>String(r.relative_root||'').replace(/\\/g,'/').replace(/^\/+|\/+$/g,'').toLowerCase();
     rootRows.sort((a,b)=>rel(a).split('/').length-rel(b).split('/').length||rel(a).localeCompare(rel(b),'zh-CN'));
     const roots=rootRows.map(root=>{
       const path=root.current_root||root.original_root||'';
