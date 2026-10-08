@@ -751,7 +751,7 @@ def _prune_index_db():
 threading.Thread(target=_prune_index_db, daemon=True,
                  name='photocurator-index-prune').start()
 
-APP_VERSION = "1.7.3-dev.4"
+APP_VERSION = "1.7.3-dev.5"
 IS_CODESPACES = os.environ.get('CODESPACES', '').strip().lower() == 'true'
 CODESPACE_NAME = os.environ.get('CODESPACE_NAME', '').strip()
 _CODESPACES_DOMAIN_RAW = os.environ.get(
@@ -5784,11 +5784,13 @@ function applyLatestCoreSnapshot(){
   if(!d)return;
   if(currentStep==='cull'){
     const rows=d.photos||[];
-    cullLiveStore.clear();rows.forEach(p=>{if(p&&p.path)cullLiveStore.set(p.path,p);});
-    renderCullStep(Array.from(cullLiveStore.values()));
+    // A progress snapshot is a bounded preview, not the authoritative full page.
+    // Merge it without discarding rows explicitly paged in by the reviewer.
+    renderCullStep(cullRowsForPayload(d));
     if(!d.running)maybeLoadAllCull(d);
   }else if(currentStep==='dedup'){
-    loadDedupPage(true);
+    // Preserve loaded groups unless there is no prior result window.
+    loadDedupPage(dedupLiveStore.size===0);
   }
   const b=document.getElementById('loadNewResults');if(b)b.style.display='none';
 }
