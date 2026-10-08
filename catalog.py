@@ -474,14 +474,14 @@ def _rebase_persisted_paths(db, root_id, old_root, new_root):
         for table in ("cull_cache", "rank_cache", "review_override"):
             if table in tables:
                 db.execute(
-                    f"UPDATE OR REPLACE {table} SET path=? WHERE path=?",
+                    f"UPDATE OR IGNORE {table} SET path=? WHERE path=?",
                     (new_path, old_path),
                 )
         if "media_state" in tables:
             # original_path is a legacy identity key; rebase it together with
             # current_path while stable media identity remains media_catalog.media_id.
             db.execute(
-                """UPDATE OR REPLACE media_state
+                """UPDATE OR IGNORE media_state
                    SET original_path=?,current_path=
                      CASE WHEN current_path=? THEN ? ELSE current_path END
                    WHERE original_path=?""",
@@ -493,7 +493,7 @@ def _rebase_persisted_paths(db, root_id, old_root, new_root):
             )
         if "similarity_group_member" in tables:
             db.execute(
-                """UPDATE OR REPLACE similarity_group_member
+                """UPDATE OR IGNORE similarity_group_member
                    SET original_path=?,current_path=
                      CASE WHEN current_path=? THEN ? ELSE current_path END
                    WHERE original_path=?""",
@@ -506,11 +506,11 @@ def _rebase_persisted_paths(db, root_id, old_root, new_root):
             )
         if "software_trash" in tables:
             db.execute(
-                "UPDATE OR REPLACE software_trash SET original_path=? WHERE original_path=?",
+                "UPDATE OR IGNORE software_trash SET original_path=? WHERE original_path=?",
                 (new_path, old_path),
             )
             db.execute(
-                "UPDATE OR REPLACE software_trash SET trash_path=? WHERE trash_path=?",
+                "UPDATE OR IGNORE software_trash SET trash_path=? WHERE trash_path=?",
                 (new_path, old_path),
             )
     return len(path_map)
