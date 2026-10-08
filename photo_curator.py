@@ -7318,7 +7318,9 @@ def api_library_root_remove():
     if any(state.get(key, {}).get('running') for key in ('cull', 'dedup', 'rank')):
         return jsonify({'error': '分析任务运行中，请等待分析完成后再移除图库索引'}), 409
     try:
-        preview_result = catalog_clear_offline_previews(DATA_ROOT, INDEX_DB, root_id)
+        # Removing a library record is metadata-only. Cached offline previews
+        # are managed by the separate, explicitly requested cleanup action.
+        # Never delete preview files before the catalog transaction succeeds.
         result = catalog_remove_library_root(INDEX_DB, root_id)
         if not result:
             return jsonify({'error': '图库不存在'}), 404
@@ -7328,7 +7330,8 @@ def api_library_root_remove():
             'ok': True,
             'media_count': int(result.get('media_count') or 0),
             'source_removed': bool(result.get('source_removed')),
-            'preview_removed': int(preview_result.get('removed') or 0),
+            'preview_removed': 0,
+            'preview_preserved': True,
         })
     except Exception as exc:
         logger.warning("library index removal failed", exc_info=True)
