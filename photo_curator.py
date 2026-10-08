@@ -751,7 +751,7 @@ def _prune_index_db():
 threading.Thread(target=_prune_index_db, daemon=True,
                  name='photocurator-index-prune').start()
 
-APP_VERSION = "1.7.3-dev.6"
+APP_VERSION = "1.7.3-dev.7"
 IS_CODESPACES = os.environ.get('CODESPACES', '').strip().lower() == 'true'
 CODESPACE_NAME = os.environ.get('CODESPACE_NAME', '').strip()
 _CODESPACES_DOMAIN_RAW = os.environ.get(
@@ -4998,7 +4998,16 @@ function setupFilterBar(){
     const opts=[['pending','待筛选'],['reviewed','已筛选'],['updated','新增待复核']];
     bar.innerHTML=opts.map(([k,l])=>`<button class="chip${dedupStatusFilter===k?' active':''}" data-dstatus="${k}">${l} <span>${Number(counts[k]||0)}</span></button>`).join('')
       +'<span class="chip-sep"></span><button class="chip" id="dedupLoadMore" style="display:none"></button>';
-    bar.querySelectorAll('[data-dstatus]').forEach(b=>b.onclick=()=>{dedupStatusFilter=b.dataset.dstatus;loadDedupPage(true);});
+    bar.querySelectorAll('[data-dstatus]').forEach(b=>b.onclick=()=>{
+      const next=b.dataset.dstatus;
+      if(next===dedupStatusFilter)return;
+      dedupChunkToken++;
+      dedupStatusFilter=next;
+      // Never show groups from the previous status partition during a fetch.
+      dedupLiveStore.clear();dedupVisibleTotal=0;
+      photos=[];lastDedupSig='';
+      loadDedupPage(true);
+    });
     const more=document.getElementById('dedupLoadMore');if(more)more.onclick=()=>loadDedupPage(false);
     updateDedupLoadMore();
     return;
