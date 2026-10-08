@@ -1583,11 +1583,14 @@ def _move_to_software_trash(src, root, source_step, planned_trash_path=None):
 
 
 def _trash_rows(root=None):
-    """Return live software-trash rows, pruning records whose files disappeared."""
-    if root:
+    """Preserve restore metadata when a drive or trash file is unavailable.
+
+    Missing files are an offline/unavailable state, NEVER proof of permanent
+    deletion. Listing one library must not prune another disconnected library.
+    """
+    if root and Path(root).is_dir():
         _import_trash_manifest(root)
     root_cmp = os.path.normcase(os.path.realpath(str(root))) if root else None
-    stale = []
     rows = []
     with _DB_LOCK, connect_db(INDEX_DB, timeout=15) as db:
         for row in db.execute(
@@ -1595,9 +1598,6 @@ def _trash_rows(root=None):
             "FROM software_trash ORDER BY deleted_at DESC"
         ).fetchall():
             tid, original, trash_path, source_step, deleted_at = row
-            if not Path(trash_path).is_file():
-                stale.append((int(tid),))
-                continue
             if root:
                 try:
                     if os.path.commonpath([
@@ -1606,6 +1606,7 @@ def _trash_rows(root=None):
                         continue
                 except Exception:
                     continue
+            available = Path(trash_path).is_file()
             rows.append({
                 'id': int(tid),
                 'name': Path(trash_path).name,
@@ -1613,12 +1614,10 @@ def _trash_rows(root=None):
                 'original_path': str(original),
                 'source_step': str(source_step or ''),
                 'deleted_at': float(deleted_at),
-                'thumb': thumb_url(str(trash_path)),
+                'available': available,
+                'thumb': thumb_url(str(trash_path)) if available else '',
                 'rel_dir': relative_folder(original, root) if root else str(Path(original).parent),
             })
-        if stale:
-            db.executemany("DELETE FROM software_trash WHERE id=?", stale)
-            db.commit()
     return rows
 
 
@@ -6575,13 +6574,14 @@ function togglePhoneBg(path){
 function trashCard(p,idx){
   const path=escHtml(p.path),original=escHtml(p.original_path||'');
   const when=p.deleted_at?new Date(p.deleted_at*1000).toLocaleString():'';
+  const offline=p.available===false;
   return `<div class="photo-card rejected" data-i="${idx}" data-path="${path}" data-trash-id="${p.id}">
-    <div class="badge bad">待最终确认</div>
-    <img class="photo-img" src="${p.thumb}" loading="lazy" decoding="async">
+    <div class="badge bad">${offline?'文件暂不可用':'待最终确认'}</div>
+    ${offline?'<div class="photo-img" style="display:flex;align-items:center;justify-content:center">设备离线 / 文件暂不可用</div>':'<img class="photo-img" src="'+p.thumb+'" loading="lazy" decoding="async">'}
     <div class="photo-info">
       <div class="pi-row"><span class="photo-name">${escHtml(p.name)}</span>
-        <button class="trash-restore-btn" data-id="${p.id}">↩ 恢复</button>
-        <button class="trash-purge-btn" data-id="${p.id}">永久删除</button>
+        <button class="trash-restore-btn" data-id="${p.id}" ${offline?'disabled':''}>↩ 恢复</button>
+        <button class="trash-purge-btn" data-id="${p.id}" ${offline?'disabled':''}>永久删除</button>
       </div>
       <div class="source-path" title="${original}">原位置：${original}</div>
       <div class="source-path">${when?'移入时间：'+escHtml(when):'软件回收站'}</div>
@@ -6668,6 +6668,7 @@ async function trashPurgeOne(id,fromLightbox=false){
 }
 async function trashRestoreAll(){
   if(!photos.length)return;
+  if(photos.some(p=>p.available===false)){toast('回收站中有离线照片，请连接设备后再全部恢复','bad');return;}
   const ok=await askBatchConfirm('全部恢复','恢复软件回收站中的全部 '+photos.length+' 张照片。','全部恢复');
   if(!ok)return;
   fetch('/api/trash-restore-all',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})
@@ -6677,6 +6678,7 @@ async function trashRestoreAll(){
 }
 async function trashPurgeAll(){
   if(!photos.length)return;
+  if(photos.some(p=>p.available===false)){toast('回收站有离线照片，不能批量永久删除','bad');return;}
   const ok=await askBatchConfirm('清空软件回收站','将永久删除当前软件回收站中的 '+photos.length+' 张照片，此操作不可恢复。','永久删除全部');
   if(!ok)return;
   fetch('/api/trash-purge',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({all:true,purge_token:trashPurgeToken})})
@@ -8230,8 +8232,8 @@ def _trash_grant_rows(rows):
 def api_trash():
     """List PhotoCurator's own recycle bin for the current selected library."""
     folder = state.get('folder')
-    if not folder or not Path(folder).is_dir():
-        return jsonify({'photos': [], 'count': 0})
+    if not folder:
+        return jsonify({'photos': [], 'count': 0, 'purge_token': ''})
     rows = _trash_rows(folder)
     return jsonify({'photos': rows, 'count': len(rows),
                     'purge_token': _issue_pending_review_grant(
@@ -8252,6 +8254,8 @@ def api_trash_restore():
     row = next((x for x in current if x['id'] == trash_id), None)
     if not row:
         return jsonify({'error': '当前照片库的回收站中没有这条记录'}), 404
+    if not row.get('available', True):
+        return jsonify({'error': '回收站文件暂不可用，请重新连接原设备后恢复'}), 409
     with _FILE_PLAN_LOCK:
         reserved = _active_restore_reservations()
         restore_path = str(_unique_destination(
@@ -8283,6 +8287,10 @@ def api_trash_purge():
     rows = _trash_rows(folder)
     if not rows:
         return jsonify({'error': '回收站为空，请刷新后重试'}), 404
+    # An offline disk is not deletion consent. Reject the whole request before
+    # consuming any review grant or submitting any irreversible file task.
+    if any(not row.get('available', True) for row in rows):
+        return jsonify({'error': '回收站包含离线/暂不可用文件，请重连设备后再复核操作'}), 409
     # Permanent deletion requires the latest read-only trash review.
     if not _consume_pending_review_grant(
             data.get('purge_token'), _trash_grant_rows(rows)):
@@ -8325,6 +8333,8 @@ def api_trash_restore_all():
     if not folder or not Path(folder).is_dir():
         return jsonify({'error': '请先选择照片文件夹'}), 400
     rows = _trash_rows(folder)
+    if any(not row.get('available', True) for row in rows):
+        return jsonify({'error': '部分回收站文件已离线，请重连设备后再全部恢复'}), 409
     planned_rows = []
     try:
         with _FILE_PLAN_LOCK:
