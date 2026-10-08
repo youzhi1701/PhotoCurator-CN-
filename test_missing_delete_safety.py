@@ -175,5 +175,27 @@ class MissingFileDeleteSafetyTests(unittest.TestCase):
             lifecycle.assert_not_called()
             self.assertTrue(photo.exists())
 
+    def test_review_pending_is_read_only_and_supports_all_quality_tiers(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            sharp = str(Path(tmp) / "clear.jpg")
+            soft = str(Path(tmp) / "soft.jpg")
+            with patch.dict(photo_curator.state["cull"], {
+                "photos": [
+                    {"path": sharp, "tier": "sharp", "move_selected": True,
+                     "lifecycle": "normal", "name": "清晰照片.jpg"},
+                    {"path": soft, "tier": "soft", "move_selected": True,
+                     "lifecycle": "normal", "name": "稍软.jpg"},
+                    {"path": "ignored.jpg", "tier": "blurry",
+                     "move_selected": False, "lifecycle": "normal"},
+                ],
+            }, clear=False), \
+                 patch.object(photo_curator.TASK_MANAGER, "enqueue_many") as enqueue:
+                response = photo_curator.app.test_client().get("/api/review-pending")
+            self.assertEqual(response.status_code, 200)
+            payload = response.get_json()
+            self.assertEqual(payload["total"], 2)
+            self.assertEqual([r["tier"] for r in payload["items"]], ["sharp", "soft"])
+            enqueue.assert_not_called()
+
 if __name__ == "__main__":
     unittest.main()
