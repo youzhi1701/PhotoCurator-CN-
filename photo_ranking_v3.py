@@ -337,6 +337,8 @@ class AdvancedPhotoAnalyzer:
                        w['sharpness'] * sharpness +
                        w['color'] * color) / wsum
 
+            from scene_labels import content_scene_hint
+            scene_hint = content_scene_hint(gray)
             return PhotoScoreV3(
                 filename=Path(image_path).name, path=str(image_path),
                 overall_score=float(overall),
@@ -352,6 +354,7 @@ class AdvancedPhotoAnalyzer:
                 lighting=float(exposure), contrast=float(dr),
                 focus=float(sharpness),
                 timestamp=time.time(),
+                meta={'scene_hint': scene_hint},
             )
         except Exception as e:
             import logging
