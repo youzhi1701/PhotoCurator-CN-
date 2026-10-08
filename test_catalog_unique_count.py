@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from catalog import (init_catalog_schema, list_sources, begin_catalog_scan,
-                     catalog_scan_batch, abort_catalog_scan)
+                     catalog_scan_batch, finish_catalog_scan, abort_catalog_scan)
 from db_runtime import connect_db
 
 class CatalogUniqueCountTests(unittest.TestCase):
@@ -73,6 +73,20 @@ class CatalogScanGuardTests(unittest.TestCase):
             with connect_db(db_path) as db:
                 self.assertEqual(db.execute("SELECT COUNT(*) FROM media_catalog").fetchone()[0], 0)
 
+
+class CatalogFinalizationGuardTests(unittest.TestCase):
+    def test_aborted_scan_cannot_finalize(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "photos"
+            root.mkdir()
+            db_path = Path(tmp) / "catalog.sqlite"
+            session = begin_catalog_scan(db_path, root)
+            abort_catalog_scan(db_path, session, "drive disconnected")
+            with self.assertRaisesRegex(RuntimeError, "not active"):
+                finish_catalog_scan(db_path, session, full_scan=True)
+            with connect_db(db_path) as db:
+                row = db.execute("SELECT state FROM scan_session WHERE session_id=?", (session["session_id"],)).fetchone()
+            self.assertEqual(row[0], "interrupted")
 
 if __name__ == "__main__":
     unittest.main()
