@@ -172,4 +172,10 @@ activity = block("def _activity(", "def _cached_cull_metrics(")
 require("_ACTIVITY_TRIM_EVERY" in SOURCE and "% _ACTIVITY_TRIM_EVERY" in activity,
         "activity-log cleanup must stay amortized")
 
+# 13) Resuming persisted file tasks must not race late helper definitions.
+require("start_immediately=False" in SOURCE,
+        "recovery workers should not start during partial module initialization")
+require(SOURCE.rfind("TASK_MANAGER.start()") > SOURCE.rfind("def _clear_review_delete_mark("),
+        "recovered task consumers must start after lifecycle helpers are defined")
+
 print(f"Performance regression gate OK: v{version.group(1)} hot paths, rendering, scan metadata, thumbnail scheduling, Lightbox prefetch and compact task heartbeat are intact")
