@@ -4835,7 +4835,11 @@ function renderSettings(){
 }
 
 /* Switch the visible step (used by tab clicks AND God mode). */
+const workspaceScrollByStep=new Map();
+function workspaceViewKey(step,source){return String(source||'')+'|'+step;}
 function activateStep(step){
+  const mainScroll=document.querySelector('main.main');
+  if(mainScroll&&currentStep)workspaceScrollByStep.set(workspaceViewKey(currentStep,folder),mainScroll.scrollTop);
   currentStep=step;
   document.querySelectorAll('.step').forEach(x=>x.classList.toggle('active',x.dataset.step===step));
   updateWorkspaceHeading();
@@ -4880,6 +4884,12 @@ document.querySelectorAll('.step').forEach(t=>t.onclick=()=>{
     }else renderRank(d.photos||[]);
     updateVisibleStepStatus(currentStep,d);
     if(currentStep==='cull')maybeLoadAllCull(d);
+    requestAnimationFrame(()=>{
+      if(currentStep!==requestedStep||!sameFolder(requestedFolder,folder))return;
+      const mainScroll=document.querySelector('main.main');
+      const oldPosition=workspaceScrollByStep.get(workspaceViewKey(requestedStep,requestedFolder));
+      if(mainScroll&&Number.isFinite(oldPosition))mainScroll.scrollTop=oldPosition;
+    });
   }).catch(()=>{});
 });
 renderSettings();
