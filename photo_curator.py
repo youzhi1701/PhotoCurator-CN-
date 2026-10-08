@@ -1468,9 +1468,10 @@ def _write_trash_manifest(root):
                     continue
             except Exception:
                 continue
-            if Path(str(trash_path)).is_file():
-                data.append({'original_path': str(original), 'trash_path': str(trash_path),
-                             'source_step': str(source_step or ''), 'deleted_at': float(deleted_at)})
+            # An absent trash file can mean an offline/remounted drive. Keep
+            # the manifest record so recovery metadata survives reinstall.
+            data.append({'original_path': str(original), 'trash_path': str(trash_path),
+                         'source_step': str(source_step or ''), 'deleted_at': float(deleted_at)})
         target.parent.mkdir(parents=True, exist_ok=True)
         tmp = target.with_suffix(target.suffix + '.tmp')
         tmp.write_text(json.dumps({'version': 1, 'items': data}, ensure_ascii=False, indent=2), encoding='utf-8')
@@ -8289,8 +8290,8 @@ def api_trash_purge():
         return jsonify({'error': '回收站为空，请刷新后重试'}), 404
     # An offline disk is not deletion consent. Reject the whole request before
     # consuming any review grant or submitting any irreversible file task.
-    if any(not row.get('available', True) for row in rows):
-        return jsonify({'error': '回收站包含离线/暂不可用文件，请重连设备后再复核操作'}), 409
+    if data.get('all') and any(not row.get('available', True) for row in rows):
+        return jsonify({'error': '回收站包含离线/暂不可用文件，不能执行全部永久删除'}), 409
     # Permanent deletion requires the latest read-only trash review.
     if not _consume_pending_review_grant(
             data.get('purge_token'), _trash_grant_rows(rows)):
@@ -8313,8 +8314,11 @@ def api_trash_purge():
         trash_id = int(data.get('id'))
     except (TypeError, ValueError):
         return jsonify({'error': '无效的回收站记录'}), 400
-    if trash_id not in {row['id'] for row in rows}:
+    candidate = next((row for row in rows if row['id'] == trash_id), None)
+    if candidate is None:
         return jsonify({'error': '当前照片库的回收站中没有这条记录'}), 404
+    if not candidate.get('available', True):
+        return jsonify({'error': '回收站文件暂不可用，请重连设备后再复核'}), 409
     try:
         task_id, created = TASK_MANAGER.enqueue(
             'purge_trash', {'trash_id': trash_id}, priority=7,
