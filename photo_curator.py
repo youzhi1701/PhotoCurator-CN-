@@ -7849,9 +7849,13 @@ def api_progress(step):
             s['preview'] = build_topn()
             s['preview_at'] = now
             s['preview_score_count'] = score_count
+        ranked=s.get('preview', [])
+        marks=_review_delete_marks(p.get('path') for p in ranked if p.get('path'))
+        for photo in ranked:
+            photo['marked_delete'] = photo.get('path') in marks
         return jsonify({'running': s['running'], 'complete': bool(s.get('complete')),
                         'progress': s['progress'], 'status': s['status'],
-                        'src_folder': s.get('src_folder'), 'photos': s.get('preview', []),
+                        'src_folder': s.get('src_folder'), 'photos': ranked,
                         'stats': {'images': s['total'], 'cache_hits': s.get('cache_hits',0)}})
     abort(404)
 
@@ -8086,6 +8090,41 @@ def api_review_delete_mark():
                                for g in changed]})
 
 
+
+@app.route('/api/review-delete-apply', methods=['POST'])
+def api_review_delete_apply():
+    """Submit explicit user marks from the Rank toolbox; never auto-select."""
+    data=request.get_json(silent=True) or {}
+    step=str(data.get('step') or '')
+    if step != 'rank':
+        return jsonify({'error': '无效的照片工作区'}), 400
+    folder=state.get('folder')
+    origin=state['rank'].get('src_folder')
+    if not folder or not Path(folder).is_dir() or (
+        origin and os.path.normcase(os.path.realpath(str(origin))) !=
+        os.path.normcase(os.path.realpath(str(folder)))
+    ):
+        return jsonify({'error': '照片来源已切换，请重新查看当前图库'}), 409
+    paths=_known_step_paths(step)
+    marks=_review_delete_marks(paths)
+    task_ids=[]
+    for path in marks:
+        if not Path(path).is_file():
+            continue
+        original=_find_original_for_path(path)
+        planned=str(_trash_destination(Path(path), folder).resolve())
+        with _FILE_PLAN_LOCK:
+            task_id,created=TASK_MANAGER.enqueue(
+                'move_to_trash',
+                {'path':path,'folder':str(folder),'step':step,'trash_path':planned},
+                priority=12,idempotency_key=f"move_to_trash:{original}"
+            )
+            if created:
+                _apply_media_lifecycle(original,path,'pending_trash',step)
+        task_ids.append(task_id)
+    return jsonify({'ok':True,'queued':len(task_ids),'task_ids':task_ids}),202
+
+
 @app.route('/api/dedup-apply', methods=['POST'])
 def api_dedup_apply():
     """Queue only photos that a human explicitly marked, never algorithm non-keepers."""
@@ -8093,6 +8132,9 @@ def api_dedup_apply():
     s = state['dedup']
     if not folder or not Path(folder).is_dir():
         return jsonify({'error': '未选择有效的照片文件夹'}), 400
+    origin=s.get('src_folder')
+    if origin and os.path.normcase(os.path.realpath(str(origin))) != os.path.normcase(os.path.realpath(str(folder))):
+        return jsonify({'error': '照片来源已切换，请重新查看当前图库'}), 409
     _sync_dedup_with_cull()
     all_paths = {str(m.get('path')) for g in s.get('groups_data', [])
                  for m in g.get('members', []) if m.get('path')}
