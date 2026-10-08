@@ -83,7 +83,13 @@ class BackgroundTaskManager:
                 if row and row[1] in ("queued", "running"):
                     return int(row[0]), False
                 if row:
-                    db.execute("DELETE FROM background_task WHERE id=?", (int(row[0]),))
+                    # Preserve completed/failed task history for audit and
+                    # troubleshooting. Only the active attempt owns the key;
+                    # clearing it makes room for a new attempt atomically.
+                    db.execute(
+                        "UPDATE background_task SET idempotency_key=NULL WHERE id=?",
+                        (int(row[0]),),
+                    )
             cur = db.execute(
                 """INSERT INTO background_task
                    (kind,payload_json,priority,state,idempotency_key,created_at,updated_at)
