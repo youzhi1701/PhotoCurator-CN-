@@ -84,6 +84,39 @@ class BackgroundTaskHistoryTests(unittest.TestCase):
             finally:
                 manager.shutdown(timeout=3)
 
+    def test_concurrent_enqueue_same_key_creates_one_task(self):
+        from concurrent.futures import ThreadPoolExecutor
+        import threading
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "concurrent.sqlite"
+            first_manager = BackgroundTaskManager(db_path, autostart=False)
+            second_manager = BackgroundTaskManager(db_path, autostart=False)
+            barrier = threading.Barrier(2)
+
+            def submit(manager):
+                barrier.wait(timeout=5)
+                return manager.enqueue(
+                    "scan", {"root": "test"}, idempotency_key="scan:test"
+                )
+
+            try:
+                with ThreadPoolExecutor(max_workers=2) as pool:
+                    first = pool.submit(submit, first_manager)
+                    second = pool.submit(submit, second_manager)
+                    results = [first.result(timeout=10), second.result(timeout=10)]
+                self.assertEqual(results[0][0], results[1][0])
+                self.assertEqual(sorted(created for _, created in results), [False, True])
+                with connect_db(db_path) as db:
+                    count = db.execute(
+                        "SELECT COUNT(*) FROM background_task WHERE idempotency_key=?",
+                        ("scan:test",),
+                    ).fetchone()[0]
+                self.assertEqual(count, 1)
+            finally:
+                first_manager.shutdown()
+                second_manager.shutdown()
+
     @staticmethod
     def _wait_for_state(manager, task_id, state):
         deadline = time.monotonic() + 5
