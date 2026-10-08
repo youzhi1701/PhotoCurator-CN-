@@ -77,6 +77,11 @@ require("if(sig===lastCullSig&&lastStep===currentStep)" in cull_render,
 dedup_render = block("function renderDedupGroups(groups){", "function selectDedupPhoto(")
 require("dedupSig" in dedup_render and "dedupSig===lastDedupSig" in dedup_render,
         "Dedup unchanged-render guard missing")
+dedup_page = block("const DEDUP_UI_PAGE_SIZE=64;", "function updateDedupLoadMore()")
+require("'&limit='+DEDUP_UI_PAGE_SIZE" in dedup_page,
+        "Dedup initial page must remain bounded to 64 groups")
+require("content-visibility:auto;contain-intrinsic-size:auto 380px" in SOURCE,
+        "Offscreen duplicate-group layout skipping must remain enabled")
 
 # 5) High-frequency thumbnail resizing is coalesced into browser frames and
 #    does not synchronously write localStorage for every wheel event.

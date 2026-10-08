@@ -3765,7 +3765,10 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   /* v1.5: foreground review stays interactive while background engines run.
      Only settings are frozen by the processing rule below; photo decisions are not. */
   .dedup-review{display:flex;flex-direction:column;gap:14px;width:100%;grid-column:1/-1}
-  .dedup-group{border:1px solid var(--border);border-radius:12px;background:var(--panel);padding:12px}
+  /* Let the compositor skip offscreen duplicate groups without removing
+     DOM nodes or losing in-progress human selection and scroll position. */
+  .dedup-group{border:1px solid var(--border);border-radius:12px;background:var(--panel);padding:12px;
+    content-visibility:auto;contain-intrinsic-size:auto 380px}
   .dedup-group-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px;font-size:12px}
   .dedup-group-head b{font-size:13px}
   .dedup-choices{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
@@ -6214,6 +6217,8 @@ function dedupRowsForPayload(d){
   rows.forEach(g=>{if(g&&g.group_id!=null)dedupLiveStore.set(String(g.group_id),g);});
   return Array.from(dedupLiveStore.values());
 }
+// Bound initial DOM/image work; retain the existing explicit "load more".
+const DEDUP_UI_PAGE_SIZE=64;
 let dedupRequestSerial=0;
 async function loadDedupPage(reset=false){
   if(currentStep!=='dedup')return;
@@ -6221,7 +6226,7 @@ async function loadDedupPage(reset=false){
   const requestFolder=folder,requestFilter=dedupStatusFilter;
   const offset=reset?0:dedupLiveStore.size;
   try{
-    const d=await fetch('/api/results/dedup?offset='+offset+'&limit=200&status='+encodeURIComponent(requestFilter))
+    const d=await fetch('/api/results/dedup?offset='+offset+'&limit='+DEDUP_UI_PAGE_SIZE+'&status='+encodeURIComponent(requestFilter))
       .then(async r=>{const x=await r.json();if(!r.ok)throw new Error(x.error||('HTTP '+r.status));return x;});
     // Older responses must never replace the groups of another step/source/filter.
     if(requestSerial!==dedupRequestSerial||currentStep!=='dedup'||
