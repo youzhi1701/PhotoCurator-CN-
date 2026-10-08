@@ -1,6 +1,6 @@
-from unittest.mock import patch
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+from unittest.mock import patch
 """Overlapping parent and child scan roots must not inflate library totals."""
 import tempfile
 import sqlite3
@@ -205,6 +205,49 @@ class CatalogPhysicalSourceGuardTest(unittest.TestCase):
                     "SELECT state FROM scan_session WHERE session_id=?",
                     (session["session_id"],)).fetchone()[0], "interrupted")
 
+
+
+class CatalogBatchVolumeIdentityTests(unittest.TestCase):
+    def test_replaced_source_aborts_before_writing_any_media(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "photos"
+            root.mkdir()
+            candidate = root / "incoming.jpg"
+            candidate.write_bytes(b"other-device")
+            db_path = Path(tmp) / "index.sqlite"
+            session = begin_catalog_scan(db_path, root)
+            with patch.object(catalog, "volume_info_for_path",
+                              return_value={"identity_key": "different-volume"}):
+                with self.assertRaisesRegex(RuntimeError, "批次未写入"):
+                    catalog_scan_batch(db_path, session, [candidate])
+            with connect_db(db_path) as db:
+                count = db.execute("SELECT COUNT(*) FROM media_catalog").fetchone()[0]
+                state = db.execute(
+                    "SELECT state FROM scan_session WHERE session_id=?",
+                    (session["session_id"],)).fetchone()[0]
+            self.assertEqual(count, 0)
+            self.assertEqual(state, "interrupted")
+
+    def test_unplug_after_previous_batch_keeps_scanned_photos(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "photos"
+            root.mkdir()
+            original = root / "original.jpg"
+            original.write_bytes(b"original")
+            db_path = Path(tmp) / "index.sqlite"
+            session = begin_catalog_scan(db_path, root)
+            self.assertEqual(catalog_scan_batch(db_path, session, [original]), 1)
+            newfile = root / "new.jpg"
+            newfile.write_bytes(b"unrelated")
+            with patch.object(catalog, "volume_info_for_path",
+                              side_effect=OSError("drive removed")):
+                with self.assertRaisesRegex(RuntimeError, "批次未写入"):
+                    catalog_scan_batch(db_path, session, [newfile])
+            with connect_db(db_path) as db:
+                rows = db.execute(
+                    "SELECT original_path,state FROM media_catalog").fetchall()
+            self.assertEqual([(r[0], r[1]) for r in rows],
+                             [(str(original), "present")])
 
 if __name__ == "__main__":
     unittest.main()
