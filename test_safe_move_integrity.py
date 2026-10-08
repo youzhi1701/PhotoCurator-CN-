@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Cross-volume file moves must verify data and preserve unrelated staging."""
+"""Cross-volume moves must verify bytes, reject source swaps and preserve staging."""
 import errno
 import tempfile
 import unittest
