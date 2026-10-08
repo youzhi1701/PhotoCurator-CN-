@@ -2072,8 +2072,6 @@ def _background_build_offline_previews(payload):
 
 
 TASK_MANAGER.register('build_offline_previews', _background_build_offline_previews)
-# All durable file/recovery handlers are registered before restored tasks run.
-TASK_MANAGER.start()
 
 
 def thumb_url(image_path):
@@ -9030,6 +9028,10 @@ def api_export_phonebg():
     return jsonify({'ok': failed == 0, 'copied': copied, 'cropped': cropped,
                     'failed': failed, 'dest': str(dest)})
 
+
+# Delay recovered background tasks until every API, cache and lifecycle helper
+# has been defined. Previously a queued move could race late helper definitions.
+TASK_MANAGER.start()
 
 if __name__ == '__main__':
     # Browser compatibility mode opens only after the server has had time to
