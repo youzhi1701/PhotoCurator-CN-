@@ -83,7 +83,7 @@ exit /b 0
 echo.
 echo No compatible 64-bit Python was found.
 echo Install Python 3.11 x64, then run this file again.
-echo Supported versions: Python 3.9 - 3.12.
+echo Supported versions: Python 3.10 - 3.12.
 echo.
 pause
 exit /b 1
