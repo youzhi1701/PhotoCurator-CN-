@@ -4111,6 +4111,46 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
 
 .rank-review-mark{font:inherit;font-size:12px;padding:5px 7px;border-radius:9px;border:1px solid var(--border);cursor:pointer;background:var(--panel2);color:var(--text)}
 .photo-card.review-marked .rank-review-mark{background:#db2c43!important;color:white!important;border-color:#db2c43!important}
+
+/* Release-candidate progress capsule: fixed header real estate; click opens
+   a floating, non-reflowing detail panel. No continuous shader animation. */
+.header-task-compact{display:flex!important;flex-direction:column;justify-content:center;align-items:stretch;
+  flex:0 0 258px;width:258px;min-width:0;height:40px!important;padding:5px 11px!important;
+  border-radius:14px!important;text-align:left!important;
+  background:linear-gradient(140deg,rgba(255,255,255,.93),rgba(227,240,255,.78))!important;
+  box-shadow:inset 0 1px rgba(255,255,255,.9),0 4px 12px rgba(56,111,183,.10)}
+.task-mini-copy{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;line-height:1.3}
+.task-mini-copy b{font-size:13px!important;color:#344158;max-width:48%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.task-mini-copy small{font-size:11px;color:#52627a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:52%}
+.task-mini-track,.task-detail-track{height:6px;border-radius:999px;overflow:hidden;
+  display:block;background:rgba(114,145,187,.16);width:100%;margin-top:4px}
+.task-mini-track i,.task-detail-track i{display:block;width:0;height:100%;border-radius:999px;
+  background:linear-gradient(90deg,#3c96ee,#5370e6);transition:width .22s ease,background-color .2s ease}
+.header-task-compact.is-success .task-mini-track i,#taskCenter .task-progress-detail.is-success .task-detail-track i{background:#16a36a}
+.header-task-compact.is-error .task-mini-track i,#taskCenter .task-progress-detail.is-error .task-detail-track i{background:#df475a}
+.header-task-compact.is-paused .task-mini-track i,#taskCenter .task-progress-detail.is-paused .task-detail-track i{background:#94a3b8}
+.header-task-compact.is-running{border-color:rgba(71,136,227,.38)!important}
+#taskCenter{position:fixed!important;top:55px!important;right:63px!important;left:auto!important;bottom:auto!important;
+  z-index:240!important;width:428px!important;max-width:calc(100vw - 24px)!important;
+  max-height:calc(100vh - 72px)!important;overflow:auto!important;
+  padding:16px!important;display:none!important;border:1px solid rgba(255,255,255,.94)!important;
+  border-radius:20px!important;background:linear-gradient(143deg,rgba(251,254,255,.96),rgba(230,244,255,.94) 62%,rgba(245,238,255,.95))!important;
+  box-shadow:0 24px 66px rgba(37,79,151,.21),inset 0 2px rgba(255,255,255,.92)!important;
+  transform:none!important;opacity:1!important;pointer-events:auto!important;
+  backdrop-filter:blur(22px) saturate(150%);-webkit-backdrop-filter:blur(22px) saturate(150%)}
+#taskCenter.task-open{display:grid!important;gap:10px}
+#taskCenter .task-center-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:2px}
+#taskCenter .task-center-head b{font-size:16px;color:#24324a}
+#taskCenter .task-row{display:grid!important;grid-template-columns:120px minmax(0,1fr);gap:4px 8px;
+  padding:11px 12px!important;border-radius:13px;background:rgba(255,255,255,.7)}
+#taskCenter .task-row b{font-size:12px;white-space:normal;text-align:right;color:#34445e}
+#taskCenter .task-detail-track{grid-column:1/-1;height:6px}
+#taskCenter .task-center-head button{display:inline-flex!important}
+@media(max-width:1100px){.header-task-compact{flex-basis:185px;width:185px}.task-mini-copy b{font-size:11px!important}.task-mini-copy small{font-size:10px}}
+@media(max-width:720px){.header-task-compact{flex-basis:128px;width:128px;padding-inline:7px!important}
+  .task-mini-copy b{font-size:10px!important}.task-mini-copy small{font-size:9px}}
+@media(prefers-reduced-motion:reduce){.task-mini-track i,.task-detail-track i{transition:none!important}}
+
 </style></head><body>
 <header class="appbar pywebview-drag-region">
   <div class="app-brand" aria-label="PhotoCurator">
@@ -4132,7 +4172,10 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
 
   <div class="appbar-actions">
     <button class="appbar-btn" id="settingsQuick">筛选</button>
-    <button class="appbar-btn" id="taskToggle">任务</button>
+    <button class="appbar-btn header-task-compact" id="taskToggle" aria-expanded="false" aria-controls="taskCenter" title="查看后台任务详情">
+      <span class="task-mini-copy"><b id="taskMiniTitle">后台任务</b><small id="taskMiniNumbers">待开始</small></span>
+      <span class="task-mini-track"><i id="taskMiniFill"></i></span>
+    </button>
     <button class="appbar-btn icon-btn" id="toolboxOpen" title="工具箱">⌘</button>
   </div>
   <div class="window-controls" aria-label="窗口控制">
@@ -4336,9 +4379,9 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
 
 <aside class="task-center" id="taskCenter">
   <div class="task-center-head"><b>任务中心</b><button id="taskClose">×</button></div>
-  <div class="task-row"><span>清晰度分析</span><b id="taskCull">待开始</b></div>
-  <div class="task-row"><span>相似分析</span><b id="taskDedup">待开始</b></div>
-  <div class="task-row"><span>精选评分</span><b id="taskRank">待开始</b></div>
+  <div class="task-row task-progress-detail"><span>清晰度分析</span><b id="taskCull">待开始</b><div class="task-detail-track"><i id="taskCullFill"></i></div></div>
+  <div class="task-row task-progress-detail"><span>相似分析</span><b id="taskDedup">待开始</b><div class="task-detail-track"><i id="taskDedupFill"></i></div></div>
+  <div class="task-row task-progress-detail"><span>精选评分</span><b id="taskRank">待开始</b><div class="task-detail-track"><i id="taskRankFill"></i></div></div>
   <div class="task-row"><span>文件操作</span><b id="taskFiles">空闲</b></div>
   <div class="task-tip" id="taskFileHint">删除、恢复和永久删除在持久化后台队列中执行；异常退出后未完成任务会在下次启动继续。</div>
   <button class="task-exit" id="appExit">退出 PhotoCurator</button>
@@ -4661,7 +4704,7 @@ const inspectorPanel=document.getElementById('inspector');
 const toolboxPanel=document.getElementById('toolboxPanel');
 const activityPanel=document.getElementById('activityPanel');
 const taskCenter=document.getElementById('taskCenter');
-[inspectorPanel,taskCenter,activityPanel,toolboxPanel].forEach(panel=>{
+[inspectorPanel,activityPanel,toolboxPanel].forEach(panel=>{
   if(panel)sidebarUtilityHost.appendChild(panel);
 });
 if(inspectorPanel)inspectorPanel.setAttribute('aria-hidden','false');
@@ -4681,8 +4724,21 @@ document.getElementById('inspectorClose').onclick=()=>{};
 document.getElementById('drawerScrim').onclick=()=>{};
 document.getElementById('toolboxOpen').onclick=()=>focusSidebarPanel(toolboxPanel);
 document.getElementById('toolboxClose').onclick=()=>{};
-document.getElementById('taskToggle').onclick=()=>focusSidebarPanel(taskCenter);
-document.getElementById('taskClose').onclick=()=>{};
+const taskToggle=document.getElementById('taskToggle');
+function setTaskPanelOpen(open){
+  taskCenter.classList.toggle('task-open',!!open);
+  taskToggle.setAttribute('aria-expanded',open?'true':'false');
+}
+taskToggle.onclick=()=>setTaskPanelOpen(!taskCenter.classList.contains('task-open'));
+document.getElementById('taskClose').onclick=()=>setTaskPanelOpen(false);
+document.addEventListener('click',e=>{
+  if(taskCenter.classList.contains('task-open')&&!taskCenter.contains(e.target)&&!taskToggle.contains(e.target)){
+    setTaskPanelOpen(false);
+  }
+});
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape'&&taskCenter.classList.contains('task-open'))setTaskPanelOpen(false);
+});
 document.getElementById('openRankTool').onclick=()=>{
   activateStep('rank');
   fetch('/api/progress/rank').then(r=>r.json()).then(d=>{renderRank(d.photos||[]);updateVisibleStepStatus('rank',d);}).catch(()=>{});
