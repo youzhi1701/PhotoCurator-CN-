@@ -139,6 +139,7 @@ def main():
           const card=cullCardHtml(sharp,0);
           return {redIcon:card.includes('🗑'),
                   marker:card.includes('move-select"'),
+                  noDirectDelete:!card.includes('class="delete-btn"'),
                   tierUnchanged:card.includes('data-tier="sharp"')};
         """)
         require(all(other_quality.values()),
