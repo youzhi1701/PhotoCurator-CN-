@@ -196,10 +196,19 @@ class BackgroundTaskManager:
                 continue
             try:
                 with self._connect() as db:
+                    # Claim by compare-and-set: different worker instances can
+                    # carry the same recovered task ID in their local heaps.
+                    # Only one may transition it from queued to running.
+                    db.execute("BEGIN IMMEDIATE")
                     row = db.execute("SELECT kind,payload_json,state,priority FROM background_task WHERE id=?", (task_id,)).fetchone()
                     if not row or row[2] != "queued":
                         continue
-                    db.execute("UPDATE background_task SET state='running',updated_at=? WHERE id=?", (time.time(), task_id))
+                    claimed = db.execute(
+                        "UPDATE background_task SET state='running',updated_at=? WHERE id=? AND state='queued'",
+                        (time.time(), task_id),
+                    )
+                    if claimed.rowcount != 1:
+                        continue
                     db.commit()
                 kind, payload_json, _, priority = row
                 handler = self.handlers.get(kind)
