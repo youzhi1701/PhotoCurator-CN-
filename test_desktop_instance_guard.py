@@ -12,4 +12,8 @@ assert "FindWindowW" not in guard
 assert "ShowWindow" not in guard
 assert "SetForegroundWindow" not in guard
 assert "raise SystemExit(0)" in guard
-print("Desktop stale-instance guard OK")
+core=Path("photo_curator.py").read_text(encoding="utf-8")
+index=core.split("@app.route('/')",1)[1].split("@app.route('/api/shortcuts')",1)[0]
+assert "Cache-Control" in index and "no-store" in index
+assert "X-PhotoCurator-Version" in index
+print("Desktop upgrade instance and stale HTML guards OK")
