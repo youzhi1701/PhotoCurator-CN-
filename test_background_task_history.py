@@ -147,6 +147,45 @@ class BackgroundTaskHistoryTests(unittest.TestCase):
             finally:
                 recovered.shutdown()
 
+    def test_atomic_batch_rolls_back_all_rows_when_any_entry_invalid(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = BackgroundTaskManager(Path(tmp) / "batch.sqlite", autostart=False)
+            try:
+                with self.assertRaises(TypeError):
+                    manager.enqueue_many([
+                        {"kind": "move", "payload": {"file": "one"}, "idempotency_key": "one"},
+                        {"kind": "move", "payload": {"not_json": {1, 2}}, "idempotency_key": "two"},
+                    ])
+                with connect_db(manager.db_path) as db:
+                    self.assertEqual(db.execute("SELECT COUNT(*) FROM background_task").fetchone()[0], 0)
+                self.assertEqual(len(manager._heap), 0)
+            finally:
+                manager.shutdown()
+
+    def test_batch_idempotency_and_eventual_execution(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = BackgroundTaskManager(Path(tmp) / "batch.sqlite", autostart=False)
+            try:
+                batch = [
+                    {"kind": "move", "payload": {"file": name}, "priority": 12,
+                     "idempotency_key": "move:" + name}
+                    for name in ("a", "b")
+                ]
+                first = manager.enqueue_many(batch)
+                second = manager.enqueue_many(batch)
+                self.assertEqual(len(first), 2)
+                self.assertTrue(all(created for _, created in first))
+                self.assertEqual([i for i, _ in first], [i for i, _ in second])
+                self.assertTrue(all(not created for _, created in second))
+                with connect_db(manager.db_path) as db:
+                    self.assertEqual(db.execute("SELECT COUNT(*) FROM background_task").fetchone()[0], 2)
+                manager.register("move", lambda payload: payload["file"])
+                manager.start()
+                for task_id, _ in first:
+                    self._wait_for_state(manager, task_id, "done")
+            finally:
+                manager.shutdown()
+
     @staticmethod
     def _wait_for_state(manager, task_id, state):
         deadline = time.monotonic() + 5
