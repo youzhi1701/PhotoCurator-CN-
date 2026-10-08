@@ -105,6 +105,13 @@ require("_load_review_overrides(images, fingerprints)" in cull,
         "review overrides must reuse the shared fingerprint pass")
 require("_shared_scan_fingerprints(folder, recursive)" in cull,
         "Cull must consume shared scan fingerprints")
+require("def classify_all(validate_files=False):" in cull,
+        "Cull live classification must separate final file validation")
+live_classify = cull.split("def classify_all(validate_files=False):", 1)[1].split("t0 = time.time()", 1)[0]
+require("if validate_files and not Path(it['path']).is_file()" in live_classify,
+        "Cull must avoid per-photo is_file checks during live reclassification")
+require("'rel_dir': it['rel_dir']" in live_classify and "'raw': it['raw']" in live_classify,
+        "Cull live reclassification must reuse static per-photo display metadata")
 dedup = block("def run_dedup(", "# --------------------------------------------------------------------------- #\n#  RANK")
 require("_shared_scan_fingerprints(folder, recursive)" in dedup,
         "Dedup must consume shared scan fingerprints")
