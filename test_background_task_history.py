@@ -217,6 +217,26 @@ class BackgroundTaskHistoryTests(unittest.TestCase):
                 if second:
                     second.shutdown()
 
+    def test_unregistered_worker_does_not_claim_task_from_ready_instance(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "shared.sqlite"
+            idle = BackgroundTaskManager(db_path, autostart=False)
+            ready = None
+            try:
+                task_id, _ = idle.enqueue("copy", {"value": 5}, idempotency_key="copy:5")
+                ready = BackgroundTaskManager(db_path, autostart=False)
+                idle.start()
+                time.sleep(0.12)
+                self.assertEqual(idle.get(task_id)["state"], "queued")
+                ready.register("copy", lambda payload: payload["value"])
+                ready.start()
+                self._wait_for_state(ready, task_id, "done")
+                self.assertEqual(ready.get(task_id)["result"], 5)
+            finally:
+                idle.shutdown()
+                if ready:
+                    ready.shutdown()
+
     @staticmethod
     def _wait_for_state(manager, task_id, state):
         deadline = time.monotonic() + 5
