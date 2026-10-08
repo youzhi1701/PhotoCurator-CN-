@@ -3938,7 +3938,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
   #gallery.view-list .dedup-choice-meta{align-self:center;padding:10px 12px}
   .source-path{font-size:10px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:3px}
   .rank-hints{display:flex;align-items:center;gap:4px;flex-wrap:wrap;margin-top:4px;max-height:39px;overflow:hidden}
-  .rank-hints span{font-size:10px;line-height:1.35;padding:2px 6px;border:1px solid var(--border);border-radius:999px;background:var(--surface);color:var(--text);white-space:nowrap}
+  .rank-hints span{font-size:10px;line-height:1.35;padding:2px 6px;border:1px solid var(--border);border-radius:999px;background:var(--panel2);color:var(--text);white-space:nowrap}
   .settings-subtitle{font-size:11px;font-weight:700;color:var(--muted);margin:11px 0 5px}
   body.processing .photo-card{cursor:default}
 
