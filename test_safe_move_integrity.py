@@ -40,8 +40,8 @@ class SafeMoveTests(unittest.TestCase):
             dst.parent.mkdir()
             def corrupt_copy(source, destination):
                 Path(destination).write_bytes(b'abcdf')  # identical size, different content
-            with patch.object(photo_curator.os, 'replace', side_effect=OSError('different volume')), \\
-                 patch.object(photo_curator.shutil, 'copy2', side_effect=corrupt_copy):
+            with (patch.object(photo_curator.os, 'replace', side_effect=OSError('different volume')),
+                  patch.object(photo_curator.shutil, 'copy2', side_effect=corrupt_copy)):
                 with self.assertRaisesRegex(IOError, '文件内容不一致'):
                     photo_curator._safe_move_file(src, dst)
             self.assertEqual(src.read_bytes(), b'abcde')
