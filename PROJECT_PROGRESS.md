@@ -1,4 +1,4 @@
-# PhotoCurator-CN V2.0 · 实时开发检查点（2026-10-08）
+# PhotoCurator-CN V2.0 · 开发与发布检查点（2026-10-09）
 
 > 此文件记录已经提交并验证的代码工作，以及尚未满足正式发布标准的工作。**不得把候选安装包、自动化测试或 GitHub 合并等同于用户实机验收与正式发布。**
 >
@@ -20,6 +20,19 @@
 | [#49](https://github.com/youzhi1701/PhotoCurator-CN-/pull/49) | 相似组首屏页量降为 64 组，启用屏外 group content-visibility，保留分页与滚动状态 | Source [37803785935](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37803785935) 成功；Windows Candidate [37803786039](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37803786039) 成功 |
 | [#50](https://github.com/youzhi1701/PhotoCurator-CN-/pull/50) | 集中批量复核令牌同时绑定原片设备、文件号、大小和 mtime，预览后同路径被替换拒绝处理；覆盖模糊、相似、回收站三条路径 | Source [37804353458](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37804353458) 成功；Windows Candidate [37804353771](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37804353771) 成功 |
 
+
+| [#51](https://github.com/youzhi1701/PhotoCurator-CN-/pull/51) | 所有后台文件任务绑定提交时的文件身份，执行时拒绝同路径替换/换盘误删；更新崩溃恢复冒烟测试 | Source [37808398464](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37808398464) 与 Candidate [37808398429](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37808398429) 均通过，已合并 |
+| [#52](https://github.com/youzhi1701/PhotoCurator-CN-/pull/52) | 全扫描末尾核验原设备身份，拔盘/换盘后不误标历史照片缺失 | Source [37808545593](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37808545593)、Candidate [37808545608](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37808545608) 通过，已合并 |
+| [#53](https://github.com/youzhi1701/PhotoCurator-CN-/pull/53) | 智能优选新增失焦、曝光、噪点、动态范围的可解释人工复核建议 | Source [37808869232](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37808869232)、Candidate [37808869195](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37808869195) 通过，已合并 |
+| [#54](https://github.com/youzhi1701/PhotoCurator-CN-/pull/54) | 入队时记录 XMP/AAE 辅件身份，后台安全移动/恢复/永久删除及半完成移动对账 | Source [37809840744](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37809840744)、Candidate [37809840743](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37809840743) 通过，已合并 |
+| [#55](https://github.com/youzhi1701/PhotoCurator-CN-/pull/55) | 开发版、桌面、安装器、清单及 Windows Candidate 一致升级为 v1.7.9，不改历史正式下载地址 | Source [37810479111](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37810479111)、Candidate [37810479140](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37810479140) 通过，已合并 |
+| [#56](https://github.com/youzhi1701/PhotoCurator-CN-/pull/56) | Top-N 从全量排序改为有界堆选取，含 19,000 条合成候选/离线回退及稳定排序测试 | Source [37810636881](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37810636881)、Candidate [37810637195](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37810637195) 通过，已合并 |
+| [#58](https://github.com/youzhi1701/PhotoCurator-CN-/pull/58) | Stable 发布增加逐版本真实 QA 批准、EXE 和安装器 Authenticode 签名与验签要求 | Source [37811617983](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37811617983)、Candidate [37811618077](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37811618077) 通过，已合并；真实签名尚未执行 |
+| [#59](https://github.com/youzhi1701/PhotoCurator-CN-/pull/59) | 有界的本地 OpenCV 正脸检测，未检测到脸绝不冒称风景；继承替换冲突 PR #57 | Source [37812894532](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37812894532)、Candidate [37812894510](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37812894510) 通过，已合并；#57 关闭 |
+| [#61](https://github.com/youzhi1701/PhotoCurator-CN-/pull/61) | 持久图库每批次写入前检查原设备身份，扫描中途拔盘/换盘不插入异盘照片 | Source [37813476841](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37813476841)、Candidate [37813476828](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37813476828) 通过，已合并 |
+| [#62](https://github.com/youzhi1701/PhotoCurator-CN-/pull/62) | 优选卡片和大图直接显示质量候选标签及可信的人像内容线索 | Source [37813971966](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37813971966)、Candidate [37813971831](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37813971831) 通过，已合并 |
+| [#60](https://github.com/youzhi1701/PhotoCurator-CN-/pull/60) | 从 SHA-256 验证的已发布 v1.5.0 安装器覆盖升级到候选版并核对原照片/离线预览/配置 | **仍在执行 Windows 回归，未合并、不可算完成** |
+
 以上状态只代表相应代码和已有自动化测试通过；**没有执行 4TB 外接机械硬盘、19,000 张以上真实图库、全格式 RAW/HEIF 样本以及多版本覆盖安装等完整实机验收**。本轮没有将候选包发布成 Stable。
 
 ## V2.0 八模块验收表
@@ -29,11 +42,11 @@
 | 1. 核心架构与后台任务 | 基本完成，任务并发、原子入队和任务安全逐步加固 | 崩溃、断电重试、任务中断/恢复、长时稳定性与队列压力实测 |
 | 2. 持久图库与设备识别 | 部分实现：Catalog/SQLite、设备源、离线元数据、重挂载路径处理 | 真正拔盘/插盘、原盘识别与换盘符、相同盘符不同设备、历史预览持久性、全盘多根目录一致性验收 |
 | 3. 扫描、增量索引与格式支持 | 部分实现：增量扫描、恢复会话、RAW/HEIF 与回退路径已有底座 | 断点续扫精度、部分失败避免误标 missing、真实 JPG/PNG/HEIF/RAW/XMP/RAW+JPG 跨盘回归、格式注册统一 |
-| 4. 精确去重、相似与智能质量 | 已增加 SHA-256 字节级精确重复索引、复用缓存；保留感知哈希/ORB/连拍及传统 CV 评分 | 大图库精确索引性能实测、场景语义识别与可解释标签、精细主体/噪声/曝光可信度、误判集评测与人工优先 |
+| 4. 精确去重、相似与智能质量 | 已有 SHA-256 字节精确去重、传统 CV 技术复核及轻量人脸候选提示；不是完整场景语义模型 | 大图库精确索引性能实测、场景语义识别与可解释标签、精细主体/噪声/曝光可信度、误判集评测与人工优先 |
 | 5. 人工筛选与集中复核 | #41–#46、#50 已加强批量复核、一次性授权、状态及源文件身份保护 | 相似/精选全部交互边界、历史选择恢复、跨设备重连的人工复核与撤销一致性实测 |
-| 6. UI 布局与性能 | 增加相似组 64 组首屏分页与屏外布局跳过；其他多轮优化已存在 | 统一工作台密度/缩放/弹窗/完整虚拟化、空闲 CPU/GPU、19,000+ 张图库响应及 Windows 高 DPI、多分辨率实测 |
-| 7. 回收站与文件生命周期 | 二次复核、批量事务、离线恢复记录、跨盘 SHA-256 校验与 no-replace 目标占位已加固 | 真实断电/崩溃窗口、跨卷与 sidecar、同名竞态实机确认、掉盘后恢复、持久状态原子同步全链路验证 |
-| 8. Windows 安装/升级/正式发布 | Windows Candidate 工作流成功，但并非 V2.0 Stable | 版本元数据统一、历史 Stable 覆盖升级、数据库备份/恢复、哈希/签名、安装卸载、正式 Release 准入与手工签核 |
+| 6. UI 布局与性能 | 相似组 64 组分批显示、屏外渲染跳过，Top-N 有界排序；19,000 条合成数据回归已通过 | 统一工作台密度/缩放/弹窗/完整虚拟化、空闲 CPU/GPU、19,000+ 张图库响应及 Windows 高 DPI、多分辨率实测 |
+| 7. 回收站与文件生命周期 | 二次复核、原子入队、离线历史、文件及 XMP/AAE 身份绑定、跨盘 SHA-256/no-replace 与中断恢复已加固 | 真实断电/崩溃窗口、跨卷与 sidecar、同名竞态实机确认、掉盘后恢复、持久状态原子同步全链路验证 |
+| 8. Windows 安装/升级/正式发布 | v1.7.9 Candidate 版本元数据与已发布 v1.5.0 地址保持分离；正式发布已加入强制 QA 批准和签名门禁 | #60 覆盖升级仍在 CI、真实设备/数据库备份验证、实际数字签名和正式 Release 签核 |
 
 ## 发布原则与下次继续规则
 
@@ -41,3 +54,10 @@
 2. 以 `main` 实时 SHA 为唯一代码基线；对 `perf/v1.8.0-runtime-architecture` 等旧开发分支只审查差异、隔离迁移，不整分支覆盖当前主线。
 3. 代码开发、PR 合并、Source/Windows 自动化通过、Candidate EXE 生成、真实设备长时验收、Stable 版本发布，是**六种不同状态**。缺任何发布门禁均不得公开标称“V2.0 正式完成”。
 4. 下一轮核心优先级：**场景语义分析/可信度与误判集 → 持久图库/断盘恢复实测 → 大图库性能/布局 → 文件生命周期真实断电、跨盘与 sidecar 回归 → Windows 覆盖升级与发布签核**。始终先复核 GitHub 实际进度，避免重复修改、避免破坏原始照片。
+
+## 最新交接说明（2026-10-09）
+
+- 当前正式可下载 Stable 仍为 **v1.5.0**。v1.7.9 为**候选测试版**，严禁将 Windows 候选安装器当作完成实机验收的 V2.0 Stable。
+- GitHub 无真实 4TB 外接机械硬盘与用户 Windows 测试机连接；正式签名所需 PFX/密码不能由模型凭空生成。
+- 发布级实机测试、签名设置、评估数据和发布前签核统一按 [RELEASE_ACCEPTANCE.md](RELEASE_ACCEPTANCE.md)。
+- 后续迭代必须重新从 GitHub main 的真实 SHA、PR 状态和 Actions 构件核对，不依赖本文件猜测进度。
