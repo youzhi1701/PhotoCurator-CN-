@@ -186,6 +186,37 @@ class BackgroundTaskHistoryTests(unittest.TestCase):
             finally:
                 manager.shutdown()
 
+    def test_two_workers_cannot_execute_same_recovered_task(self):
+        import threading
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "shared.sqlite"
+            first = BackgroundTaskManager(db_path, workers=1, autostart=False)
+            second = None
+            lock = threading.Lock()
+            calls = []
+            try:
+                task_id, _ = first.enqueue(
+                    "once", {"value": 1}, idempotency_key="unique-work"
+                )
+                # Another instance starts with the same persisted queued ID;
+                # both internal heaps legitimately contain the same task.
+                second = BackgroundTaskManager(db_path, workers=1, autostart=False)
+                def handler(payload):
+                    with lock:
+                        calls.append(payload["value"])
+                    time.sleep(0.1)
+                    return payload["value"]
+                first.register("once", handler)
+                second.register("once", handler)
+                first.start()
+                second.start()
+                self._wait_for_state(first, task_id, "done")
+                self.assertEqual(calls, [1])
+            finally:
+                first.shutdown()
+                if second:
+                    second.shutdown()
+
     @staticmethod
     def _wait_for_state(manager, task_id, state):
         deadline = time.monotonic() + 5
