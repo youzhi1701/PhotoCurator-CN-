@@ -6602,9 +6602,10 @@ function renderTrash(items){
   g.innerHTML=photos.map((p,i)=>trashCard(p,i)).join('');
   setupFilterBar();
 }
+let trashPurgeToken='';
 function loadTrash(){
   fetch('/api/trash').then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;})
-    .then(d=>renderTrash(d.photos||[]))
+    .then(d=>{trashPurgeToken=d.purge_token||'';renderTrash(d.photos||[]);})
     .catch(err=>toast('回收站读取失败：'+(err.message||'未知错误'),'bad'));
 }
 function waitTaskAndSync(taskId,doneText){
@@ -6655,9 +6656,10 @@ function trashRestoreOne(id,fromLightbox=false){
 async function trashPurgeOne(id,fromLightbox=false){
   const ok=await askBatchConfirm('彻底删除','永久删除后无法从 PhotoCurator 恢复这张照片。','彻底删除');
   if(!ok)return;
-  fetch('/api/trash-purge',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})})
+  fetch('/api/trash-purge',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,purge_token:trashPurgeToken})})
     .then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;})
     .then(d=>{
+      trashPurgeToken='';
       toast('已提交后台永久删除','info');
       photos=(photos||[]).filter(x=>Number(x.id)!==Number(id));renderTrash(photos);
       if(fromLightbox){lbList=photos.slice();if(!lbList.length)closeLb();else{if(lbIndex>=lbList.length)lbIndex=lbList.length-1;showLb();}}
@@ -6677,9 +6679,9 @@ async function trashPurgeAll(){
   if(!photos.length)return;
   const ok=await askBatchConfirm('清空软件回收站','将永久删除当前软件回收站中的 '+photos.length+' 张照片，此操作不可恢复。','永久删除全部');
   if(!ok)return;
-  fetch('/api/trash-purge',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({all:true})})
+  fetch('/api/trash-purge',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({all:true,purge_token:trashPurgeToken})})
     .then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;})
-    .then(d=>{toast('已提交后台永久删除 '+(d.count||0)+' 张照片','info');renderTrash([]);refreshTaskCenter();})
+    .then(d=>{trashPurgeToken='';toast('已提交后台永久删除 '+(d.count||0)+' 张照片','info');renderTrash([]);refreshTaskCenter();})
     .catch(err=>toast('清空回收站失败：'+(err.message||'未知错误'),'bad'));
 }
 
@@ -8215,6 +8217,15 @@ def _known_step_paths(step):
     return set()
 
 
+def _trash_grant_rows(rows):
+    """Bind permanent-delete consent to exact recycle-bin identities, not paths alone."""
+    return [
+        {'path': 'trash:{}:{}:{}'.format(int(row['id']),
+              str(row.get('path') or ''), str(row.get('original_path') or ''))}
+        for row in rows
+    ]
+
+
 @app.route('/api/trash', methods=['GET'])
 def api_trash():
     """List PhotoCurator's own recycle bin for the current selected library."""
@@ -8222,7 +8233,9 @@ def api_trash():
     if not folder or not Path(folder).is_dir():
         return jsonify({'photos': [], 'count': 0})
     rows = _trash_rows(folder)
-    return jsonify({'photos': rows, 'count': len(rows)})
+    return jsonify({'photos': rows, 'count': len(rows),
+                    'purge_token': _issue_pending_review_grant(
+                        _trash_grant_rows(rows)) if rows else ''})
 
 
 @app.route('/api/trash-restore', methods=['POST'])
@@ -8266,16 +8279,26 @@ def api_trash_purge():
     folder = state.get('folder')
     if not folder or not Path(folder).is_dir():
         return jsonify({'error': '请先选择照片文件夹'}), 400
-    data = request.get_json() or {}
+    data = request.get_json(silent=True) or {}
     rows = _trash_rows(folder)
+    if not rows:
+        return jsonify({'error': '回收站为空，请刷新后重试'}), 404
+    # Permanent deletion requires the latest read-only trash review.
+    if not _consume_pending_review_grant(
+            data.get('purge_token'), _trash_grant_rows(rows)):
+        return jsonify({'error': '永久删除复核凭证无效或回收站内容已变化，请刷新重审'}), 409
     if data.get('all'):
-        task_ids = []
-        for row in rows:
-            task_id, _ = TASK_MANAGER.enqueue(
-                'purge_trash', {'trash_id': row['id']}, priority=12,
-                idempotency_key=f"purge_trash:{row['id']}"
-            )
-            task_ids.append(task_id)
+        try:
+            submitted = TASK_MANAGER.enqueue_many([
+                {'kind': 'purge_trash', 'payload': {'trash_id': row['id']},
+                 'priority': 12, 'idempotency_key': f"purge_trash:{row['id']}"}
+                for row in rows
+            ])
+        except Exception:
+            logger.exception("failed to atomically queue permanent trash purge")
+            return jsonify({'error': '整批永久删除任务未能提交，请重新复核后重试',
+                            'queued': False, 'task_ids': []}), 503
+        task_ids = [task_id for task_id, _ in submitted]
         return jsonify({'ok': True, 'queued': True, 'task_ids': task_ids,
                         'count': len(task_ids)}), 202
     try:
@@ -8284,10 +8307,14 @@ def api_trash_purge():
         return jsonify({'error': '无效的回收站记录'}), 400
     if trash_id not in {row['id'] for row in rows}:
         return jsonify({'error': '当前照片库的回收站中没有这条记录'}), 404
-    task_id, created = TASK_MANAGER.enqueue(
-        'purge_trash', {'trash_id': trash_id}, priority=7,
-        idempotency_key=f"purge_trash:{trash_id}"
-    )
+    try:
+        task_id, created = TASK_MANAGER.enqueue(
+            'purge_trash', {'trash_id': trash_id}, priority=7,
+            idempotency_key=f"purge_trash:{trash_id}"
+        )
+    except Exception:
+        logger.exception("failed to queue permanent trash purge")
+        return jsonify({'error': '永久删除任务未能提交，请重新复核后重试'}), 503
     return jsonify({'ok': True, 'queued': True, 'created': created,
                     'task_id': task_id, 'id': trash_id}), 202
 
@@ -8298,31 +8325,37 @@ def api_trash_restore_all():
     if not folder or not Path(folder).is_dir():
         return jsonify({'error': '请先选择照片文件夹'}), 400
     rows = _trash_rows(folder)
-    task_ids = []
     planned_rows = []
-    with _FILE_PLAN_LOCK:
-        reserved = _active_restore_reservations()
-        for row in rows:
-            restore_path = str(_unique_destination(
-                Path(row['original_path']), reserved=reserved
-            ).resolve())
-            task_id, created = TASK_MANAGER.enqueue(
-                'restore_trash',
-                {'trash_id': row['id'],
-                 'original_path': row['original_path'],
-                 'trash_path': row['path'],
-                 'source_step': row.get('source_step') or '',
-                 'restore_path': restore_path},
-                priority=15,
-                idempotency_key=f"restore_trash:{row['id']}"
-            )
-            task_ids.append(task_id)
-            if created:
+    try:
+        with _FILE_PLAN_LOCK:
+            reserved = _active_restore_reservations()
+            for row in rows:
+                restore_path = str(_unique_destination(
+                    Path(row['original_path']), reserved=reserved
+                ).resolve())
                 reserved.add(_path_reservation_key(restore_path))
-            planned_rows.append((row, task_id))
-    for row, task_id in planned_rows:
-        _media_state_set(row['original_path'], row['path'], 'pending_restore',
-                         row.get('source_step') or '', detail=str(task_id))
+                planned_rows.append((row, restore_path))
+            submitted = TASK_MANAGER.enqueue_many([
+                {'kind': 'restore_trash',
+                 'payload': {'trash_id': row['id'],
+                             'original_path': row['original_path'],
+                             'trash_path': row['path'],
+                             'source_step': row.get('source_step') or '',
+                             'restore_path': restore_path},
+                 'priority': 15,
+                 'idempotency_key': f"restore_trash:{row['id']}"}
+                for row, restore_path in planned_rows
+            ])
+    except Exception:
+        logger.exception("failed to atomically queue recycle-bin restore")
+        return jsonify({'error': '整批恢复任务提交失败，照片没有被移动',
+                        'queued': False, 'task_ids': []}), 503
+    task_ids = [task_id for task_id, _ in submitted]
+    for (row, _), (task_id, _) in zip(planned_rows, submitted):
+        task = TASK_MANAGER.get(task_id)
+        if task and task.get('state') in ('queued', 'running'):
+            _media_state_set(row['original_path'], row['path'], 'pending_restore',
+                             row.get('source_step') or '', detail=str(task_id))
     return jsonify({'ok': True, 'queued': True, 'task_ids': task_ids,
                     'count': len(task_ids)}), 202
 
