@@ -925,6 +925,10 @@ jobs:
           python "基础冒烟测试.py"
           python release_gate_test.py
 
+      - name: Background task history regression
+        run: |
+          python -m unittest -v test_background_task_history
+
       - name: Performance architecture regression gate
         run: |
           python performance_gate_test.py
