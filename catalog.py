@@ -201,6 +201,9 @@ def _windows_volume_info(path):
         capacity = 0
 
     guid_key = volume_guid.strip().lower()
+    # A vanished disk must not be registered as an anonymous all-zero volume.
+    if not guid_key and not ok:
+        raise OSError("无法读取磁盘唯一标识，请确认原设备已连接")
     if guid_key:
         identity_key = "win-guid:" + guid_key
     else:
@@ -224,10 +227,9 @@ def _windows_volume_info(path):
 def volume_info_for_path(path):
     path = os.path.realpath(os.path.expanduser(str(path)))
     if os.name == "nt":
-        try:
-            return _windows_volume_info(path)
-        except Exception:
-            pass
+        # Falling back to a POSIX-style anchor on Windows silently treats an
+        # unreadable/replaced volume as a different fake identity.
+        return _windows_volume_info(path)
 
     anchor = Path(path).anchor or str(Path(path).parent)
     try:
@@ -354,6 +356,7 @@ def register_source(db_path, folder, display_name=None):
         "mount_path": info["mount_path"],
         "root_path": folder,
         "relative_root": relative_root,
+        "identity_key": info["identity_key"],
         "volume_serial": info["volume_serial"],
         "volume_guid": info["volume_guid"],
     }
@@ -818,7 +821,22 @@ def catalog_scan_batch(db_path, session, paths):
 
 
 def finish_catalog_scan(db_path, session, *, full_scan=True):
-    """Commit a generation; only an error-free full walk may mark media missing."""
+    """Complete only if the same physical source is still mounted.
+
+    A walk on a removed/reused drive letter may finish without a raised
+    scandir error. Never interpret that as a deliberate empty library.
+    """
+    if full_scan:
+        try:
+            root = str(session["root_path"])
+            if not Path(root).is_dir():
+                raise FileNotFoundError(root)
+            observed = volume_info_for_path(root)
+            if str(observed.get("identity_key") or "") != str(session.get("identity_key") or ""):
+                raise RuntimeError("扫描期间照片磁盘发生切换，拒绝把旧照片标记为丢失")
+        except Exception as exc:
+            abort_catalog_scan(db_path, session, f"source revalidation: {exc}")
+            raise RuntimeError("数据源已断开或身份发生变化，扫描中止且历史图库得到保留") from exc
     now = time.time()
     with _connect(db_path) as db:
         # Finalization is serialized with cancellation and new scans.
