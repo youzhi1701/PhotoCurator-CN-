@@ -5032,7 +5032,7 @@ function setupFilterBar(){
       bar.innerHTML='';
       return;
     }
-    const opts=[['all','全部'],['sharp','清晰'],['soft','轻微软 ★'],['blurry','模糊']];
+    const opts=[['all','全部'],['sharp','清晰'],['soft','轻微软 ★'],['blurry','模糊'],['pending','待删除']];
     // Per-format chips (NEF, CR2, ARW, ...) built from what's actually loaded.
     const rawFmts=[...new Set(photos.filter(p=>p.raw).map(p=>p.fmt||'RAW'))].sort();
     const hasHeic=photos.some(p=>p.heic);
@@ -6629,7 +6629,7 @@ function renderCullStep(items){
   if(fSig!==lastFmtSig){lastFmtSig=fSig;setupFilterBar();}
 
   const filtered=items.filter(p=>visibleInReview(p)
-    &&(cullFilter==='all'||p.tier===cullFilter)
+    &&(cullFilter==='all'||(cullFilter==='pending' ? p.tier==='blurry'&&p.move_selected===true : p.tier===cullFilter))
     &&(cullType==='all'||(cullType==='raw'?!!p.raw
       :cullType==='heic'?!!p.heic
       :cullType==='standard'?(!p.raw&&!p.heic)
