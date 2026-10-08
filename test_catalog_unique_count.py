@@ -4,7 +4,8 @@
 import tempfile
 import unittest
 from pathlib import Path
-from catalog import init_catalog_schema, list_sources
+from catalog import (init_catalog_schema, list_sources, begin_catalog_scan,
+                     catalog_scan_batch, abort_catalog_scan)
 from db_runtime import connect_db
 
 class CatalogUniqueCountTests(unittest.TestCase):
@@ -43,6 +44,35 @@ class CatalogUniqueCountTests(unittest.TestCase):
             self.assertFalse(sources[0]["connected"])
             self.assertEqual(sum(x["photo_count"] for x in sources[0]["roots"]), 3)
             self.assertEqual(sources[0]["unique_photo_count"], 2)
+
+class CatalogScanGuardTests(unittest.TestCase):
+    def test_interrupted_scan_cannot_write_stale_batches(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "photos"
+            root.mkdir()
+            photo = root / "a.jpg"
+            photo.write_bytes(b"fake-image")
+            db_path = Path(tmp) / "catalog.sqlite"
+            session = begin_catalog_scan(db_path, root)
+            abort_catalog_scan(db_path, session, "cancelled")
+            with self.assertRaisesRegex(RuntimeError, "no longer active"):
+                catalog_scan_batch(db_path, session, [photo])
+            with connect_db(db_path) as db:
+                self.assertEqual(db.execute("SELECT COUNT(*) FROM media_catalog").fetchone()[0], 0)
+
+    def test_scan_outside_root_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "photos"
+            root.mkdir()
+            outside = Path(tmp) / "outside.jpg"
+            outside.write_bytes(b"fake-image")
+            db_path = Path(tmp) / "catalog.sqlite"
+            session = begin_catalog_scan(db_path, root)
+            self.assertEqual(catalog_scan_batch(db_path, session, [outside]), 0)
+            self.assertGreater(session["error_count"], 0)
+            with connect_db(db_path) as db:
+                self.assertEqual(db.execute("SELECT COUNT(*) FROM media_catalog").fetchone()[0], 0)
+
 
 if __name__ == "__main__":
     unittest.main()
