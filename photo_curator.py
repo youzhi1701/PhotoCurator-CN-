@@ -8154,19 +8154,24 @@ def api_review_delete_apply():
     paths=_known_step_paths(step)
     marks=_review_delete_marks(paths)
     task_ids=[]
-    for path in marks:
-        if not Path(path).is_file():
+    for path in sorted(marks):
+        if not Path(path).is_file() or _safe_image_path(path) is None:
             continue
         original=_find_original_for_path(path)
         planned=str(_trash_destination(Path(path), folder).resolve())
         with _FILE_PLAN_LOCK:
-            task_id,created=TASK_MANAGER.enqueue(
-                'move_to_trash',
-                {'path':path,'folder':str(folder),'step':step,'trash_path':planned},
-                priority=12,idempotency_key=f"move_to_trash:{original}"
-            )
-            if created:
-                _apply_media_lifecycle(original,path,'pending_trash',step)
+            _apply_media_lifecycle(original,path,'pending_trash',step)
+            try:
+                task_id,created=TASK_MANAGER.enqueue(
+                    'move_to_trash',
+                    {'path':path,'folder':str(folder),'step':step,'trash_path':planned},
+                    priority=12,idempotency_key=f"move_to_trash:{original}"
+                )
+            except Exception:
+                # No persisted worker accepted this request. Undo the pending
+                # lifecycle rather than leaving a phantom processing state.
+                _apply_media_lifecycle(original,path,'normal',step)
+                raise
         task_ids.append(task_id)
     return jsonify({'ok':True,'queued':len(task_ids),'task_ids':task_ids}),202
 
