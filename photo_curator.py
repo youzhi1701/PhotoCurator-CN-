@@ -8282,7 +8282,8 @@ def _dedup_apply_grant_rows(rows):
     return [{
         'path': 'dedup|{}|{}|{}'.format(
             row['group'], row['keep'], row['path']
-        )
+        ),
+        'file_path': row['path'],
     } for row in rows]
 
 
@@ -8378,7 +8379,8 @@ def _trash_grant_rows(rows):
     """Bind permanent-delete consent to exact recycle-bin identities, not paths alone."""
     return [
         {'path': 'trash:{}:{}:{}'.format(int(row['id']),
-              str(row.get('path') or ''), str(row.get('original_path') or ''))}
+              str(row.get('path') or ''), str(row.get('original_path') or '')),
+         'file_path': str(row.get('path') or '')}
         for row in rows
     ]
 
@@ -8863,10 +8865,28 @@ def _pending_review_rows():
 
 
 def _pending_review_token(rows):
-    """Fingerprint only; this is not a credential and must not be accepted as one."""
+    """Bind review grants to current files as well as their selected paths.
+
+    A path-only grant allowed a file replaced between preview and submit to
+    inherit its previous owner's permission. The metadata check is bounded
+    (one stat per selected file) and does not hash an entire large library.
+    """
+    items = []
+    for row in rows:
+        label = str(row['path'])
+        physical = str(row.get('file_path') or label)
+        try:
+            info = os.stat(physical)
+            identity = [
+                int(info.st_dev), int(info.st_ino),
+                int(info.st_size), int(info.st_mtime_ns),
+            ]
+        except OSError:
+            identity = None
+        items.append((label, identity))
     basis = {
         'folder': str(state.get('folder') or ''),
-        'paths': sorted(str(p['path']) for p in rows),
+        'items': sorted(items, key=lambda item: item[0]),
     }
     return hashlib.sha256(
         json.dumps(basis, ensure_ascii=False, sort_keys=True).encode('utf-8')

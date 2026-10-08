@@ -567,6 +567,65 @@ class MissingFileDeleteSafetyTests(unittest.TestCase):
             self.assertEqual([r["tier"] for r in payload["items"]], ["sharp", "soft"])
             enqueue.assert_not_called()
 
+    def test_move_grant_rejects_replaced_photo_at_same_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            photo = Path(tmp) / "selected.jpg"
+            photo.write_bytes(b"original image")
+            selected = [{"path": str(photo), "tier": "sharp",
+                         "move_selected": True, "lifecycle": "normal"}]
+            with patch.dict(photo_curator.state, {"folder": tmp}), \
+                 patch.dict(photo_curator.state["cull"],
+                            {"photos": selected}, clear=False), \
+                 patch.object(photo_curator.TASK_MANAGER, "enqueue_many") as enqueue:
+                client = photo_curator.app.test_client()
+                token = client.get("/api/review-pending").get_json()["review_token"]
+                photo.write_bytes(b"unrelated photo with different bytes and size")
+                denied = client.post("/api/move-blurry",
+                                     json={"review_token": token})
+                self.assertEqual(denied.status_code, 409, denied.get_json())
+                enqueue.assert_not_called()
+            self.assertEqual(photo.read_bytes(),
+                             b"unrelated photo with different bytes and size")
+
+    def test_dedup_grant_rejects_replacement_even_when_selection_unchanged(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            photo = Path(tmp) / "duplicate.jpg"
+            photo.write_bytes(b"old bytes")
+            rows = [{"path": str(photo), "group": "g1",
+                     "keep": str(Path(tmp) / "keep.jpg")}]
+            with patch.dict(photo_curator.state, {"folder": tmp}), \
+                 patch.object(photo_curator, "_sync_dedup_with_cull"), \
+                 patch.object(photo_curator, "_dedup_apply_rows",
+                              return_value=rows), \
+                 patch.object(photo_curator.TASK_MANAGER, "enqueue_many") as enqueue:
+                client = photo_curator.app.test_client()
+                token = client.get("/api/review-dedup-apply").get_json()["review_token"]
+                photo.write_bytes(b"different bytes")
+                denied = client.post("/api/dedup-apply",
+                                     json={"review_token": token})
+                self.assertEqual(denied.status_code, 409, denied.get_json())
+                enqueue.assert_not_called()
+            self.assertTrue(photo.exists())
+
+    def test_trash_grant_rejects_changed_file_before_purge(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            trash = Path(tmp) / "trash.jpg"
+            trash.write_bytes(b"former file")
+            rows = [{"id": 15, "path": str(trash),
+                     "original_path": str(Path(tmp) / "original.jpg"),
+                     "available": True}]
+            with patch.dict(photo_curator.state, {"folder": tmp}), \
+                 patch.object(photo_curator, "_trash_rows", return_value=rows), \
+                 patch.object(photo_curator.TASK_MANAGER, "enqueue") as enqueue:
+                client = photo_curator.app.test_client()
+                token = client.get("/api/trash").get_json()["purge_token"]
+                trash.write_bytes(b"unexpected replacement!")
+                denied = client.post("/api/trash-purge",
+                                     json={"id": 15, "purge_token": token})
+                self.assertEqual(denied.status_code, 409, denied.get_json())
+                enqueue.assert_not_called()
+            self.assertTrue(trash.exists())
+
     def test_move_queue_rejects_missing_or_forged_review_credentials(self):
         with tempfile.TemporaryDirectory() as tmp:
             photo = Path(tmp) / "clear.jpg"
