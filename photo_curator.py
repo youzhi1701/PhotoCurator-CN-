@@ -16,6 +16,7 @@ import os
 import sys
 import io
 import json
+import errno
 import time
 import shutil
 import hashlib
@@ -1351,6 +1352,28 @@ def _photo_sidecars(path):
     return out
 
 
+def _rename_no_replace(src, dst):
+    """Atomically claim an unused destination; never overwrite a racing writer.
+
+    Windows os.rename uses MoveFile without REPLACE_EXISTING. On POSIX a
+    hardlink with O_EXCL-like destination semantics is followed by unlink.
+    Source and destination must be on the same filesystem for this helper.
+    """
+    if os.name == 'nt':
+        os.rename(str(src), str(dst))
+        return
+    os.link(str(src), str(dst))
+    try:
+        os.unlink(str(src))
+    except OSError:
+        try:
+            if os.path.samefile(str(src), str(dst)):
+                os.unlink(str(dst))
+        except OSError:
+            pass
+        raise
+
+
 def _safe_move_file(src, dst):
     """Move without overwrite; cross-volume moves are copy/verify/commit/delete."""
     src = Path(src)
@@ -1361,10 +1384,13 @@ def _safe_move_file(src, dst):
         raise FileExistsError(str(dst))
     dst.parent.mkdir(parents=True, exist_ok=True)
     try:
-        os.replace(str(src), str(dst))
+        _rename_no_replace(src, dst)
         return dst
-    except OSError:
-        pass
+    except OSError as exc:
+        if (isinstance(exc, FileExistsError) or dst.exists()):
+            raise FileExistsError(str(dst)) from exc
+        if exc.errno != errno.EXDEV and getattr(exc, 'winerror', None) != 17:
+            raise
 
     # Never delete another attempt's fixed-name .part file. Create a unique
     # staging file on the destination volume so the final rename is local.
@@ -1388,9 +1414,10 @@ def _safe_move_file(src, dst):
         # Windows requires a write-capable handle for FlushFileBuffers/fsync.
         with open(tmp, 'r+b') as fh:
             os.fsync(fh.fileno())
-        if dst.exists():
-            raise FileExistsError(str(dst))
-        os.replace(str(tmp), str(dst))
+        # tmp already resides on the destination volume. The final claim
+        # must be no-replace too; a check-then-os.replace race can overwrite
+        # another user's photograph.
+        _rename_no_replace(tmp, dst)
         src.unlink()
         return dst
     finally:
