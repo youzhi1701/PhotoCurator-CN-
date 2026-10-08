@@ -2602,6 +2602,22 @@ def _shared_scan_fingerprints(folder, recursive=True):
         return entry.get('fingerprints') or {}
 
 
+def _release_heavy_scan_snapshot(key, snapshot_at):
+    """Drop large shared path/metadata references after consumers have started.
+
+    The lightweight state/count remains available for diagnostics. Cull/Dedup
+    keep ordinary local references to the immutable tuple/dict while running,
+    so releasing the global cache cannot invalidate active work.
+    """
+    with _SCAN_SNAPSHOT_CV:
+        entry = _SCAN_SNAPSHOTS.get(key)
+        if (not entry or entry.get('state') != 'ready'
+                or float(entry.get('at') or 0) != float(snapshot_at)):
+            return
+        entry['paths'] = ()
+        entry['fingerprints'] = {}
+
+
 def _shared_list_images(folder, recursive=True, max_age=2.0):
     """Enumerate a source once and persist discovery in crash-safe batches.
 
@@ -2701,13 +2717,14 @@ def _shared_list_images(folder, recursive=True, max_age=2.0):
 
     paths.sort(key=lambda p: os.path.normcase(str(p)))
     snapshot = tuple(paths)
+    snapshot_at = time.time()
     # One post-walk metadata pass is shared by Cull + Dedup. Previously both
     # engines independently stat()'d the same source after sharing the path
     # scan, wasting I/O on large external drives.
     fingerprints = _fingerprints(snapshot)
     with _SCAN_SNAPSHOT_CV:
         _SCAN_SNAPSHOTS[key] = {
-            'state': 'ready', 'at': time.time(), 'paths': snapshot,
+            'state': 'ready', 'at': snapshot_at, 'paths': snapshot,
             'fingerprints': fingerprints, 'discovered': len(snapshot),
         }
         if len(_SCAN_SNAPSHOTS) > 8:
@@ -2718,6 +2735,14 @@ def _shared_list_images(folder, recursive=True, max_age=2.0):
             for old_key, _ in stale[:max(0, len(_SCAN_SNAPSHOTS) - 8)]:
                 _SCAN_SNAPSHOTS.pop(old_key, None)
         _SCAN_SNAPSHOT_CV.notify_all()
+    # The sharing window only needs to cover the parallel core startup. After
+    # that, retaining hundreds of thousands of paths/fingerprints globally
+    # would turn repeated library work into needless long-lived RAM growth.
+    expiry = threading.Timer(
+        15.0, _release_heavy_scan_snapshot, args=(key, snapshot_at)
+    )
+    expiry.daemon = True
+    expiry.start()
     return snapshot
 
 
@@ -2769,7 +2794,6 @@ def run_cull(folder, strictness, adaptive, rescue_on, recursive=True):
               'complete': False, 'src_folder': str(folder), 'recursive': bool(recursive)})
     try:
         images = _shared_list_images(folder, recursive=recursive)
-        current_paths = {str(p) for p in images}
         # One metadata pass feeds every path-keyed cache lookup. On external
         # HDD/USB libraries, repeated stat() passes are measurable latency.
         fingerprints = _shared_scan_fingerprints(folder, recursive) or _fingerprints(images)
@@ -2781,7 +2805,11 @@ def run_cull(folder, strictness, adaptive, rescue_on, recursive=True):
 
         def thresholds():
             if adaptive and items:
-                M = float(np.median([it['region_s'] for it in items]))
+                region_values = np.fromiter(
+                    (it['region_s'] for it in items), dtype=np.float32,
+                    count=len(items)
+                )
+                M = float(np.median(region_values))
                 # Sharpness is ~log-distributed; keep the blur floor LOW and the
                 # Soft band WIDE so slightly-soft (Topaz-recoverable) frames are
                 # kept rather than culled. Only clearly-soft frames fall below.
@@ -2791,8 +2819,14 @@ def run_cull(folder, strictness, adaptive, rescue_on, recursive=True):
                 blur_lo, sharp_hi = BASE_BLUR, BASE_SHARP
             blur_lo *= strictness
             sharp_hi *= strictness
-            qs = [it['q'] for it in items]
-            q_rescue = float(np.percentile(qs, 70)) if qs else 65.0
+            if items:
+                quality_values = np.fromiter(
+                    (it['q'] for it in items), dtype=np.float32,
+                    count=len(items)
+                )
+                q_rescue = float(np.percentile(quality_values, 70))
+            else:
+                q_rescue = 65.0
             return blur_lo, sharp_hi, q_rescue
 
         def classify_all(validate_files=False):
@@ -2835,7 +2869,8 @@ def run_cull(folder, strictness, adaptive, rescue_on, recursive=True):
             # Newest-processed first in the live grid (no scrolling to bottom).
             # Only the display order is reversed; `kept` stays in capture order
             # so Dedup/Rank still receive survivors in their natural sequence.
-            s['photos'] = photos[::-1]
+            photos.reverse()
+            s['photos'] = photos
             s['sharp'], s['soft'], s['blurry'] = sharp, soft, blurry
             s['sharp_paths'] = kept   # kept = sharp + soft (flows to Dedup/Rank)
 
