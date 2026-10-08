@@ -6250,47 +6250,57 @@ function renderDedupGroups(groups){
   updateResultTools();
 }
 
-document.getElementById('gallery').addEventListener('click',e=>{
-  const complete=e.target.closest('.group-complete');
-  if(complete){
-    e.stopPropagation();
-    fetch('/api/dedup-complete',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({group_id:Number(complete.dataset.group)})})
-      .then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;})
-      .then(d=>{
-        const idx=photos.findIndex(g=>g.group_id===Number(complete.dataset.group));
-        if(idx>=0&&d.changed_group)photos[idx]=d.changed_group;
-        renderDedupGroups(photos);
-        toast('本组已完成筛选','good');
-      }).catch(err=>toast('完成本组失败：'+(err.message||'未知错误'),'bad'));
-    return;
-  }
-  const b=e.target.closest('.dedup-quick button');
-  if(!b)return;
-  e.stopPropagation();
-  fetch('/api/dedup-group-action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({group_id:Number(b.dataset.group),mode:b.dataset.dmode})})
-    .then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;})
-    .then(d=>{
-      (d.photos||[]).forEach(g=>{if(g&&g.group_id!=null)dedupLiveStore.set(String(g.group_id),g);});
-      if(d.changed_group&&d.changed_group.group_id!=null)dedupLiveStore.set(String(d.changed_group.group_id),d.changed_group);
-      renderDedupGroups(Array.from(dedupLiveStore.values()));
-    })
-    .catch(err=>toast('相似组选优失败：'+(err.message||'未知错误'),'bad'));
-});
+// The legacy group-complete and keeper-preset handlers are not used by the
+// two-state review interface. Review status follows explicit mark events.
 function selectDedupPhoto(groupId,path){
-  fetch('/api/dedup-select',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({group_id:Number(groupId),path})})
-    .then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;})
+  const group=(photos||[]).find(g=>String(g.group_id)===String(groupId));
+  const member=(group?.members||[]).find(p=>p.path===path);
+  if(!member)return;
+  const next=!Boolean(member.marked_delete);
+  fetch('/api/review-delete-mark',{
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({step:'dedup',path,marked:next})
+  }).then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;})
     .then(d=>{
-      (d.photos||[]).forEach(g=>{if(g&&g.group_id!=null)dedupLiveStore.set(String(g.group_id),g);});
-      if(d.changed_group&&d.changed_group.group_id!=null)dedupLiveStore.set(String(d.changed_group.group_id),d.changed_group);
-      renderDedupGroups(Array.from(dedupLiveStore.values()));
-      toast(d.selected?'已加入保留':'已取消保留','good');
-    })
-    .catch(err=>toast('切换失败：'+(err.message||'未知错误'),'bad'));
+      member.marked_delete=Boolean(d.marked);
+      const choice=Array.from(document.querySelectorAll('#gallery .dedup-choice'))
+        .find(el=>el.dataset.path===path&&el.dataset.group===String(groupId));
+      if(choice){
+        choice.classList.toggle('review-marked',member.marked_delete);
+        const button=choice.querySelector('.dedup-recommend');
+        if(button){
+          button.textContent=member.marked_delete?'↶ 撤销待删除':'🗑 标记待删除';
+          button.title=member.marked_delete?'撤销待删除标记':'标记为待删除';
+          button.classList.toggle('state-trash',member.marked_delete);
+          button.classList.toggle('state-neutral',!member.marked_delete);
+        }
+      }
+      const found=(d.groups||[]).find(g=>String(g.group_id)===String(groupId));
+      if(found){group.status=found.status;
+        const section=choice?.closest('.dedup-group');
+        const label=section?.querySelector('.group-status');
+        if(label){const [text,klass]=dedupGroupStatusLabel(group.status);
+          label.textContent=text;label.className='group-status '+klass;}
+      }
+      const counter=choice?.closest('.dedup-group')?.querySelector('.dedup-group-meta');
+      if(counter){
+        const current=group.members.filter(p=>visibleInReview(p));
+        counter.textContent='待删除 '+current.filter(p=>p.marked_delete).length+' · 共 '+current.length+' 张';
+      }
+      // Leave the card in place; other status partitions refresh on demand.
+      lastDedupSig='';
+    }).catch(err=>toast('标记未保存：'+(err.message||'未知错误'),'bad'));
 }
-function applyDedupSelection(){
+async function applyDedupSelection(){
+  const count=Array.from(dedupLiveStore.values()).reduce(
+    (n,g)=>n+(g.members||[]).filter(m=>m.marked_delete&&visibleInReview(m)).length,0);
+  if(!count){toast('请先标记需要删除的相似照片','info');return;}
+  const yes=await askBatchConfirm('确认处理待删除照片',
+    '已标记 '+count+' 张照片；确认后将提交到软件回收站。未标记照片不会被处理。',
+    '移入软件回收站');
+  if(!yes)return;
   const btn=document.getElementById('dedupApplyBtn');
-  btn.disabled=true;btn.textContent='正在处理…';
+  btn.disabled=true;btn.textContent='正在提交…';
   fetch('/api/dedup-apply',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})
     .then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;})
     .then(d=>{
@@ -6321,7 +6331,7 @@ function applyDedupSelection(){
       }
     })
     .catch(err=>toast('处理失败：'+(err.message||'未知错误'),'bad'))
-    .finally(()=>{btn.disabled=false;btn.textContent='✓ 确认处理未保留照片';});
+    .finally(()=>{btn.disabled=false;btn.textContent='🗑 执行待删除照片';});
 }
 document.getElementById('dedupApplyBtn').onclick=applyDedupSelection;
 
@@ -7860,16 +7870,23 @@ def api_dedup_results_chunk():
         return jsonify({'error': '结果范围无效'}), 400
     status_filter = str(request.args.get('status') or 'all')
     all_groups = s.get('photos', [])
-    if status_filter in ('pending','reviewed','updated'):
-        all_groups = [g for g in all_groups if str(g.get('status') or 'pending') == status_filter]
+    if status_filter == 'pending':
+        all_groups = [g for g in all_groups if str(g.get('status') or 'pending') != 'reviewed']
+    elif status_filter == 'reviewed':
+        all_groups = [g for g in all_groups if str(g.get('status') or 'pending') == 'reviewed']
     rows = all_groups[offset:offset + limit]
     members = [m for g in rows for m in g.get('members', []) if m.get('path')]
     manual_marks = _review_delete_marks(m.get('path') for m in members)
     for member in members:
         member['marked_delete'] = member['path'] in manual_marks
     counts = {
-        key: sum(1 for g in s.get('photos', []) if str(g.get('status') or 'pending') == key)
-        for key in ('pending','reviewed','updated')
+        'all': len(s.get('photos', [])),
+        'reviewed': sum(1 for g in s.get('photos', [])
+                        if g.get('status') == 'reviewed'),
+        'pending': sum(1 for g in s.get('photos', [])
+                       if g.get('status') != 'reviewed'),
+        'updated': sum(1 for g in s.get('photos', [])
+                       if g.get('status') == 'updated'),
     }
     return jsonify({'photos': rows, 'offset': offset, 'next_offset': offset + len(rows),
                     'total': len(all_groups), 'done': offset + len(rows) >= len(all_groups),
