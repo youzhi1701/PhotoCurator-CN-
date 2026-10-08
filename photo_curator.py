@@ -6486,7 +6486,7 @@ function renderCullStep(items){
     &&(cullFilter==='all'||p.tier===cullFilter)
     &&(cullType==='all'||(cullType==='raw'?!!p.raw
       :cullType==='heic'?!!p.heic
-      :cullType==='jpg'?(!p.raw&&!p.heic)
+      :cullType==='standard'?(!p.raw&&!p.heic)
       :('ext:'+String(p.fmt||'').toLowerCase())===cullType)));
 
   gItems=filtered;
