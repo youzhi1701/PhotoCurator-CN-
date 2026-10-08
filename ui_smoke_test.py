@@ -111,6 +111,32 @@ def main():
         require("gradient" in visual["bodyBg"],
                 f"Aurora 背景没有加载: {visual}")
 
+        # Manual delete selection must be opt-in and leave the photo unchanged.
+        markers = driver.execute_script("""
+          const base={path:'demo.jpg',name:'demo.jpg',thumb:'/fake.jpg',
+                      tier:'blurry',badge:'模糊',badgeType:'bad',
+                      lifecycle:'normal',move_selected:false};
+          const off=cullCardHtml(base,0);
+          const marked=cullCardHtml({...base,move_selected:true},0);
+          const test=document.createElement('div');
+          test.className='photo-card rejected';
+          test.innerHTML='<img class="photo-img" src="/fake.jpg">';
+          document.body.appendChild(test);
+          const opacity=getComputedStyle(test).opacity;
+          const imageFilter=getComputedStyle(test.querySelector('img')).filter;
+          test.remove();
+          return {
+            off:off.includes('move-select off'),
+            marked:marked.includes('move-select"'),
+            icon:marked.includes('🗑'),
+            opacity,imageFilter
+          };
+        """)
+        require(markers["off"] and markers["marked"] and markers["icon"],
+                f"待删除标记不是人工选择状态: {markers}")
+        require(markers["opacity"] == "1" and markers["imageFilter"] == "none",
+                f"模糊结果不可降低原缩略图显示质量: {markers}")
+
         start = wait.until(lambda d: d.find_element(By.ID, "startBtn"))
         require(start.get_attribute("disabled") is not None,
                 "未选择文件夹时“开始分析”必须禁用")
