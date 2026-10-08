@@ -6182,9 +6182,9 @@ function dedupGroupStatusLabel(status){
 function updateDedupApplyButton(){
   const button=document.getElementById('dedupApplyBtn');
   if(!button)return;
-  const n=Array.from(dedupLiveStore.values()).reduce(
-    (total,group)=>total+(group.members||[]).filter(
-      m=>m.marked_delete&&visibleInReview(m)).length,0);
+  const n=new Set(Array.from(dedupLiveStore.values()).flatMap(
+    group=>(group.members||[]).filter(m=>m.marked_delete&&visibleInReview(m)).map(m=>m.path)
+  )).size;
   button.style.display=currentStep==='dedup'?'inline-flex':'none';
   button.disabled=n===0;
   button.textContent=n?'🗑 执行 '+n+' 张待删除照片':'尚未标记待删除照片';
@@ -6310,8 +6310,10 @@ function selectDedupPhoto(groupId,path){
     }).catch(err=>toast('标记未保存：'+(err.message||'未知错误'),'bad'));
 }
 async function applyDedupSelection(){
-  const count=Array.from(dedupLiveStore.values()).reduce(
-    (n,g)=>n+(g.members||[]).filter(m=>m.marked_delete&&visibleInReview(m)).length,0);
+  const paths=[...new Set(Array.from(dedupLiveStore.values()).flatMap(
+    g=>(g.members||[]).filter(m=>m.marked_delete&&visibleInReview(m)).map(m=>m.path)
+  ))];
+  const count=paths.length;
   if(!count){toast('请先标记需要删除的相似照片','info');return;}
   const yes=await askBatchConfirm('确认处理待删除照片',
     '已标记 '+count+' 张照片；确认后将提交到软件回收站。未标记照片不会被处理。',
@@ -6319,7 +6321,8 @@ async function applyDedupSelection(){
   if(!yes)return;
   const btn=document.getElementById('dedupApplyBtn');
   btn.disabled=true;btn.textContent='正在提交…';
-  fetch('/api/dedup-apply',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})
+  fetch('/api/dedup-apply',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({paths})})
     .then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;})
     .then(d=>{
       // /api/dedup-apply acknowledges queued jobs, not completed file moves.
@@ -6402,7 +6405,8 @@ function toggleRankReviewMark(path){
    }).catch(err=>toast('标记未保存：'+(err.message||'未知错误'),'bad'));
 }
 async function applyRankReviewMarks(){
-  const count=(photos||[]).filter(p=>p.marked_delete&&visibleInReview(p)).length;
+  const paths=[...new Set((photos||[]).filter(p=>p.marked_delete&&visibleInReview(p)).map(p=>p.path))];
+  const count=paths.length;
   if(!count)return;
   const yes=await askBatchConfirm('确认处理待删除照片',
     '将 '+count+' 张已明确标记的照片提交软件回收站；未标记的照片不会处理。','移入软件回收站');
@@ -6410,7 +6414,7 @@ async function applyRankReviewMarks(){
   const btn=document.getElementById('rankApplyBtn');btn.disabled=true;
   try{
     const r=await fetch('/api/review-delete-apply',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({step:'rank'})});
+      body:JSON.stringify({step:'rank',paths})});
     const d=await r.json();if(!r.ok)throw Error(d.error||'提交失败');
     toast('已提交 '+d.queued+' 项后台回收站任务','info');refreshTaskCenter();
   }catch(err){toast('提交失败：'+(err.message||'未知错误'),'bad');}
@@ -8153,10 +8157,17 @@ def api_review_delete_apply():
         os.path.normcase(os.path.realpath(str(folder)))
     ):
         return jsonify({'error': '照片来源已切换，请重新查看当前图库'}), 409
-    paths=_known_step_paths(step)
-    marks=_review_delete_marks(paths)
+    try:
+        requested=_requested_review_paths(data)
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+    available=_known_step_paths(step)
+    marks=_review_delete_marks(requested)
+    if any(p not in available or p not in marks or _safe_image_path(p) is None
+           for p in requested):
+        return jsonify({'error': '待删除清单已经变化，请刷新后重新确认'}), 409
     task_ids=[]
-    for path in sorted(marks):
+    for path in requested:
         if not Path(path).is_file() or _safe_image_path(path) is None:
             continue
         original=_find_original_for_path(path)
@@ -8188,16 +8199,24 @@ def api_dedup_apply():
     origin=s.get('src_folder')
     if origin and os.path.normcase(os.path.realpath(str(origin))) != os.path.normcase(os.path.realpath(str(folder))):
         return jsonify({'error': '照片来源已切换，请重新查看当前图库'}), 409
+    try:
+        requested = _requested_review_paths(request.get_json(silent=True) or {})
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
     _sync_dedup_with_cull()
     all_paths = {str(m.get('path')) for g in s.get('groups_data', [])
                  for m in g.get('members', []) if m.get('path')}
-    marks = _review_delete_marks(all_paths)
+    marks = _review_delete_marks(requested)
+    if any(p not in all_paths or p not in marks or _safe_image_path(p) is None
+           for p in requested):
+        return jsonify({'error': '待删除清单已经变化，请刷新后重新确认'}), 409
     queued = []
     seen = set()
+    requested_set = set(requested)
     for group in s.get('groups_data', []):
         for m in group.get('members', []):
             p = str(m.get('path') or '')
-            if not p or p not in marks or p in seen:
+            if not p or p not in requested_set or p in seen:
                 continue
             seen.add(p)
             if m.get('lifecycle') in ('pending_trash','pending_permanent_delete','trashed','permanently_deleted'):
@@ -8214,6 +8233,16 @@ def api_dedup_apply():
             queued.append(task_id)
     return jsonify({'ok': True, 'queued': len(queued), 'task_ids': queued}), 202
 
+
+
+def _requested_review_paths(data):
+    """Bind a confirmed batch to its exact visible items; never infer hidden marks."""
+    raw = data.get('paths', [])
+    if not isinstance(raw, list) or len(raw) > 5000 or any(
+        not isinstance(p, str) or not p or len(p) > 4096 for p in raw
+    ):
+        raise ValueError('待删除清单无效或过大，请分批处理')
+    return list(dict.fromkeys(raw))
 
 
 def _review_delete_marks(paths):
