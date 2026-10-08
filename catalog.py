@@ -628,12 +628,12 @@ def list_sources(db_path, *, refresh=True):
                LEFT JOIN library_root r ON r.source_id=s.source_id
                ORDER BY s.connected DESC,s.last_seen_at DESC,r.created_at ASC"""
         ).fetchall()
-
     grouped = {}
     for row in rows:
         sid = str(row["source_id"])
         item = grouped.setdefault(sid, {
             "source_id": sid,
+            "unique_photo_count": 0,
             "display_name": str(row["display_name"]),
             "kind": str(row["kind"]),
             "connected": bool(row["connected"]),
@@ -654,6 +654,32 @@ def list_sources(db_path, *, refresh=True):
                 "photo_count": int(row["photo_count"] or 0),
                 "analyzed_count": int(row["analyzed_count"] or 0),
             })
+    # Single-root sources can use the already persisted scan count. Only
+    # devices containing overlapping roots need a stable device-relative identity aggregate;
+    # this avoids a whole-media-table walk on ordinary first paint.
+    multiple_roots = []
+    for item in grouped.values():
+        roots = item["roots"]
+        item["unique_photo_count"] = sum(int(r["photo_count"]) for r in roots)
+        if len(roots) > 1:
+            multiple_roots.append(item["source_id"])
+    if multiple_roots:
+        placeholders = ",".join("?" for _ in multiple_roots)
+        with _connect(db_path) as db:
+            unique_rows = db.execute(
+                """SELECT m.source_id,
+                          COUNT(DISTINCT LOWER(TRIM(REPLACE(
+                            r.relative_root || '/' || m.relative_path,
+                            CHAR(92), '/'), '/')))
+                   FROM media_catalog m
+                   JOIN library_root r ON r.root_id=m.root_id
+                                       AND r.source_id=m.source_id
+                   WHERE m.state='present' AND m.source_id IN (""" + placeholders + """)
+                   GROUP BY m.source_id""",
+                multiple_roots,
+            ).fetchall()
+        for sid, count in unique_rows:
+            grouped[str(sid)]["unique_photo_count"] = int(count)
     return list(grouped.values())
 
 

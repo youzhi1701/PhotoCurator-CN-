@@ -17,7 +17,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request'
     runs-on: windows-latest
     env:
-      CANDIDATE_VERSION: "1.7.4"
+      CANDIDATE_VERSION: "1.7.5"
       PYTHONUTF8: "1"
       PYTHONIOENCODING: "utf-8"
 
@@ -262,10 +262,10 @@ jobs:
           $installer = "release\PhotoCurator-Setup-v$env:CANDIDATE_VERSION.exe"
           if (!(Test-Path $installer)) { throw "Candidate installer not built: $installer" }
 
-      - name: Upload v1.7.4 test installer
+      - name: Upload v1.7.5 test installer
         uses: actions/upload-artifact@v7
         with:
-          name: PhotoCurator-v1.7.4-test-installer
-          path: release/PhotoCurator-Setup-v1.7.4.exe
+          name: PhotoCurator-v1.7.5-test-installer
+          path: release/PhotoCurator-Setup-v1.7.5.exe
           if-no-files-found: error
           retention-days: 14
