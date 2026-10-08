@@ -6568,8 +6568,8 @@ function cullLifecycleInfo(p){
 function cullCardHtml(p,idx){const path=escHtml(p.path);
   const life=cullLifecycleInfo(p),deleted=!!life;
   const moveOn=!!p.move_selected;
-  const cls=(p.tier==='sharp'?'kept':p.tier==='soft'?'soft':'rejected')+(life?' '+life[1]:'')+(moveOn&&p.tier==='blurry'&&!deleted?' review-marked':'');
-  const moveSel=!deleted&&p.tier==='blurry'
+  const cls=(p.tier==='sharp'?'kept':p.tier==='soft'?'soft':'rejected')+(life?' '+life[1]:'')+(moveOn&&!deleted?' review-marked':'');
+  const moveSel=!deleted
     ?`<button class="move-select${moveOn?'':' off'}" data-path="${path}" data-selected="${moveOn?'1':'0'}" title="${moveOn?'撤销待删除标记':'标记为待删除'}">${moveOn?'↶ 撤销待删除':'🗑 标记待删除'}</button>`
     :'';
   const stateBadge=life
@@ -6586,7 +6586,7 @@ function cullCardHtml(p,idx){const path=escHtml(p.path);
     <div class="photo-info"><div class="pi-row"><span class="photo-name">${escHtml(p.name)}</span><span class="ftype${p.raw?'':(p.heic?' heic':' jpg')}">${p.fmt||(p.raw?'RAW':p.heic?'HEIC':'JPG')}</span></div><div class="source-path">${escHtml(p.rel_dir||'当前文件夹')}</div></div></div>`;}
 function syncCullCardNode(node,p,idx){
   const moveOn=!!p.move_selected,life=cullLifecycleInfo(p),deleted=!!life;
-  node.classList.toggle('review-marked',moveOn&&p.tier==='blurry'&&!deleted);
+  node.classList.toggle('review-marked',moveOn&&!deleted);
   node.dataset.i=idx;node.dataset.tier=p.tier;node.dataset.life=p.lifecycle||'normal';
   node.dataset.moveSelected=moveOn?'1':'0';
   node.classList.toggle('kept',p.tier==='sharp');
@@ -6604,7 +6604,7 @@ function syncCullCardNode(node,p,idx){
     badge.textContent='⇄ '+p.badge;
   }
   const ms=node.querySelector('.move-select');
-  if(p.tier==='blurry'&&ms&&!deleted){
+  if(ms&&!deleted){
     ms.dataset.selected=moveOn?'1':'0';ms.classList.toggle('off',!moveOn);
     ms.textContent=moveOn?'↶ 撤销待删除':'🗑 标记待删除';
     ms.title=moveOn?'撤销待删除标记':'标记为待删除';
@@ -6637,7 +6637,7 @@ function renderCullStep(items){
     return;
   }
 
-  const moveSig=items.filter(p=>p.tier==='blurry')
+  const moveSig=items.filter(p=>visibleInReview(p))
     .map(p=>p.path+':'+(p.move_selected?'1':'0')).join('|');
   if(moveSig!==lastCullMoveSig){lastCullMoveSig=moveSig;setupFilterBar();}
   const sig=gPage+'#'+cullView.map(p=>p.path+':'+p.tier+':'+(p.lifecycle||'normal')+':'+(p.move_selected?'1':'0')).join('|');
@@ -6681,24 +6681,24 @@ function renderCullStep(items){
   updatePager();
 }
 function cullMoveCounts(){
-  const blurry=photos.filter(p=>p.tier==='blurry'&&!['pending_trash','pending_permanent_delete','trashed','permanently_deleted'].includes(p.lifecycle));
-  return {total:blurry.length,selected:blurry.filter(p=>!!p.move_selected).length};
+  const available=photos.filter(p=>!['pending_trash','pending_permanent_delete','trashed','permanently_deleted'].includes(p.lifecycle));
+  return {total:available.length,selected:available.filter(p=>!!p.move_selected).length};
 }
 function updateCullMoveButton(){
   const mb=document.getElementById('moveBlurryBtn');if(!mb)return;
   const n=cullMoveCounts();
   const count=document.getElementById('cullMoveCount');if(count)count.textContent=n.selected+'/'+n.total;
-  if(currentStep!=='cull'||!cullReady||!n.total){
+  if(currentStep!=='cull'||!n.total){
     mb.style.display='none';mb.disabled=false;mb.classList.remove('cta');return;
   }
   mb.style.display='inline-flex';
   if(n.selected>0){
     mb.disabled=false;
-    mb.textContent='🗑 '+n.selected+' 张移入回收站';
+    mb.textContent='🗑 执行 '+n.selected+' 张待删除照片';
     mb.classList.add('cta');
   }else{
     mb.disabled=true;
-    mb.textContent='未选择模糊照片';
+    mb.textContent='尚未标记待删除照片';
     mb.classList.remove('cta');
   }
 }
@@ -6801,7 +6801,9 @@ async function deletePhoto(step,path,fromLightbox=false){
   }
 }
 function lbDeleteCurrent(){
-  const p=lbList[lbIndex];if(p)deletePhoto(currentStep,p.path,true);
+  const p=lbList[lbIndex];if(!p)return;
+  if(currentStep==='cull'){setBlurryMoveSelection(p.path,!p.move_selected);return;}
+  deletePhoto(currentStep,p.path,true);
 }
 
 /* ---- remove / restore (rank) ---- */
@@ -6912,16 +6914,16 @@ function showLb(){
   rm.style.display=currentStep==='rank'?'inline-block':'none';
   const life=p.lifecycle||'normal';
   const inReview=['cull','dedup','rank'].includes(currentStep);
-  del.style.display=(inReview&&!['pending_trash','pending_permanent_delete','trashed','permanently_deleted','pending_restore'].includes(life))?'inline-block':'none';
+  del.style.display=(['dedup','rank'].includes(currentStep)&&!['pending_trash','pending_permanent_delete','trashed','permanently_deleted','pending_restore'].includes(life))?'inline-block':'none';
   tr.style.display=(currentStep==='trash'||(inReview&&life==='trashed'&&p.trash_id))?'inline-block':'none';
   tp.style.display=currentStep==='trash'?'inline-block':'none';
   rs.style.display=(currentStep==='rank'&&removedCount>0)?'inline-block':'none';
   tg.style.display=currentStep==='cull'?'inline-block':'none';
-  ms.style.display=(currentStep==='cull'&&p.tier==='blurry')?'inline-block':'none';
+  ms.style.display=currentStep==='cull'?'inline-block':'none';
   if(currentStep==='cull')tg.textContent='⇄ '+(TIER_NAME[p.tier]||'清晰')+' → '+(TIER_NAME[NEXT_TIER[p.tier||'sharp']]);
-  if(currentStep==='cull'&&p.tier==='blurry'){
+  if(currentStep==='cull'){
     const on=!!p.move_selected;
-    ms.textContent=on?'☑ 本次移动':'☐ 保留原位';
+    ms.textContent=on?'↶ 撤销待删除':'🗑 标记待删除';
     ms.classList.toggle('toggle',on);ms.classList.toggle('restore',!on);
   }
   const pbg=document.getElementById('lbPhoneBg');
@@ -7053,7 +7055,7 @@ document.getElementById('lbToggle').onclick=()=>{const p=lbList[lbIndex];if(!p)r
     p.tier=d.tier;p.move_selected=!!d.move_selected;if(d.path)p.path=d.path;
     lastCullSig='';lastCullMoveSig='';renderCullStep(photos);updateCullMoveButton();showLb();});};
 document.getElementById('lbPhoneBg').onclick=()=>{const p=lbList[lbIndex];if(p)togglePhoneBg(p.path);};
-document.getElementById('lbMoveSelect').onclick=()=>{const p=lbList[lbIndex];if(p&&p.tier==='blurry')setBlurryMoveSelection(p.path,p.move_selected===false);};
+document.getElementById('lbMoveSelect').onclick=()=>{const p=lbList[lbIndex];if(p)setBlurryMoveSelection(p.path,!p.move_selected);};
 document.addEventListener('keydown',e=>{
   if(!document.getElementById('lightbox').classList.contains('open'))return;
   if(e.key==='Escape')closeLb();
@@ -8346,8 +8348,9 @@ def api_toggle_status():
         return jsonify({'error': '未找到照片'}), 404
     now_kept = tier != 'blurry'
     s.setdefault('overrides', {}).setdefault(path, {})['tier'] = tier
-    s['overrides'][path]['move_selected'] = False
-    _save_review_overrides([(path, tier, False)])
+    current_mark=bool(photo.get('move_selected', False))
+    s['overrides'][path]['move_selected'] = current_mark
+    _save_review_overrides([(path, tier, current_mark)])
     _activity('人工分类', path, tier)
     # Manual review is classification-only. Never move a file merely because
     # its badge was changed; disk changes happen only via an explicit Move action.
@@ -8356,10 +8359,8 @@ def api_toggle_status():
     photo.update({'path': new_path, 'thumb': thumb_url(new_path), 'tier': tier,
                   'kept': now_kept, 'rejected': not now_kept,
                   'badge': badge, 'badgeType': bt,
-                  # Moving is a separate user choice. Entering Blurry selects
-                  # the photo by default; leaving Blurry removes it from the
-                  # pending-move set.
-                  'move_selected': False})
+                  # Classification never silently changes a deletion decision.
+                  'move_selected': current_mark})
     sp = s['sharp_paths']
     for old in (path, new_path):
         if old in sp:
@@ -8373,11 +8374,7 @@ def api_toggle_status():
     s['soft'] = sum(1 for p in s['photos'] if p['tier'] == 'soft')
     s['blurry'] = sum(1 for p in s['photos'] if p['tier'] == 'blurry')
     _sync_dedup_with_cull()
-    move_total = sum(1 for p in s['photos'] if p.get('tier') == 'blurry')
-    move_selected = sum(
-        1 for p in s['photos']
-        if p.get('tier') == 'blurry' and p.get('move_selected', False)
-    )
+    move_selected, move_total = _blurry_move_counts()
     return jsonify({'ok': True, 'tier': tier, 'kept': now_kept, 'badge': badge,
                     'badgeType': bt, 'path': new_path, 'thumb': photo['thumb'],
                     'move_selected': photo.get('move_selected', False),
@@ -8386,10 +8383,11 @@ def api_toggle_status():
 
 
 def _blurry_move_counts():
-    photos = state['cull'].get('photos', [])
-    blurry = [p for p in photos if p.get('tier') == 'blurry']
-    selected = [p for p in blurry if p.get('move_selected', False)]
-    return len(selected), len(blurry)
+    # Compatibility helper name; count explicitly marked photos of every tier.
+    photos = [p for p in state['cull'].get('photos', [])
+              if p.get('lifecycle') not in ('pending_trash','pending_permanent_delete','trashed','permanently_deleted')]
+    selected = [p for p in photos if p.get('move_selected', False)]
+    return len(selected), len(photos)
 
 
 @app.route('/api/select-blurry', methods=['POST'])
@@ -8420,10 +8418,8 @@ def api_select_blurry():
     photo = next((p for p in photos if p.get('path') == path), None)
     if not photo:
         return jsonify({'error': '未找到照片'}), 404
-    if photo.get('tier') != 'blurry':
-        return jsonify({'error': '只有“模糊”照片可以加入移动列表'}), 400
-
-    photo['move_selected'] = bool(data.get('selected', True))
+    # Manual deletion decisions are independent from classification.
+    photo['move_selected'] = bool(data.get('selected', False))
     state['cull'].setdefault('overrides', {}).setdefault(path, {})['move_selected'] = photo['move_selected']
     _save_review_overrides([(path, photo.get('tier'), photo['move_selected'])])
     _activity('移动选择', path, '选中' if photo['move_selected'] else '取消')
@@ -8445,8 +8441,7 @@ def api_move_blurry():
         return jsonify({'error': '未选择有效的照片文件夹'}), 400
     rows = [
         pp for pp in state['cull'].get('photos', [])
-        if pp.get('tier') == 'blurry'
-        and pp.get('move_selected', False)
+        if pp.get('move_selected', False)
         and pp.get('lifecycle') not in
         ('pending_trash','pending_permanent_delete','trashed','permanently_deleted')
         and pp.get('path')
