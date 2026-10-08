@@ -751,7 +751,7 @@ def _prune_index_db():
 threading.Thread(target=_prune_index_db, daemon=True,
                  name='photocurator-index-prune').start()
 
-APP_VERSION = "1.7.3-dev.2"
+APP_VERSION = "1.7.3-dev.3"
 IS_CODESPACES = os.environ.get('CODESPACES', '').strip().lower() == 'true'
 CODESPACE_NAME = os.environ.get('CODESPACE_NAME', '').strip()
 _CODESPACES_DOMAIN_RAW = os.environ.get(
@@ -4355,6 +4355,9 @@ let sourceCatalog=[], discoveredDevices=[], selectedSource=null, catalogRootView
 let latestStorageSummary=null, demoShortcutPath='', demoShortcutCount=0, demoShortcutReady=false;
 const cullLiveStore=new Map();
 const dedupLiveStore=new Map();
+// View-only state: cache result rows, not detached gallery DOM.
+const reviewScrollOffsets={cull:0,dedup:0,rank:0,trash:0};
+function reviewScrollHost(){return document.querySelector('main.main');}
 let isRunning=false, runningStep=null, codespacesMode=false;
 let coreRunning=false, corePollTimer=null, coreSnapshots={cull:null,dedup:null};
 let lastRankSig='', lastCullSig='', lastDedupSig='', lastStep=null, weightTimer=null, removedCount=0, pollFailures=0, largeResultWarned=false;
@@ -4837,6 +4840,8 @@ function renderSettings(){
 /* Switch the visible step (used by tab clicks AND God mode). */
 function activateStep(step){
   if(currentStep!==step){
+    const host=reviewScrollHost();
+    if(host)reviewScrollOffsets[currentStep]=host.scrollTop;
     cullChunkToken++;
     dedupChunkToken++; // Late page fetches cannot overwrite a different workspace.
   }
@@ -4859,6 +4864,16 @@ function activateStep(step){
   lastRankSig='';lastCullSig='';lastDedupSig='';lastStep=null;
   gPage=0;lastGallerySig='';gItems=[];document.getElementById('pager').style.display='none';
   setupFilterBar();
+  // Restore previously paged results before asynchronous status refresh.
+  if(step==='cull'&&cullLiveStore.size){
+    renderCullStep(Array.from(cullLiveStore.values()));
+    updateCullLoadMore();
+  }else if(step==='dedup'&&dedupLiveStore.size){
+    renderDedupGroups(Array.from(dedupLiveStore.values()));
+    updateDedupLoadMore();
+  }
+  const host=reviewScrollHost();
+  if(host)host.scrollTop=reviewScrollOffsets[step]||0;
   if(step==='cull')updateCullMoveButton();
 }
 /* step tabs (blocked while a step is running) */
@@ -4879,13 +4894,17 @@ document.querySelectorAll('.step').forEach(t=>t.onclick=()=>{
       document.getElementById('progressWrap').style.display='none';
       return;
     }
-    if(currentStep==='cull')renderCullStep(cullRowsForPayload(d));
-    else if(currentStep==='dedup'){
+    if(currentStep==='cull'){
+      // The progress API may return a bounded first page; preserve user-loaded pages.
+      if(cullLiveStore.size>(d.photos||[]).length)
+        renderCullStep(Array.from(cullLiveStore.values()));
+      else renderCullStep(cullRowsForPayload(d));
+    }else if(currentStep==='dedup'){
       const st=d.stats||{};
       dedupStatusCounts={
         pending:Number(st.pending_groups||0),reviewed:Number(st.reviewed_groups||0),updated:Number(st.updated_groups||0)
       };
-      loadDedupPage(true);
+      loadDedupPage(dedupLiveStore.size===0);
     }else renderRank(d.photos||[]);
     updateVisibleStepStatus(currentStep,d);
     if(currentStep==='cull')maybeLoadAllCull(d);
@@ -4977,6 +4996,7 @@ function resetWorkspaceForFolder(){
   cullChunkToken++;
   dedupChunkToken++; // Invalidate pending requests for the previous data source.
   cullLiveStore.clear();dedupLiveStore.clear();
+  Object.keys(reviewScrollOffsets).forEach(key=>{reviewScrollOffsets[key]=0;});
   cullReady=false;
   photos=[];lbList=[];folderStatus={};
   lastRankSig='';lastCullSig='';lastDedupSig='';lastCullMoveSig='';lastGallerySig='';
