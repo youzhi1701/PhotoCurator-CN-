@@ -932,6 +932,7 @@ jobs:
           python -m unittest -v test_catalog_unique_count
           python -m unittest -v test_missing_delete_safety
           python -m unittest -v test_db_runtime_wal
+          python -m unittest -v test_safe_move_integrity
 
       - name: Performance architecture regression gate
         run: |
