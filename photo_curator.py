@@ -6449,9 +6449,9 @@ async function applyDedupSelection(){
       toast('当前没有已复核且待处理的相似照片','info');
       return;
     }
-    const names=(review.items||[]).slice(0,8).map(row=>'· '+row.name).join('\\n');
+    const names=(review.items||[]).slice(0,8).map(row=>'· '+row.name).join('\n');
     const detail='将 '+review.total+' 张已确认不保留的相似照片移入可恢复的软件回收站。'
-      +(names?'\\n'+names:'')+(review.total>8?'\\n…其余照片请在相似组中复核':'');
+      +(names?'\n'+names:'')+(review.total>8?'\n…其余照片请在相似组中复核':'');
     const confirmed=await askBatchConfirm(
       '相似照片集中复核',detail,'确认移入回收站'
     );
