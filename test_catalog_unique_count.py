@@ -2,6 +2,8 @@
 # -*- coding: utf-8 -*-
 """Overlapping parent and child scan roots must not inflate library totals."""
 import tempfile
+import sqlite3
+import catalog
 import unittest
 from pathlib import Path
 from catalog import (init_catalog_schema, list_sources, begin_catalog_scan,
@@ -108,6 +110,55 @@ class CatalogScanStartTests(unittest.TestCase):
                 ).fetchall())
             self.assertEqual(states[first["session_id"]], "interrupted")
             self.assertEqual(states[second["session_id"]], "running")
+
+class CatalogRelinkCollisionTests(unittest.TestCase):
+    def test_path_collision_preserves_both_manual_records(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            old_root = Path(tmp) / "original"
+            new_root = Path(tmp) / "remounted"
+            old_root.mkdir()
+            new_root.mkdir()
+            db_path = Path(tmp) / "catalog.sqlite"
+            init_catalog_schema(db_path)
+            old_path = str(old_root / "a.jpg")
+            new_path = str(new_root / "a.jpg")
+            with connect_db(db_path) as db:
+                db.execute(
+                    "INSERT INTO data_source(source_id,identity_key,kind,display_name,created_at) "
+                    "VALUES('source','device-1','volume','disk',1)"
+                )
+                db.execute(
+                    """INSERT INTO library_root
+                       (root_id,source_id,relative_root,original_root,current_root,
+                        display_name,created_at)
+                       VALUES('root','source','photos',?,?, 'photos',1)""",
+                    (str(old_root), str(old_root)),
+                )
+                db.execute(
+                    """INSERT INTO media_catalog
+                       (media_id,source_id,root_id,relative_path,original_path,
+                        current_path,first_seen_at,last_seen_at)
+                       VALUES('media','source','root','a.jpg',?,?,1,1)""",
+                    (old_path, old_path),
+                )
+                db.execute("CREATE TABLE review_override(path TEXT PRIMARY KEY)")
+                db.execute("INSERT INTO review_override(path) VALUES(?)", (old_path,))
+                db.execute("INSERT INTO review_override(path) VALUES(?)", (new_path,))
+                db.commit()
+            with self.assertRaises(sqlite3.IntegrityError):
+                with connect_db(db_path) as db:
+                    catalog._rebase_persisted_paths(
+                        db, "root", str(old_root), str(new_root)
+                    )
+            with connect_db(db_path) as db:
+                saved = [row[0] for row in db.execute(
+                    "SELECT path FROM review_override ORDER BY path"
+                ).fetchall()]
+                media = db.execute(
+                    "SELECT current_path FROM media_catalog WHERE media_id='media'"
+                ).fetchone()[0]
+            self.assertEqual(saved, sorted([old_path, new_path]))
+            self.assertEqual(media, old_path)
 
 if __name__ == "__main__":
     unittest.main()
