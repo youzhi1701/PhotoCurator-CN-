@@ -27,7 +27,7 @@ def block(start, end):
     return SOURCE[a:b]
 
 
-version_match = re.search(r'^APP_VERSION\\s*=\\s*"(\\d+\\.\\d+\\.\\d+)"', SOURCE, re.M)
+version_match = re.search(r'^APP_VERSION[ ]*=[ ]*"([0-9]+[.][0-9]+[.][0-9]+)"', SOURCE, re.M)
 require(version_match is not None, "missing semantic source version")
 version = version_match.group(1)
 desktop_source = Path("desktop_app.py").read_text(encoding="utf-8")
