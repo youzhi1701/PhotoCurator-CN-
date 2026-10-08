@@ -74,5 +74,59 @@ class MissingFileDeleteSafetyTests(unittest.TestCase):
                     photo_curator._shared_list_images(root, recursive=True)
                 walker.assert_not_called()
 
+    def test_manual_delete_marker_accepts_clear_photos_without_file_action(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / "good.jpg")
+            Path(path).write_bytes(b"test")
+            original = {
+                "path": path, "tier": "sharp", "move_selected": False,
+                "lifecycle": "normal",
+            }
+            with patch.dict(photo_curator.state["cull"],
+                            {"photos": [original], "overrides": {}}, clear=False), \
+                 patch.object(photo_curator, "_save_review_overrides") as persist, \
+                 patch.object(photo_curator, "_activity"), \
+                 patch.object(photo_curator.TASK_MANAGER, "enqueue") as enqueue:
+                response = photo_curator.app.test_client().post(
+                    "/api/select-blurry", json={"path": path, "selected": True}
+                )
+                self.assertEqual(response.status_code, 200, response.get_json())
+                self.assertEqual(response.get_json()["selected"], 1)
+                self.assertTrue(original["move_selected"])
+                self.assertEqual(original["tier"], "sharp")
+                persist.assert_called_once_with([(path, "sharp", True)])
+                enqueue.assert_not_called()
+
+    def test_manual_mark_survives_restart_and_quality_reclassification(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / "favorite.jpg")
+            Path(path).write_bytes(b"fake-image")
+            db_path = Path(tmp) / "review.sqlite"
+            with patch.object(photo_curator, "INDEX_DB", db_path):
+                photo_curator._db_init()
+                photo_curator._save_review_overrides([(path, "sharp", True)])
+                saved = photo_curator._load_review_overrides([path])
+                self.assertTrue(saved[path]["move_selected"])
+                self.assertEqual(saved[path]["tier"], "sharp")
+                item = {
+                    "path": path, "tier": "sharp", "move_selected": True,
+                    "badge": "清晰", "badgeType": "good",
+                }
+                with patch.dict(photo_curator.state["cull"],
+                                {"photos": [item], "sharp_paths": [path],
+                                 "overrides": {}}, clear=False), \
+                     patch.object(photo_curator, "_sync_dedup_with_cull"), \
+                     patch.object(photo_curator, "_request_rank_score"), \
+                     patch.object(photo_curator, "thumb_url", return_value="/thumbnail"), \
+                     patch.object(photo_curator, "_activity"):
+                    response = photo_curator.app.test_client().post(
+                        "/api/toggle-status", json={"path": path, "tier": "soft"}
+                    )
+                self.assertEqual(response.status_code, 200, response.get_json())
+                self.assertTrue(response.get_json()["move_selected"])
+                reloaded = photo_curator._load_review_overrides([path])
+                self.assertEqual(reloaded[path]["tier"], "soft")
+                self.assertTrue(reloaded[path]["move_selected"])
+
 if __name__ == "__main__":
     unittest.main()

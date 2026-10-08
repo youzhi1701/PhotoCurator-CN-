@@ -297,7 +297,7 @@ def main():
         )
         assert_true(sel.status_code == 200, f"模糊照片取消移动失败：HTTP {sel.status_code}")
         payload = sel.get_json()
-        assert_true(payload["selected"] == 1 and payload["total"] == 2,
+        assert_true(payload["selected"] == 1 and payload["total"] == 3,
                     f"移动选择计数错误：{payload}")
         assert_true(photo_curator.state["cull"]["photos"][0]["tier"] == "blurry",
                     "取消移动不应改变模糊分类")
@@ -309,8 +309,31 @@ def main():
         )
         assert_true(bulk.status_code == 200, f"模糊照片全不选失败：HTTP {bulk.status_code}")
         payload = bulk.get_json()
-        assert_true(payload["selected"] == 0 and payload["total"] == 2,
+        assert_true(payload["selected"] == 0 and payload["total"] == 3,
                     f"全不选计数错误：{payload}")
+
+        # Independent manual decision: even sharp photos can be marked,
+        # without changing their quality tier or touching the original file.
+        sharp_mark = client.post(
+            "/api/select-blurry",
+            json={"path": str(found[2]), "selected": True},
+            headers={"Host": f"127.0.0.1:{photo_curator.PORT}"},
+        )
+        assert_true(sharp_mark.status_code == 200,
+                    f"清晰照片人工标记失败：HTTP {sharp_mark.status_code}")
+        payload = sharp_mark.get_json()
+        assert_true(payload["selected"] == 1 and payload["total"] == 3,
+                    f"清晰照片标记计数错误：{payload}")
+        assert_true(photo_curator.state["cull"]["photos"][2]["tier"] == "sharp",
+                    "人工待删除决定不能改变清晰度分类")
+        unmark = client.post(
+            "/api/select-blurry",
+            json={"path": str(found[2]), "selected": False},
+            headers={"Host": f"127.0.0.1:{photo_curator.PORT}"},
+        )
+        assert_true(unmark.status_code == 200 and
+                    unmark.get_json()["selected"] == 0,
+                    "撤销清晰照片待删除标记失败")
 
         # Similarity groups now allow multiple kept photos, but never zero.
         p0, p1, p2 = map(str, found[:3])
