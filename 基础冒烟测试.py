@@ -652,6 +652,15 @@ def main():
         assert_true(str(cache_img) in cached and cached[str(cache_img)] == (123.0, 66.0),
                     f"增量清晰度缓存读取失败：{cached}")
         Image.new("RGB", (45, 33), "white").save(cache_img)
+        # Some Windows CI volumes can coalesce two immediate writes to the same
+        # last-write tick, and these two tiny JPEGs can also have equal byte
+        # length. Make the new file version explicit so this test validates the
+        # production size + mtime_ns cache contract instead of filesystem timing.
+        changed_st = cache_img.stat()
+        os.utime(
+            cache_img,
+            ns=(changed_st.st_atime_ns, changed_st.st_mtime_ns + 1_000_000),
+        )
         invalidated = photo_curator._load_cull_metrics_map([cache_img])
         assert_true(str(cache_img) not in invalidated,
                     "照片内容变化后不应继续复用旧清晰度缓存")
