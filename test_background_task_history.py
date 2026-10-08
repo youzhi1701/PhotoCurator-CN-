@@ -55,6 +55,24 @@ class BackgroundTaskHistoryTests(unittest.TestCase):
             finally:
                 manager.shutdown(timeout=3)
 
+    def test_missing_handler_requeue_keeps_original_priority(self):
+        import heapq
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = BackgroundTaskManager(Path(tmp) / "priority.sqlite", workers=1, autostart=False)
+            try:
+                delayed, _ = manager.enqueue("not-registered-yet", {"value": 1}, priority=95)
+                ready, _ = manager.enqueue("registered", {"value": 2}, priority=40)
+                manager.register("registered", lambda payload: payload["value"])
+                manager.start()
+                self._wait_for_state(manager, ready, "done")
+                self.assertEqual(manager.get(delayed)["state"], "queued")
+                with manager._cv:
+                    matches = [p for p, _, tid in manager._heap if tid == delayed]
+                self.assertTrue(matches)
+                self.assertTrue(all(priority == 95 for priority in matches))
+            finally:
+                manager.shutdown(timeout=3)
+
     @staticmethod
     def _wait_for_state(manager, task_id, state):
         deadline = time.monotonic() + 5
