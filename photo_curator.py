@@ -1468,9 +1468,10 @@ def _write_trash_manifest(root):
                     continue
             except Exception:
                 continue
-            if Path(str(trash_path)).is_file():
-                data.append({'original_path': str(original), 'trash_path': str(trash_path),
-                             'source_step': str(source_step or ''), 'deleted_at': float(deleted_at)})
+            # An absent trash file can mean an offline/remounted drive. Keep
+            # the manifest record so recovery metadata survives reinstall.
+            data.append({'original_path': str(original), 'trash_path': str(trash_path),
+                         'source_step': str(source_step or ''), 'deleted_at': float(deleted_at)})
         target.parent.mkdir(parents=True, exist_ok=True)
         tmp = target.with_suffix(target.suffix + '.tmp')
         tmp.write_text(json.dumps({'version': 1, 'items': data}, ensure_ascii=False, indent=2), encoding='utf-8')
@@ -1583,11 +1584,14 @@ def _move_to_software_trash(src, root, source_step, planned_trash_path=None):
 
 
 def _trash_rows(root=None):
-    """Return live software-trash rows, pruning records whose files disappeared."""
-    if root:
+    """Preserve restore metadata when a drive or trash file is unavailable.
+
+    Missing files are an offline/unavailable state, NEVER proof of permanent
+    deletion. Listing one library must not prune another disconnected library.
+    """
+    if root and Path(root).is_dir():
         _import_trash_manifest(root)
     root_cmp = os.path.normcase(os.path.realpath(str(root))) if root else None
-    stale = []
     rows = []
     with _DB_LOCK, connect_db(INDEX_DB, timeout=15) as db:
         for row in db.execute(
@@ -1595,9 +1599,6 @@ def _trash_rows(root=None):
             "FROM software_trash ORDER BY deleted_at DESC"
         ).fetchall():
             tid, original, trash_path, source_step, deleted_at = row
-            if not Path(trash_path).is_file():
-                stale.append((int(tid),))
-                continue
             if root:
                 try:
                     if os.path.commonpath([
@@ -1606,6 +1607,7 @@ def _trash_rows(root=None):
                         continue
                 except Exception:
                     continue
+            available = Path(trash_path).is_file()
             rows.append({
                 'id': int(tid),
                 'name': Path(trash_path).name,
@@ -1613,12 +1615,10 @@ def _trash_rows(root=None):
                 'original_path': str(original),
                 'source_step': str(source_step or ''),
                 'deleted_at': float(deleted_at),
-                'thumb': thumb_url(str(trash_path)),
+                'available': available,
+                'thumb': thumb_url(str(trash_path)) if available else '',
                 'rel_dir': relative_folder(original, root) if root else str(Path(original).parent),
             })
-        if stale:
-            db.executemany("DELETE FROM software_trash WHERE id=?", stale)
-            db.commit()
     return rows
 
 
@@ -6575,13 +6575,14 @@ function togglePhoneBg(path){
 function trashCard(p,idx){
   const path=escHtml(p.path),original=escHtml(p.original_path||'');
   const when=p.deleted_at?new Date(p.deleted_at*1000).toLocaleString():'';
+  const offline=p.available===false;
   return `<div class="photo-card rejected" data-i="${idx}" data-path="${path}" data-trash-id="${p.id}">
-    <div class="badge bad">待最终确认</div>
-    <img class="photo-img" src="${p.thumb}" loading="lazy" decoding="async">
+    <div class="badge bad">${offline?'文件暂不可用':'待最终确认'}</div>
+    ${offline?'<div class="photo-img" style="display:flex;align-items:center;justify-content:center">设备离线 / 文件暂不可用</div>':'<img class="photo-img" src="'+p.thumb+'" loading="lazy" decoding="async">'}
     <div class="photo-info">
       <div class="pi-row"><span class="photo-name">${escHtml(p.name)}</span>
-        <button class="trash-restore-btn" data-id="${p.id}">↩ 恢复</button>
-        <button class="trash-purge-btn" data-id="${p.id}">永久删除</button>
+        <button class="trash-restore-btn" data-id="${p.id}" ${offline?'disabled':''}>↩ 恢复</button>
+        <button class="trash-purge-btn" data-id="${p.id}" ${offline?'disabled':''}>永久删除</button>
       </div>
       <div class="source-path" title="${original}">原位置：${original}</div>
       <div class="source-path">${when?'移入时间：'+escHtml(when):'软件回收站'}</div>
@@ -6602,9 +6603,10 @@ function renderTrash(items){
   g.innerHTML=photos.map((p,i)=>trashCard(p,i)).join('');
   setupFilterBar();
 }
+let trashPurgeToken='';
 function loadTrash(){
   fetch('/api/trash').then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;})
-    .then(d=>renderTrash(d.photos||[]))
+    .then(d=>{trashPurgeToken=d.purge_token||'';renderTrash(d.photos||[]);})
     .catch(err=>toast('回收站读取失败：'+(err.message||'未知错误'),'bad'));
 }
 function waitTaskAndSync(taskId,doneText){
@@ -6655,9 +6657,10 @@ function trashRestoreOne(id,fromLightbox=false){
 async function trashPurgeOne(id,fromLightbox=false){
   const ok=await askBatchConfirm('彻底删除','永久删除后无法从 PhotoCurator 恢复这张照片。','彻底删除');
   if(!ok)return;
-  fetch('/api/trash-purge',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})})
+  fetch('/api/trash-purge',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,purge_token:trashPurgeToken})})
     .then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;})
     .then(d=>{
+      trashPurgeToken='';
       toast('已提交后台永久删除','info');
       photos=(photos||[]).filter(x=>Number(x.id)!==Number(id));renderTrash(photos);
       if(fromLightbox){lbList=photos.slice();if(!lbList.length)closeLb();else{if(lbIndex>=lbList.length)lbIndex=lbList.length-1;showLb();}}
@@ -6666,6 +6669,7 @@ async function trashPurgeOne(id,fromLightbox=false){
 }
 async function trashRestoreAll(){
   if(!photos.length)return;
+  if(photos.some(p=>p.available===false)){toast('回收站中有离线照片，请连接设备后再全部恢复','bad');return;}
   const ok=await askBatchConfirm('全部恢复','恢复软件回收站中的全部 '+photos.length+' 张照片。','全部恢复');
   if(!ok)return;
   fetch('/api/trash-restore-all',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})
@@ -6675,11 +6679,12 @@ async function trashRestoreAll(){
 }
 async function trashPurgeAll(){
   if(!photos.length)return;
+  if(photos.some(p=>p.available===false)){toast('回收站有离线照片，不能批量永久删除','bad');return;}
   const ok=await askBatchConfirm('清空软件回收站','将永久删除当前软件回收站中的 '+photos.length+' 张照片，此操作不可恢复。','永久删除全部');
   if(!ok)return;
-  fetch('/api/trash-purge',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({all:true})})
+  fetch('/api/trash-purge',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({all:true,purge_token:trashPurgeToken})})
     .then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;})
-    .then(d=>{toast('已提交后台永久删除 '+(d.count||0)+' 张照片','info');renderTrash([]);refreshTaskCenter();})
+    .then(d=>{trashPurgeToken='';toast('已提交后台永久删除 '+(d.count||0)+' 张照片','info');renderTrash([]);refreshTaskCenter();})
     .catch(err=>toast('清空回收站失败：'+(err.message||'未知错误'),'bad'));
 }
 
@@ -8215,14 +8220,25 @@ def _known_step_paths(step):
     return set()
 
 
+def _trash_grant_rows(rows):
+    """Bind permanent-delete consent to exact recycle-bin identities, not paths alone."""
+    return [
+        {'path': 'trash:{}:{}:{}'.format(int(row['id']),
+              str(row.get('path') or ''), str(row.get('original_path') or ''))}
+        for row in rows
+    ]
+
+
 @app.route('/api/trash', methods=['GET'])
 def api_trash():
     """List PhotoCurator's own recycle bin for the current selected library."""
     folder = state.get('folder')
-    if not folder or not Path(folder).is_dir():
-        return jsonify({'photos': [], 'count': 0})
+    if not folder:
+        return jsonify({'photos': [], 'count': 0, 'purge_token': ''})
     rows = _trash_rows(folder)
-    return jsonify({'photos': rows, 'count': len(rows)})
+    return jsonify({'photos': rows, 'count': len(rows),
+                    'purge_token': _issue_pending_review_grant(
+                        _trash_grant_rows(rows)) if rows else ''})
 
 
 @app.route('/api/trash-restore', methods=['POST'])
@@ -8239,6 +8255,8 @@ def api_trash_restore():
     row = next((x for x in current if x['id'] == trash_id), None)
     if not row:
         return jsonify({'error': '当前照片库的回收站中没有这条记录'}), 404
+    if not row.get('available', True):
+        return jsonify({'error': '回收站文件暂不可用，请重新连接原设备后恢复'}), 409
     with _FILE_PLAN_LOCK:
         reserved = _active_restore_reservations()
         restore_path = str(_unique_destination(
@@ -8266,28 +8284,49 @@ def api_trash_purge():
     folder = state.get('folder')
     if not folder or not Path(folder).is_dir():
         return jsonify({'error': '请先选择照片文件夹'}), 400
-    data = request.get_json() or {}
+    data = request.get_json(silent=True) or {}
     rows = _trash_rows(folder)
+    if not rows:
+        return jsonify({'error': '回收站为空，请刷新后重试'}), 404
+    # An offline disk is not deletion consent. Reject the whole request before
+    # consuming any review grant or submitting any irreversible file task.
+    if data.get('all') and any(not row.get('available', True) for row in rows):
+        return jsonify({'error': '回收站包含离线/暂不可用文件，不能执行全部永久删除'}), 409
+    # Permanent deletion requires the latest read-only trash review.
+    if not _consume_pending_review_grant(
+            data.get('purge_token'), _trash_grant_rows(rows)):
+        return jsonify({'error': '永久删除复核凭证无效或回收站内容已变化，请刷新重审'}), 409
     if data.get('all'):
-        task_ids = []
-        for row in rows:
-            task_id, _ = TASK_MANAGER.enqueue(
-                'purge_trash', {'trash_id': row['id']}, priority=12,
-                idempotency_key=f"purge_trash:{row['id']}"
-            )
-            task_ids.append(task_id)
+        try:
+            submitted = TASK_MANAGER.enqueue_many([
+                {'kind': 'purge_trash', 'payload': {'trash_id': row['id']},
+                 'priority': 12, 'idempotency_key': f"purge_trash:{row['id']}"}
+                for row in rows
+            ])
+        except Exception:
+            logger.exception("failed to atomically queue permanent trash purge")
+            return jsonify({'error': '整批永久删除任务未能提交，请重新复核后重试',
+                            'queued': False, 'task_ids': []}), 503
+        task_ids = [task_id for task_id, _ in submitted]
         return jsonify({'ok': True, 'queued': True, 'task_ids': task_ids,
                         'count': len(task_ids)}), 202
     try:
         trash_id = int(data.get('id'))
     except (TypeError, ValueError):
         return jsonify({'error': '无效的回收站记录'}), 400
-    if trash_id not in {row['id'] for row in rows}:
+    candidate = next((row for row in rows if row['id'] == trash_id), None)
+    if candidate is None:
         return jsonify({'error': '当前照片库的回收站中没有这条记录'}), 404
-    task_id, created = TASK_MANAGER.enqueue(
-        'purge_trash', {'trash_id': trash_id}, priority=7,
-        idempotency_key=f"purge_trash:{trash_id}"
-    )
+    if not candidate.get('available', True):
+        return jsonify({'error': '回收站文件暂不可用，请重连设备后再复核'}), 409
+    try:
+        task_id, created = TASK_MANAGER.enqueue(
+            'purge_trash', {'trash_id': trash_id}, priority=7,
+            idempotency_key=f"purge_trash:{trash_id}"
+        )
+    except Exception:
+        logger.exception("failed to queue permanent trash purge")
+        return jsonify({'error': '永久删除任务未能提交，请重新复核后重试'}), 503
     return jsonify({'ok': True, 'queued': True, 'created': created,
                     'task_id': task_id, 'id': trash_id}), 202
 
@@ -8298,31 +8337,39 @@ def api_trash_restore_all():
     if not folder or not Path(folder).is_dir():
         return jsonify({'error': '请先选择照片文件夹'}), 400
     rows = _trash_rows(folder)
-    task_ids = []
+    if any(not row.get('available', True) for row in rows):
+        return jsonify({'error': '部分回收站文件已离线，请重连设备后再全部恢复'}), 409
     planned_rows = []
-    with _FILE_PLAN_LOCK:
-        reserved = _active_restore_reservations()
-        for row in rows:
-            restore_path = str(_unique_destination(
-                Path(row['original_path']), reserved=reserved
-            ).resolve())
-            task_id, created = TASK_MANAGER.enqueue(
-                'restore_trash',
-                {'trash_id': row['id'],
-                 'original_path': row['original_path'],
-                 'trash_path': row['path'],
-                 'source_step': row.get('source_step') or '',
-                 'restore_path': restore_path},
-                priority=15,
-                idempotency_key=f"restore_trash:{row['id']}"
-            )
-            task_ids.append(task_id)
-            if created:
+    try:
+        with _FILE_PLAN_LOCK:
+            reserved = _active_restore_reservations()
+            for row in rows:
+                restore_path = str(_unique_destination(
+                    Path(row['original_path']), reserved=reserved
+                ).resolve())
                 reserved.add(_path_reservation_key(restore_path))
-            planned_rows.append((row, task_id))
-    for row, task_id in planned_rows:
-        _media_state_set(row['original_path'], row['path'], 'pending_restore',
-                         row.get('source_step') or '', detail=str(task_id))
+                planned_rows.append((row, restore_path))
+            submitted = TASK_MANAGER.enqueue_many([
+                {'kind': 'restore_trash',
+                 'payload': {'trash_id': row['id'],
+                             'original_path': row['original_path'],
+                             'trash_path': row['path'],
+                             'source_step': row.get('source_step') or '',
+                             'restore_path': restore_path},
+                 'priority': 15,
+                 'idempotency_key': f"restore_trash:{row['id']}"}
+                for row, restore_path in planned_rows
+            ])
+    except Exception:
+        logger.exception("failed to atomically queue recycle-bin restore")
+        return jsonify({'error': '整批恢复任务提交失败，照片没有被移动',
+                        'queued': False, 'task_ids': []}), 503
+    task_ids = [task_id for task_id, _ in submitted]
+    for (row, _), (task_id, _) in zip(planned_rows, submitted):
+        task = TASK_MANAGER.get(task_id)
+        if task and task.get('state') in ('queued', 'running'):
+            _media_state_set(row['original_path'], row['path'], 'pending_restore',
+                             row.get('source_step') or '', detail=str(task_id))
     return jsonify({'ok': True, 'queued': True, 'task_ids': task_ids,
                     'count': len(task_ids)}), 202
 

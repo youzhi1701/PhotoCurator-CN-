@@ -205,6 +205,162 @@ class MissingFileDeleteSafetyTests(unittest.TestCase):
             lifecycle.assert_not_called()
             self.assertTrue(photo.exists())
 
+    def test_offline_trash_listing_keeps_every_device_record(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            a_root = Path(tmp) / "device_A"
+            b_root = Path(tmp) / "device_B"
+            a_root.mkdir()
+            b_root.mkdir()
+            a_missing = a_root / ".PhotoCuratorTrash" / "missing.jpg"
+            b_online = b_root / ".PhotoCuratorTrash" / "present.jpg"
+            b_online.parent.mkdir()
+            b_online.write_bytes(b"test")
+            db_path = Path(tmp) / "trash.sqlite"
+            with patch.object(photo_curator, "INDEX_DB", db_path):
+                photo_curator._db_init()
+                with connect_db(db_path) as db:
+                    for path, root in ((a_missing, a_root), (b_online, b_root)):
+                        db.execute(
+                            "INSERT INTO software_trash "
+                            "(original_path, trash_path, source_step, deleted_at) "
+                            "VALUES(?,?,?,?)",
+                            (str(root / "original.jpg"), str(path), "cull", 1.0)
+                        )
+                    db.commit()
+                with patch.object(photo_curator, "thumb_url", return_value="/thumb"):
+                    online = photo_curator._trash_rows(b_root)
+                    offline = photo_curator._trash_rows(a_root)
+                photo_curator._write_trash_manifest(a_root)
+                manifest = photo_curator._trash_manifest_file(a_root)
+                manifest_items = __import__("json").loads(manifest.read_text(encoding="utf-8"))["items"]
+                with connect_db(db_path) as db:
+                    retained = db.execute("SELECT COUNT(*) FROM software_trash").fetchone()[0]
+            self.assertEqual(retained, 2, "离线文件记录不得被删除")
+            self.assertEqual(len(manifest_items), 1)
+            self.assertEqual(manifest_items[0]["trash_path"], str(a_missing))
+            self.assertEqual(len(online), 1)
+            self.assertTrue(online[0]["available"])
+            self.assertEqual(len(offline), 1)
+            self.assertFalse(offline[0]["available"])
+
+    def test_offline_trash_items_cannot_be_purged_or_restored(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            missing = Path(tmp) / "missing-trash.jpg"
+            rows = [{"id": 89, "path": str(missing),
+                     "original_path": str(Path(tmp) / "original.jpg"),
+                     "source_step": "cull", "available": False}]
+            with patch.dict(photo_curator.state, {"folder": tmp}), \
+                 patch.object(photo_curator, "_trash_rows", return_value=rows), \
+                 patch.object(photo_curator.TASK_MANAGER, "enqueue_many") as bulk, \
+                 patch.object(photo_curator.TASK_MANAGER, "enqueue") as single:
+                client = photo_curator.app.test_client()
+                token = client.get("/api/trash").get_json()["purge_token"]
+                for endpoint, payload in (
+                    ("/api/trash-purge", {"all": True, "purge_token": token}),
+                    ("/api/trash-restore-all", {}),
+                    ("/api/trash-restore", {"id": 89})
+                ):
+                    resp = client.post(endpoint, json=payload)
+                    self.assertEqual(resp.status_code, 409, resp.get_json())
+                bulk.assert_not_called()
+                single.assert_not_called()
+
+    def test_available_trash_item_can_purge_without_erasing_offline_peer(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            online_file = Path(tmp) / "online-trash.jpg"
+            online_file.write_bytes(b"test")
+            rows = [
+                {"id": 101, "path": str(Path(tmp) / "missing.jpg"),
+                 "original_path": str(Path(tmp) / "a.jpg"),
+                 "available": False},
+                {"id": 102, "path": str(online_file),
+                 "original_path": str(Path(tmp) / "b.jpg"),
+                 "available": True},
+            ]
+            with patch.dict(photo_curator.state, {"folder": tmp}), \
+                 patch.object(photo_curator, "_trash_rows", return_value=rows), \
+                 patch.object(photo_curator.TASK_MANAGER, "enqueue",
+                              return_value=(999, True)) as queued:
+                client = photo_curator.app.test_client()
+                token = client.get("/api/trash").get_json()["purge_token"]
+                response = client.post("/api/trash-purge",
+                                       json={"id": 102, "purge_token": token})
+                self.assertEqual(response.status_code, 202, response.get_json())
+                queued.assert_called_once()
+            self.assertTrue(online_file.exists())
+
+    def test_trash_purge_requires_current_grant_and_enqueues_all_atomically(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            deleted = Path(tmp) / "trash.jpg"
+            deleted.write_bytes(b"original")
+            row = {"id": 17, "path": str(deleted),
+                   "original_path": str(Path(tmp) / "original.jpg"),
+                   "source_step": "cull"}
+            with patch.dict(photo_curator.state, {"folder": tmp}), \
+                 patch.object(photo_curator, "_trash_rows", return_value=[row]), \
+                 patch.object(photo_curator.TASK_MANAGER, "enqueue_many",
+                              return_value=[(313, True)]) as queued:
+                client = photo_curator.app.test_client()
+                preview = client.get("/api/trash").get_json()
+                self.assertEqual(preview["count"], 1)
+                for payload in ({"all": True}, {
+                    "all": True, "purge_token": "forged"
+                }):
+                    response = client.post("/api/trash-purge", json=payload)
+                    self.assertEqual(response.status_code, 409, response.get_json())
+                queued.assert_not_called()
+                request_body = {"all": True, "purge_token": preview["purge_token"]}
+                response = client.post("/api/trash-purge", json=request_body)
+                self.assertEqual(response.status_code, 202, response.get_json())
+                self.assertEqual(response.get_json()["task_ids"], [313])
+                repeat = client.post("/api/trash-purge", json=request_body)
+                self.assertEqual(repeat.status_code, 409, repeat.get_json())
+                queued.assert_called_once()
+            self.assertTrue(deleted.exists())
+
+    def test_trash_batch_failure_keeps_files_and_no_partial_task_ids(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            originals = [Path(tmp) / ("trashed" + str(i) + ".jpg") for i in range(2)]
+            for path in originals:
+                path.write_bytes(b"test")
+            rows = [{"id": i + 5, "path": str(path),
+                     "original_path": str(Path(tmp) / ("before" + str(i) + ".jpg")),
+                     "source_step": "cull"}
+                    for i, path in enumerate(originals)]
+            with patch.dict(photo_curator.state, {"folder": tmp}), \
+                 patch.object(photo_curator, "_trash_rows", return_value=rows), \
+                 patch.object(photo_curator.TASK_MANAGER, "enqueue_many",
+                              side_effect=OSError("disk unavailable")):
+                client = photo_curator.app.test_client()
+                token = client.get("/api/trash").get_json()["purge_token"]
+                response = client.post("/api/trash-purge",
+                                       json={"all": True, "purge_token": token})
+            self.assertEqual(response.status_code, 503, response.get_json())
+            self.assertEqual(response.get_json()["task_ids"], [])
+            self.assertTrue(all(path.exists() for path in originals))
+
+    def test_trash_restore_all_failure_leaves_lifecycle_unchanged(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            originals = [Path(tmp) / ("original" + str(i) + ".jpg") for i in range(2)]
+            rows = [{"id": i + 11,
+                     "path": str(Path(tmp) / ("trash" + str(i) + ".jpg")),
+                     "original_path": str(path), "source_step": "cull"}
+                    for i, path in enumerate(originals)]
+            with patch.dict(photo_curator.state, {"folder": tmp}), \
+                 patch.object(photo_curator, "_trash_rows", return_value=rows), \
+                 patch.object(photo_curator, "_active_restore_reservations",
+                              return_value=set()), \
+                 patch.object(photo_curator.TASK_MANAGER, "enqueue_many",
+                              side_effect=OSError("database unavailable")) as queued, \
+                 patch.object(photo_curator, "_media_state_set") as lifecycle:
+                response = photo_curator.app.test_client().post(
+                    "/api/trash-restore-all", json={}
+                )
+            self.assertEqual(response.status_code, 503, response.get_json())
+            self.assertEqual(response.get_json()["task_ids"], [])
+            queued.assert_called_once()
+            lifecycle.assert_not_called()
+
     def test_review_pending_is_read_only_and_supports_all_quality_tiers(self):
         with tempfile.TemporaryDirectory() as tmp:
             sharp = str(Path(tmp) / "clear.jpg")
