@@ -175,5 +175,56 @@ class MissingFileDeleteSafetyTests(unittest.TestCase):
             lifecycle.assert_not_called()
             self.assertTrue(photo.exists())
 
+    def test_review_pending_is_read_only_and_supports_all_quality_tiers(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            sharp = str(Path(tmp) / "clear.jpg")
+            soft = str(Path(tmp) / "soft.jpg")
+            with patch.dict(photo_curator.state["cull"], {
+                "photos": [
+                    {"path": sharp, "tier": "sharp", "move_selected": True,
+                     "lifecycle": "normal", "name": "清晰照片.jpg"},
+                    {"path": soft, "tier": "soft", "move_selected": True,
+                     "lifecycle": "normal", "name": "稍软.jpg"},
+                    {"path": "ignored.jpg", "tier": "blurry",
+                     "move_selected": False, "lifecycle": "normal"},
+                ],
+            }, clear=False), \
+                 patch.object(photo_curator.TASK_MANAGER, "enqueue_many") as enqueue:
+                response = photo_curator.app.test_client().get("/api/review-pending")
+            self.assertEqual(response.status_code, 200)
+            payload = response.get_json()
+            self.assertEqual(payload["total"], 2)
+            self.assertEqual([r["tier"] for r in payload["items"]], ["sharp", "soft"])
+            enqueue.assert_not_called()
+
+    def test_review_token_rejects_changed_selection_without_file_tasks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            first = folder / "a.jpg"
+            second = folder / "b.jpg"
+            first.write_bytes(b"a")
+            second.write_bytes(b"b")
+            selected = [
+                {"path": str(first), "tier": "sharp", "move_selected": True,
+                 "lifecycle": "normal", "name": "a.jpg"},
+                {"path": str(second), "tier": "blurry", "move_selected": False,
+                 "lifecycle": "normal", "name": "b.jpg"},
+            ]
+            with patch.dict(photo_curator.state, {"folder": str(folder)}), \
+                 patch.dict(photo_curator.state["cull"], {"photos": selected}, clear=False), \
+                 patch.object(photo_curator.TASK_MANAGER, "enqueue_many") as enqueue, \
+                 patch.object(photo_curator, "_apply_media_lifecycle") as lifecycle:
+                client = photo_curator.app.test_client()
+                preview = client.get("/api/review-pending").get_json()
+                self.assertEqual(preview["total"], 1)
+                selected[1]["move_selected"] = True
+                response = client.post("/api/move-blurry",
+                                       json={"review_token": preview["review_token"]})
+                self.assertEqual(response.status_code, 409)
+                enqueue.assert_not_called()
+                lifecycle.assert_not_called()
+            self.assertTrue(first.exists())
+            self.assertTrue(second.exists())
+
 if __name__ == "__main__":
     unittest.main()

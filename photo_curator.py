@@ -4206,6 +4206,7 @@ HTML = r'''<!doctype html><html lang="zh-CN"><head>
     .pc-floating-window{max-width:calc(100vw - 12px)!important}
     .appbar-actions{gap:3px}.appbar-btn{padding:0 7px}
   }
+  #confirmModalText{white-space:pre-line;max-height:45vh;overflow:auto;overflow-wrap:anywhere;line-height:1.55}
 </style></head><body>
 <header class="appbar pywebview-drag-region">
   <div class="app-brand" aria-label="PhotoCurator">
@@ -7249,15 +7250,28 @@ document.getElementById('exportPbgBtn').onclick=async function(){
 document.getElementById('moveBlurryBtn').onclick=async function(){
   const before=cullMoveCounts();
   if(!before.selected)return;
+  let review;
+  try{
+    const r=await fetch('/api/review-pending',{cache:'no-store'});
+    review=await r.json();
+    if(!r.ok||review.error)throw new Error(review.error||('HTTP '+r.status));
+  }catch(err){toast('复核列表读取失败：'+(err.message||'未知错误'),'bad');return;}
+  if(!review.total){toast('没有需要处理的人工标记照片','good');return;}
+  const names=(review.items||[]).map((p,i)=>
+    (i+1)+'. '+(p.name||p.path)+' · '+(p.tier||'未分类'));
+  const previewText='共 '+review.total+' 张待处理照片，只有确认后才会提交后台移动任务。'
+    +'\n\n'+names.join('\n')
+    +(review.truncated?'\n…其余照片已折叠，请先在「待删除」筛选中逐一复核':'')
+    +'\n\n目标：PhotoCurator 软件回收站，可恢复。';
   const ok=await askBatchConfirm(
-    '批量移入软件回收站',
-    '将人工标记的 '+before.selected+' 张照片移入 PhotoCurator 软件回收站。之后仍可恢复。',
-    '移入回收站'
+    '集中复核 · '+review.total+' 张待删除照片',previewText,'确认移入回收站'
   );
   if(!ok)return;
   this.disabled=true;this.textContent='正在提交 '+before.selected+' 张…';
   try{
-    const r=await fetch('/api/move-blurry',{method:'POST'});
+    const r=await fetch('/api/move-blurry',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({review_token:review.review_token})});
     const d=await r.json();
     if(!r.ok||d.error)throw new Error(d.error||('HTTP '+r.status));
     (photos||[]).forEach(p=>{
@@ -8582,19 +8596,60 @@ def api_select_blurry():
     })
 
 
+def _pending_review_rows():
+    """Single source of truth for review preview and submitted file intents."""
+    return [
+        p for p in state['cull'].get('photos', [])
+        if p.get('move_selected') is True
+        and p.get('lifecycle') not in
+        ('pending_trash', 'pending_permanent_delete',
+         'trashed', 'permanently_deleted', 'pending_restore')
+        and p.get('path')
+    ]
+
+
+def _pending_review_token(rows):
+    basis = {
+        'folder': str(state.get('folder') or ''),
+        'paths': sorted(str(p['path']) for p in rows),
+    }
+    return hashlib.sha256(
+        json.dumps(basis, ensure_ascii=False, sort_keys=True).encode('utf-8')
+    ).hexdigest()
+
+
+@app.route('/api/review-pending', methods=['GET'])
+def api_review_pending():
+    """Non-destructive preview of the exact manually marked review set."""
+    rows = _pending_review_rows()
+    # Return bounded details for the confirmation dialog. No filesystem
+    # mutation, thumbnails or image decoding occurs on this endpoint.
+    return jsonify({
+        'total': len(rows),
+        'review_token': _pending_review_token(rows),
+        'items': [
+            {'path': str(p['path']),
+             'name': str(p.get('name') or Path(p['path']).name),
+             'tier': str(p.get('tier') or ''),
+             'source': str(p.get('rel_dir') or '')}
+            for p in rows[:30]
+        ],
+        'truncated': len(rows) > 30,
+    })
+
+
 @app.route('/api/move-blurry', methods=['POST'])
 def api_move_blurry():
     """Queue only explicitly marked photos for software trash."""
     folder = state.get('folder')
     if not folder or not Path(folder).is_dir():
         return jsonify({'error': '未选择有效的照片文件夹'}), 400
-    rows = [
-        pp for pp in state['cull'].get('photos', [])
-        if pp.get('move_selected', False)
-        and pp.get('lifecycle') not in
-        ('pending_trash','pending_permanent_delete','trashed','permanently_deleted')
-        and pp.get('path')
-    ]
+    rows = _pending_review_rows()
+    preview_token = (request.get_json(silent=True) or {}).get('review_token')
+    if preview_token is not None and preview_token != _pending_review_token(rows):
+        return jsonify({
+            'error': '待删除照片列表已发生变化，请重新集中复核后确认',
+        }), 409
     # Validate the complete selection before changing any lifecycle state.
     # A disconnected volume, replaced symlink or stale result must never
     # enqueue partial destructive operations against an unrelated path.
