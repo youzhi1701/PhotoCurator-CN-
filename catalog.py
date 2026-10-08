@@ -744,7 +744,10 @@ def catalog_scan_batch(db_path, session, paths):
             try:
                 rel = str(path.resolve().relative_to(root_path.resolve()))
             except Exception:
-                rel = path.name
+                # A scanner must never register a file outside its selected
+                # root under a misleading basename.
+                errors.append(f"{canonical}: file is outside scan root {root}")
+                continue
         media_key = hashlib.sha256(
             f"{session['root_id']}|{os.path.normcase(rel)}".encode(
                 "utf-8", errors="replace"
@@ -759,6 +762,17 @@ def catalog_scan_batch(db_path, session, paths):
     if not rows and not errors:
         return 0
     with _connect(db_path) as db:
+        # Scan cancellation/replacement and batch persistence must be
+        # serialized. Never let a stale worker overwrite a newer generation.
+        db.execute("BEGIN IMMEDIATE")
+        active = db.execute(
+            """SELECT state,generation,root_id FROM scan_session
+               WHERE session_id=?""", (session["session_id"],),
+        ).fetchone()
+        if (not active or active["state"] != "running"
+                or int(active["generation"]) != generation
+                or active["root_id"] != session["root_id"]):
+            raise RuntimeError("scan session is no longer active")
         if rows:
             db.executemany(
                 """INSERT INTO media_catalog
