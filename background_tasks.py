@@ -203,6 +203,15 @@ class BackgroundTaskManager:
                     row = db.execute("SELECT kind,payload_json,state,priority FROM background_task WHERE id=?", (task_id,)).fetchone()
                     if not row or row[2] != "queued":
                         continue
+                    # Unregistered handlers must not briefly claim filesystem
+                    # work and interfere with a second, ready task manager.
+                    if row[0] not in self.handlers:
+                        with self._cv:
+                            self._seq += 1
+                            heapq.heappush(self._heap, (int(row[3]), self._seq, task_id))
+                        db.rollback()
+                        time.sleep(0.2)
+                        continue
                     claimed = db.execute(
                         "UPDATE background_task SET state='running',updated_at=? WHERE id=? AND state='queued'",
                         (time.time(), task_id),
@@ -213,19 +222,9 @@ class BackgroundTaskManager:
                 kind, payload_json, _, priority = row
                 handler = self.handlers.get(kind)
                 if handler is None:
-                    # During application startup queued tasks may be recovered
-                    # before photo_curator has registered filesystem handlers.
-                    # Put the task back instead of converting a healthy queued
-                    # operation into a false failure.
-                    with self._connect() as db:
-                        db.execute("UPDATE background_task SET state='queued',updated_at=? WHERE id=?",
-                                   (time.time(), task_id))
-                        db.commit()
-                    with self._cv:
-                        self._seq += 1
-                        heapq.heappush(self._heap, (int(priority), self._seq, task_id))
-                    time.sleep(0.2)
-                    continue
+                    # A handler can be unregistered after the claim. Fail
+                    # visibly rather than silently executing an unknown task.
+                    raise RuntimeError(f"任务处理器不可用: {kind}")
                 result = handler(json.loads(payload_json or "{}"))
                 with self._connect() as db:
                     db.execute("UPDATE background_task SET state='done',updated_at=?,error=NULL,result_json=? WHERE id=?",
