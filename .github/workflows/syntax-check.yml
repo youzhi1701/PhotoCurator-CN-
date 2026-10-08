@@ -933,6 +933,7 @@ jobs:
         run: |
           python performance_gate_test.py
           python test_desktop_instance_guard.py
+          python test_frontend_stale_request.py
 
       - name: Real desktop UI interaction smoke test
         run: |
