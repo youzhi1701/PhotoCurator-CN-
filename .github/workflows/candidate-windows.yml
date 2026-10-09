@@ -277,10 +277,23 @@ jobs:
           # it is not set when invoking a .ps1 with PowerShell's call operator.
           & "packaging\\test_candidate_upgrade.ps1" -Version "$env:CANDIDATE_VERSION"
 
+      - name: Generate test installer SHA-256
+        shell: powershell
+        run: |
+          $exe = "release\\PhotoCurator-Setup-v$env:CANDIDATE_VERSION.exe"
+          if (!(Test-Path -LiteralPath $exe)) { throw "Candidate installer missing" }
+          $hash = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          $name = [IO.Path]::GetFileName($exe)
+          $sha = "$hash *$name"
+          Set-Content -Path "$exe.sha256" -Value $sha -Encoding ascii
+          Write-Host "Verified candidate file integrity hash: $hash"
+
       - name: Upload v1.7.11 test installer
         uses: actions/upload-artifact@v7
         with:
           name: PhotoCurator-v1.7.11-test-installer
-          path: release/PhotoCurator-Setup-v1.7.11.exe
+          path: |
+            release/PhotoCurator-Setup-v1.7.11.exe
+            release/PhotoCurator-Setup-v1.7.11.exe.sha256
           if-no-files-found: error
           retention-days: 14
