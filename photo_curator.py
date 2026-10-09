@@ -761,7 +761,7 @@ def _prune_index_db():
 threading.Thread(target=_prune_index_db, daemon=True,
                  name='photocurator-index-prune').start()
 
-APP_VERSION = "1.7.17"
+APP_VERSION = "1.7.18"
 IS_CODESPACES = os.environ.get('CODESPACES', '').strip().lower() == 'true'
 CODESPACE_NAME = os.environ.get('CODESPACE_NAME', '').strip()
 _CODESPACES_DOMAIN_RAW = os.environ.get(
