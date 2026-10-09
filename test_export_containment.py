@@ -73,23 +73,34 @@ class ExportFileContainmentTests(unittest.TestCase):
         self.assertEqual(output.read_bytes(), b'do not overwrite')
         self.assertEqual(list(self.root.glob('*.photocurator-export')), [])
 
-    def test_source_replaced_during_export_does_not_publish_output(self):
+    def test_source_identity_change_during_export_does_not_publish_output(self):
         output = self.root / 'export.jpg'
-        old = self.root / 'moved-original.jpg'
         original = self.photo.read_bytes()
         original_copy = core.shutil.copyfileobj
+        original_signature = core._file_action_signature
+        changed = {'value': False}
 
-        def change_source(reader, writer, length=1024 * 1024):
+        def simulate_changed_identity(reader, writer, length=1024 * 1024):
             original_copy(reader, writer, length=length)
-            self.photo.rename(old)
-            self.photo.write_bytes(b'replacement')
+            changed['value'] = True
 
-        with patch.object(core.shutil, 'copyfileobj', side_effect=change_source):
+        def identity_snapshot(path):
+            signature = original_signature(path)
+            if changed['value'] and Path(path) == self.photo:
+                signature[1] += 1  # different file ID on the same path
+            return signature
+
+        # Windows refuses a real rename while an image file handle is open.
+        # Inject the changed on-disk identity at the post-copy verification
+        # boundary so the safety regression runs on both Windows and Linux.
+        with patch.object(core.shutil, 'copyfileobj',
+                          side_effect=simulate_changed_identity), \
+             patch.object(core, '_file_action_signature',
+                          side_effect=identity_snapshot):
             with self.assertRaises(RuntimeError):
                 core._copy_export_photo_no_replace(self.photo, output)
         self.assertFalse(output.exists())
-        self.assertEqual(old.read_bytes(), original)
-        self.assertEqual(self.photo.read_bytes(), b'replacement')
+        self.assertEqual(self.photo.read_bytes(), original)
         self.assertEqual(list(self.root.glob('*.photocurator-export')), [])
 
     def test_wallpaper_export_never_follows_existing_album_link(self):
