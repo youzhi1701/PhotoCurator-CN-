@@ -1,100 +1,23 @@
 # PhotoCurator 中文桌面版
 
 <!-- LATEST_RELEASE_START -->
-## Windows 下载（10 / 11 · x64）
+## Windows 下载（Windows 10 / 11 · 64 位）
 
-| 版本 | 用途 | 下载 |
+| 版本 | 类型 | 下载 |
 | --- | --- | --- |
-| **v2.0.0 Candidate（自动化验收通过）** | 全图库筛选、有界滚动、相似组、离线图库导航与数据升级 | [下载 V2.0 Windows 测试安装包 ZIP](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37890904657) |
-| **v1.7.19 Candidate（已通过自动化）** | 永久删除人工复核/后台队列绑定实体磁盘，防止 USB 旧盘符误删 | [v1.7.19 Windows 安装包 ZIP](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37887762327) |
-| **v1.7.18 Candidate（自动化已验证）** | 精确去重缓存校验 + TOP-N/壁纸导出防覆盖；Source/Windows CI 通过 | [Windows v1.7.18 安装包 ZIP](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37886666032) |
-| **v1.7.17 Candidate（已通过自动化）** | 外接硬盘回收站身份保护；Source/Windows CI 通过 | [Windows v1.7.17 安装包 ZIP](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37884600438) |
-| **v1.7.16 Candidate（已通过自动化）** | RAW/JPG 歧义保护、安全流式扫描 | [Windows v1.7.16 安装包构件](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37881401130) |
-| **v1.5.0 Stable（上次正式发布）** | 已发布正式版 | [PhotoCurator-Setup-v1.5.0.exe](https://github.com/youzhi1701/PhotoCurator-CN-/releases/download/v1.5.0/PhotoCurator-Setup-v1.5.0.exe) |
+| **v2.0.0 Candidate** | 最新测试安装包；尚未通过真实硬盘及签名验收 | [Windows Candidate 工作流及安装包构件](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37890904657) |
+| **v1.5.0 Stable** | 最近正式发布的稳定版 | [PhotoCurator-Setup-v1.5.0.exe](https://github.com/youzhi1701/PhotoCurator-CN-/releases/download/v1.5.0/PhotoCurator-Setup-v1.5.0.exe) |
 
-**PhotoCurator V2.0.0 Windows 测试版已真实构建：**从 [Windows Candidate 成功工作流](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37890904657) 页面底部 **Artifacts** 下载 `PhotoCurator-v2.0.0-test-installer` ZIP，解压得到 `PhotoCurator-Setup-v2.0.0.exe`。原始 EXE SHA-256：`5102a263d6f811428462818f6b3c2e284a1360fdb3c77bcbf520cda0b672aac5`；构件到期 2026-10-23。[Windows 源码/实际桌面 UI 冒烟](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37890904679) 全部通过；官方 v1.5.0→V2.0.0 两种模式原位升级与卸载保护、Windows EXE 窗口响应自动化通过。用户应在真实 Windows 设备上验证后再讨论下一轮缺陷，V2.0 Stable 尚未发布。
+V2 测试包：在 Candidate 工作流页面的 **Artifacts** 下载 `PhotoCurator-v2.0.0-test-installer`，解压得到 `PhotoCurator-Setup-v2.0.0.exe`。原始安装包 SHA-256 为 `5102a263d6f811428462818f6b3c2e284a1360fdb3c77bcbf520cda0b672aac5`，该工作流构件预计于 2026-10-23 到期。请勿将旧构件认作后续代码修改的新构建。
 
-本轮 V2.0.0 Candidate 聚焦长期未解决的实际使用体验：待删除/清晰/格式筛选改为服务端全图库计算，不再仅筛首屏 200 张；Cull 卡片窗口有界 600 张、相似组窗口最多 192 组，滚动加载并支持上一批；待删除总数按全库真实数据展示；稀有 RAW/HEIF 格式可预先选择；离线图库快速切换时旧请求不得覆盖新图库。本轮 Source/Windows Candidate CI 已通过，Windows 测试安装器可在上述链接取得。真实设备验收与签名仍在 `RELEASE_ACCEPTANCE.md` 门禁内。
+V2 当前支持全图库分页筛选、照片窗口有界显示、相似组回溯、离线图库历史、设备身份校验以及可恢复的软件回收站。**尚未通过真实 4TB 硬盘、热插拔、跨相机 RAW/HEIF、断电恢复、Windows 实机完整验收及签名发布门禁。**
 
-v1.7.19 Windows Candidate 已实际构建并通过自动化：在 [成功工作流](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37887762327) 底部下载 `PhotoCurator-v1.7.19-test-installer` ZIP，解压 `PhotoCurator-Setup-v1.7.19.exe`。EXE SHA-256：`63d172d7344bad9c45b4d2a8bbde97ab1b1f633e3cb86d63066cf15264ba5015`；Artifact 有效期至 2026-10-23。[Source + Windows smoke](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37887762397) 成功；已验证打包后的实际 Windows 窗口响应、v1.5.0→v1.7.19 原位升级和静默卸载原片/配置保留。上一版 v1.7.18 已构建并自动验证：在 [Windows Candidate 成功工作流](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37886666032) 页面底部下载 `PhotoCurator-v1.7.18-test-installer` ZIP，解压可得 `PhotoCurator-Setup-v1.7.18.exe` 和 SHA-256 文件。EXE SHA-256：`0224c9d6d3024f944660642c1042971d5bd2629caafc055a790d1bdd3fb6137a`，构件保留至 2026-10-23。 [源码/Windows smoke](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37886666065) 成功，旧版 v1.5.0 原位升级、卸载留存及原生窗口响应性均成功。
-
-上一版 v1.7.17 Windows 已验证的 Candidate 构件：`PhotoCurator-v1.7.17-test-installer`，下载 ZIP 并解压得到 `PhotoCurator-Setup-v1.7.17.exe`；该构件安装器 SHA-256：`56b85abe23f69aca7cf30817458fdfb34e893c0917349be787e57f0f80ca5978`，Actions 构件保留至 2026-10-23。完整流水线： [Windows](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37884600438) 成功；[最新 Source/Windows smoke](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37884600508) 成功。v1.7.16 旧版构件 SHA-256：`38151f706585e4c7b9414ac4c8725efa0b5c2e579c664d60ef66b11aad879a4a`。
-
-v1.7.19 新增：人工永久删除的确认令牌不仅绑定照片路径/元数据，而且绑定原始物理磁盘身份；用户复核、点击确认、后台等待及 unlink 前多次比对。旧任务缺少实体设备快照直接拒绝，防止另一 U 盘复用旧盘符造成不可逆误删。新增错盘、旧任务、外部路径、断连和错误复核令牌测试。
-
-v1.7.18 新增：TOP-N / 手机壁纸导出必须原子预留全新目录，拒绝已有文件夹/符号链接重定向，输出文件采用无覆盖发布，导出前后核对源盘身份和文件指纹；避免旧文件或外部图片被覆写。字节精确重复缓存仅用于加速；任何复用缓存形成的重复组，必须重新读取文件并校验 SHA-256 和打开句柄身份；伪造/损坏缓存不能把不同照片误判为“字节精确重复”。拒绝符号链接照片直接参与精确索引，新增安全与缓存性能回归。
-
-v1.7.17 重点：回收站只在已登记的原始实体硬盘身份与当前挂载身份一致时显示为可操作；拒绝换盘后错误清单导入/改写和待执行文件任务在错误物理磁盘上继续执行。保留旧版离线记录可查看，不把未连接误认为已永久删除。
-
-> 当前各版本仍不是 V2.0 Stable；真实 4TB HDD、19,000+ 图片、RAW/HEIF 多机型、真实拔插/突然断电、Win10/11 高 DPI、场景语义误判集、代码签名及用户 QA 尚需验收。
+历史 Candidate 的构建记录、修复细节和验收证据，请查看 [中文更新日志](CHANGELOG_CN.md)、[项目进度](PROJECT_PROGRESS.md) 和 [V2 任务台账](V2_TASK_LEDGER.md)，不再在首页堆叠过期测试包和重复说明。
 <!-- LATEST_RELEASE_END -->
 
-> 面向大图库的 Windows 照片清理工具。v1.7.19 Candidate 在稳定桌面运行层基础上继续收口持久 Catalog、扫描会话与缺失判定、离线图库与设备识别、文件生命周期、数据库升级保护和 Windows 发布门禁；当前仍处于 Candidate 验证阶段，不等同于已发布 Stable。
-
-| 项目 | 信息 |
-| --- | --- |
-| 当前源码版本 | **v1.7.19 Candidate（Source / Windows CI 已验证）** |
-| 项目类型 | Windows 照片筛选桌面应用 |
-| 上游基线 | Photo Curator v7.0 |
-| 当前状态 | **v1.7.19 Candidate · Source/Windows CI 已通过 · 真实设备及数字签名验收未完成** |
-
-## v1.7.19 直接永久删除的物理磁盘身份保护（已通过 CI；仍待真实硬件验收）
-
-- 复核与后台执行时两次获取实时物理设备稳定身份；只有所选图库的原硬盘匹配才能处理永久删除。
-- 后台旧持久化任务缺失设备身份视为必须重新复核，不自动继承之前用户点击的操作权限；失败保留原片。
-- 永久删除前再次核验源文件身份、XMP/AAE 辅件及实体设备，并扩充专属安全回归。
-
-## v1.7.18 精确重复缓存及导出可信校验（自动化通过，仍待实机 QA）
-
-- **只给确实经过实际字节哈希验证的照片标注精确重复**：本地 JSON 摘要缓存即使被篡改也不能伪造“同内容”的结论；候选组全部绑定实时文件身份进行二次哈希。
-- 不发生重复组时，原先缓存路径仍可跳过不必要的大文件读取；缓存加速与原片安全兼顾。
-- 新增缓存篡改、缓存命中、普通图片性能、符号链接与导出目标冲突的安全回归；任何自动分类都不绕过人工复核。
-
-## v1.7.17 候选升级（已通过 CI；仍待实机 QA）
-
-- 对已登记图库，回收站显示、清单读取/写入和文件操作必须核验实际物理磁盘身份；另一个 USB 盘占用旧盘符也不能误识别。
-- 后台队列延迟执行前再次确认硬盘身份，不依赖界面缓存的“已连接”状态。
-- 新增换盘及两设备同盘符的安全回归；继续保留离线回收站历史。
-
-## v1.7.16 候选升级（Source/Windows CI 已验证）
-
-- RAW/JPEG 同名配对仅在明确一对一时折叠；保留 PNG/HEIF、多个同名 RAW、多个 JPEG；POSIX 文件名大小写严格独立。
-- 来源扫描使用 DirEntry 流式枚举并拒绝符号链接、Windows junction，防止索引越界和误读取另一磁盘；I/O 失败无法落库时中止扫描。
-- 安全及原片保护测试扩充后再构建 Windows Candidate；真实硬件测试和数字签名仍需完成。
-
-## v1.7.15 候选代码改进（已通过 CI，未通过真实设备 QA）
-
-- 软件回收站清单不再信任外接设备中的任意源/目标路径：严格限定当前图库与专属回收站，拒绝符号链接和越界目录。
-- 兼容离线记录留存的同时，回收站清单采用唯一临时文件、fsync 和原子发布，降低并发写入竞态。
-- 新增目录逃逸与伪造清单安全测试；Source、Windows smoke、真实安装器升级与卸载自动化均通过。
+> **当前源码版本：v2.0.0 Candidate。** 正式可下载版本仍为 v1.5.0 Stable。Windows 候选版安装包与当前后续开发提交可能不同步；正式发布以真实 Release 及验收结果为准。
 
 
-- 修复 Linux 大小写不同原片的生命周期及父子图库重叠统计隔离。
-- 进一步校验外接盘唯一身份和文件指纹，禁止历史图库缩略图误读取被替换磁盘，并隔离普通缓存与持久离线预览。
-- 对后台任务执行真正的子进程异常终止和数据库恢复演练，补充 Windows 文件句柄释放回归。
-
-此版本已通过源码、Windows 原生 CI 和覆盖升级/卸载/崩溃恢复自动回归；**尚未完成真实硬盘与代码签名，因此不作为最终稳定版**。
-
-## v1.7.13 新增修复（尚非 V2.0 正式版）
-
-- 确认真实设备身份后才重新连接历史图库，防止旧盘符被另一硬盘占用而误认；
-- 扫描错误无法记录时中止索引更新，继续保留原片的历史状态；
-- RAW/HEIF 即使缺少可选解码器也保留 Catalog 记录，区分可发现与可解码；
-- 19,000+ 照片级别的路径查询增加平台正确的数据库索引，避免重复全表扫描；
-- Windows 原位升级与卸载不得递归清除运行数据，增加真实静默卸载留存校验；
-- 修正用户文件夹 Top_Family、PhoneBG_Trip 等被误认为导出目录而跳过的问题。
-
-此前 v1.7.12 属历史候选；当前上一轮候选是 v1.7.15，已完成 Windows 构建及 CI 验证，仍未通过真实设备验收。
-
-## v1.7.12 本轮关键完善
-
-- **拔盘 / 换盘数据保护**：持久图库不仅在扫描开始、每批写入、扫描结束时验证设备身份，也防止离线缩略图后台误把同盘符的另一台存储设备识别为旧图库。缓存生成前核实稳定卷身份、照片真实路径与大小 / 修改时间，解码后再次确认原文件身份。
-- **精确去重 + 人工复核**：SHA-256 字节级精确重复优先，保留视觉相似 / 连拍识别；批量删除操作绑定一次性复核令牌与真实文件身份，AI/传统评分建议不直接删除原片。
-- **RAW/HEIF 与辅助文件**：保留 RAW+JPEG 同拍保护与 XMP/AAE 辅件身份核验；功能支持与真实机型全部兼容是两回事，未验证的格式不虚称完整覆盖。
-- **Windows 升级与性能**：候选构建执行真实旧版 v1.5.0 覆盖安装回归，校验配置、离线预览与原始照片哈希；19,000 项合成排序回归通过，但真实 4TB 机械硬盘数据集仍须实测。
-- **发布防错**：正式 Stable 发布需要明确版本 QA 批准和 Authenticode 签名/验签；缺任一条件即不自动发布。
-
-详细进度与待验证项目请查看 [PROJECT_PROGRESS.md](PROJECT_PROGRESS.md) 和 [RELEASE_ACCEPTANCE.md](RELEASE_ACCEPTANCE.md)。
 
 ## 产品定位
 
@@ -380,7 +303,7 @@ PhotoCurator-CN-/
 
 许可证保持原项目 **MIT License**。
 
-## v1.7.19 从 Candidate 晋级 Stable 的发布门槛
+## v2.0.0 Candidate 晋级 Stable 的发布门槛
 
 正式发布前必须同时满足：
 - Python / 嵌入式 JavaScript / HTML / CSS 自动检查通过
@@ -402,4 +325,4 @@ PhotoCurator-CN-/
 - 覆盖升级不破坏用户数据库、索引、设置、日志、任务状态和用户照片
 - GitHub Release 中真实存在与版本一致、非空且校验通过的 Windows 安装包
 
-在上述门槛没有全部满足前，v1.7.19 只能保持 **Candidate**，不能标记为 Stable。
+在上述门槛没有全部满足前，v2.0.0 只能保持 **Candidate**，不能标记为 Stable。
