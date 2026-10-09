@@ -2,20 +2,21 @@
 
 > 此文件记录已经提交并验证的代码工作，以及尚未满足正式发布标准的工作。**不得把候选安装包、自动化测试或 GitHub 合并等同于用户实机验收与正式发布。**
 >
-> 最初历史开发基线为 main `81dbb510deb58f191448ed13d791094f9a1f9d7e`（PR #50）；截至本检查点，V2.0 候选已合并 [PR #87](https://github.com/youzhi1701/PhotoCurator-CN-/pull/87)，合并提交 `c6bd12a9a445ab7a8c445c2fcf244b78189dbe07`，源码版本 v1.7.17。Source 与已发布的 v1.7.17 Windows Candidate 构建通过；真实实盘、语义模型评测、正式签名仍未完成。本文件不是实时 API，下轮先核对 GitHub HEAD/CI/构件。
+> 最初历史开发基线为 main `81dbb510deb58f191448ed13d791094f9a1f9d7e`（PR #50）；截至本检查点，[PR #88](https://github.com/youzhi1701/PhotoCurator-CN-/pull/88) 已合并至 main `45ab33f6a5e423610b3a2f604da6c107bf83b6de`，最新源码与 Windows Candidate 为 **v1.7.18**。源码、Windows 冒烟、正式 Windows 原生安装器及真实 v1.5.0→v1.7.18 升级均通过自动化，真实实盘、语义模型评测、正式签名仍未完成。本文件不是实时 API，下轮须核对 GitHub HEAD/CI/构件。
 
-## 2026-10-09 V2.0 v1.7.18 候选：精确去重缓存二次校验（待 CI）
+## 2026-10-09 V2.0 v1.7.18 候选：精确去重与导出数据安全（代码与自动化已通过，非 Stable）
 
 - 精确重复复用缓存的候选组重新计算真实 SHA-256，验证打开的文件身份和扫描前后元数据，避免可写缓存被篡改导致不同原片误报字节精确重复；直接 symlink 不参与。
 - 回归覆盖缓存伪造、可信重复组、无重复组低 I/O 路径、符号链接。源数据只读，任何文件删除仍需人工复核令牌。
 - TOP-N/PhoneBG 导出防止 symlink/Junction 目标目录劫持与旧文件覆盖；每轮独占创建输出相册，暂存+no-replace 写入原图副本与壁纸。对比物理盘与照片身份，遇源变更取消发布。新增 7 项文件安全回归并纳入双平台 CI。
-- Windows 候选目标 v1.7.18（待 Actions 成功），前版 v1.7.17 完整 CI 和 EXE 可下载；硬盘/RAW/AI 模型实测、签名和人工审核仍待验收。
+- [PR #88](https://github.com/youzhi1701/PhotoCurator-CN-/pull/88) 已合并至主线提交 `45ab33f6a5e423610b3a2f604da6c107bf83b6de`；[Source/Windows smoke 37886666065](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37886666065) **success**、[v1.7.18 Windows Candidate 37886666032](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37886666032) **success**（完整 EXE 自检、窗口响应、旧版覆盖安装和静默卸载留存）。
+- Windows 测试 ZIP 构件 `PhotoCurator-v1.7.18-test-installer`，含 `PhotoCurator-Setup-v1.7.18.exe` 与 `.sha256`，安装器 SHA-256 `0224c9d6d3024f944660642c1042971d5bd2629caafc055a790d1bdd3fb6137a`，有效期至 2026-10-23。硬盘/RAW/AI 模型实测、签名和人工审核仍待验收；不得声明 V2.0 Stable。
 
 ## 2026-10-09 V2.0 候选 v1.7.16 → v1.7.17（已合并，非 Stable）
 
 - [PR #86](https://github.com/youzhi1701/PhotoCurator-CN-/pull/86) 已合并，v1.7.16：RAW/JPEG 多对一歧义不自动合并、区分 POSIX 大小写、DirEntry 流式源扫描跳过 symlink/junction；[Source](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37881401116) 和 [Windows Candidate](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37881401130) 通过。
 - [PR #87](https://github.com/youzhi1701/PhotoCurator-CN-/pull/87) 已合并，v1.7.17：回收站在线状态、清单导入/写入、后台恢复/销毁/移动根据已登记的原实体设备进行实时身份核验；防止另一 USB 盘重占 F: 等旧盘符后误显示为原盘或误操作照片。保留离线数据与旧非 Catalog 文件夹兼容。
-- 修正 Windows Installer 卸载留存回归测试中的静态误判：Inno Setup 安装目录清理段落的中文注释包含 runtime data 路径，不能误认为实际删除指令；现只审查有效配置行。最新版 [Source/Windows smoke 37884600508](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37884600508) **success**；[v1.7.17 Windows Candidate 37884600438](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37882668181) **success**（对应 PR #87 最终提交，完整通过）。
+- 修正 Windows Installer 卸载留存回归测试中的静态误判：Inno Setup 安装目录清理段落的中文注释包含 runtime data 路径，不能误认为实际删除指令；现只审查有效配置行。最新版 [Source/Windows smoke 37884600508](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37884600508) **success**；[v1.7.17 Windows Candidate 37884600438](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37884600438) **success**（对应 PR #87 最终提交，完整通过）。
 - 可测试 Windows ZIP：`PhotoCurator-v1.7.17-test-installer`，解压 EXE `PhotoCurator-Setup-v1.7.17.exe`，安装器 SHA-256 `56b85abe23f69aca7cf30817458fdfb34e893c0917349be787e57f0f80ca5978`，Actions Artifact 截止 2026-10-23。已运行旧版 v1.5.0→新 Candidate 原位覆盖和静默卸载保留数据的测试。
 - **未完成的 V2.0 Stable 发布门禁**：真实 4TB/19,000+ 图测试、外接 HDD/USB 热插拔与断电、跨相机 RAW/HEIF 样本、语义识别质量评估、真实 Win10/11 + 多 DPI 体验、正式 PFX 数字签名与人工 QA 批准。不得把自动化候选宣称为最终稳定正式版。
 
