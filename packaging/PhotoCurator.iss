@@ -1,6 +1,6 @@
 #define MyAppName "PhotoCurator"
 #ifndef MyAppVersion
-  #define MyAppVersion "1.7.13"
+  #define MyAppVersion "1.7.14"
 #endif
 #define MyAppPublisher "PhotoCurator-CN"
 #define MyAppExeName "PhotoCurator.exe"
