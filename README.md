@@ -280,7 +280,7 @@ PhotoCurator-CN-/
 ├─ packaging/
 ├─ vendor/
 ├─ .github/workflows/
-├─ UPSTREAM_README.md
+├─ docs/                      # 上游资料与历史版本文档
 └─ README.md
 ```
 
@@ -299,7 +299,7 @@ PhotoCurator-CN-/
 
 基于 `kotyzap/Photo-Curator · v7.0` 二次开发。
 
-原项目说明：`UPSTREAM_README.md`
+原项目说明：[docs/upstream/README.md](docs/upstream/README.md)
 
 许可证保持原项目 **MIT License**。
 
@@ -326,3 +326,12 @@ PhotoCurator-CN-/
 - GitHub Release 中真实存在与版本一致、非空且校验通过的 Windows 安装包
 
 在上述门槛没有全部满足前，v2.0.0 只能保持 **Candidate**，不能标记为 Stable。
+
+
+## 文档归档与目录约定
+
+- 主入口：`README.md`，仅介绍当前版本、下载和核心使用方式，不重复堆叠历次候选构建说明。
+- 当前进度：`V2_TASK_LEDGER.md`、`PROJECT_PROGRESS.md`、`RELEASE_ACCEPTANCE.md`。
+- 完整更新记录：`CHANGELOG_CN.md`。
+- 历史资料：[`docs/archive/CHANGELOG-v1.5.md`](docs/archive/CHANGELOG-v1.5.md) 与 [`docs/upstream/README.md`](docs/upstream/README.md)。归档不代表产品功能删除。
+- `photo_curator.py`、`catalog.py`、`background_tasks.py` 等现有运行入口先保持原路径；重构前应证明调用链和 Windows 打包链路兼容。
