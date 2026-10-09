@@ -1136,9 +1136,57 @@ def media_id_for_path(db_path, path):
     return str(row["media_id"]) if row else None
 
 
+def _safe_storage_target(data_root, *parts):
+    """Refuse cleanup through relocated links or directory junctions.
+
+    Cleanup never needs to traverse an alias from the application's own cache
+    folder to some unrelated path (including a user's photo source). Resolve
+    the configured root once, but do not follow links in its descendants.
+    """
+    base = Path(data_root).resolve()
+    target = Path(data_root)
+    for part in parts:
+        target = target / part
+        if target.is_symlink() or (
+                callable(getattr(target, "is_junction", None))
+                and target.is_junction()):
+            raise ValueError("refusing cleanup through a linked storage directory")
+    real = target.resolve()
+    try:
+        common = os.path.commonpath([
+            os.path.normcase(str(base)), os.path.normcase(str(real))
+        ])
+    except ValueError as exc:
+        raise ValueError("storage directory lies outside runtime data") from exc
+    if common != os.path.normcase(str(base)):
+        raise ValueError("storage directory lies outside runtime data")
+    # On older Windows Python versions junctions may not expose
+    # Path.is_junction(). Detect redirected directories even when the
+    # junction points to another folder *inside* the data root.
+    expected = base.joinpath(*parts)
+    if os.path.normcase(os.path.normpath(str(expected))) != (
+            os.path.normcase(os.path.normpath(str(real)))):
+        raise ValueError("refusing cleanup through a redirected storage directory")
+    return target
+
+
+
+def _direct_storage_entry(folder, item):
+    """Accept only real files/dirs below this cache, never aliases to photos."""
+    folder, item = Path(folder), Path(item)
+    if item.is_symlink() or (
+            callable(getattr(item, "is_junction", None)) and item.is_junction()):
+        return False
+    try:
+        expected = folder.resolve().joinpath(*item.relative_to(folder).parts)
+        return os.path.normcase(os.path.normpath(str(expected))) == (
+            os.path.normcase(os.path.normpath(str(item.resolve()))))
+    except (OSError, ValueError):
+        return False
+
 def clear_offline_previews(data_root, db_path, root_id=None):
     """Explicitly clear durable offline previews; never called by cache cleanup."""
-    preview_dir = Path(data_root) / "offline_previews"
+    preview_dir = _safe_storage_target(data_root, "offline_previews")
     if not preview_dir.is_dir():
         return {"removed": 0, "freed_bytes": 0}
     allowed = None
@@ -1259,12 +1307,12 @@ def clear_rebuildable_storage(data_root, category):
         "features": data_root / "config" / "dedup_features",
     }
     if category == "logs":
-        log_dir = data_root / "logs"
+        log_dir = _safe_storage_target(data_root, "logs")
         removed = 0
         freed = 0
         if log_dir.is_dir():
             for p in log_dir.iterdir():
-                if not p.is_file() or p.name == "photocurator.log":
+                if not _direct_storage_entry(log_dir, p) or not p.is_file() or p.name == "photocurator.log":
                     continue
                 try:
                     freed += int(p.stat().st_size)
@@ -1275,12 +1323,12 @@ def clear_rebuildable_storage(data_root, category):
         return {"category": category, "removed": removed, "freed_bytes": freed}
 
     if category == "previews":
-        target = data_root / "cache" / "thumbnails"
+        target = _safe_storage_target(data_root, "cache", "thumbnails")
         removed = 0
         freed = 0
         if target.is_dir():
             for p in target.iterdir():
-                if not p.is_file():
+                if not _direct_storage_entry(target, p) or not p.is_file():
                     continue
                 try:
                     freed += int(p.stat().st_size)
@@ -1293,15 +1341,15 @@ def clear_rebuildable_storage(data_root, category):
         # removed by the ordinary rebuildable-preview cleanup.
         return {"category": category, "removed": removed, "freed_bytes": freed}
 
-    target = targets.get(category)
-    if target is None:
+    if category not in targets:
         raise ValueError("unsupported storage cleanup category")
+    target = _safe_storage_target(data_root, "config", "dedup_features")
 
     removed = 0
     freed = 0
     if target.is_dir():
         for p in list(target.rglob("*")):
-            if not p.is_file():
+            if not _direct_storage_entry(target, p) or not p.is_file():
                 continue
             try:
                 freed += int(p.stat().st_size)
@@ -1310,7 +1358,8 @@ def clear_rebuildable_storage(data_root, category):
             except OSError:
                 continue
         for p in sorted(
-            (x for x in target.rglob("*") if x.is_dir()),
+            (x for x in target.rglob("*") if x.is_dir()
+             and _direct_storage_entry(target, x)),
             key=lambda x: len(x.parts),
             reverse=True,
         ):

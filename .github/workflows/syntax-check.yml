@@ -45,6 +45,7 @@ jobs:
             quality_annotations_input_test.py \
             test_runtime_migration_wal.py \
             test_offline_preview_guard.py \
+            test_storage_cleanup_containment.py \
             scene_labels.py \
             test_scene_labels.py \
             test_raw_pair_protection.py \
@@ -946,6 +947,7 @@ jobs:
           python -m unittest -v test_quality_annotations quality_annotations_input_test
           python -m unittest -v test_runtime_migration_wal
           python -m unittest -v test_offline_preview_guard
+          python -m unittest -v test_storage_cleanup_containment
           python -m unittest -v test_scene_labels
           python -m unittest -v test_raw_pair_protection
           python -m unittest -v test_rank_topn_selection
