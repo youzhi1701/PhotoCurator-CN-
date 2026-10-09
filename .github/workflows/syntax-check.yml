@@ -42,6 +42,7 @@ jobs:
             photo_ranking_v3.py \
             quality_annotations.py \
             test_quality_annotations.py \
+            quality_annotations_input_test.py \
             test_offline_preview_guard.py \
             scene_labels.py \
             test_scene_labels.py \
