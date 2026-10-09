@@ -78,3 +78,36 @@ for ($pass=1; $pass -le 2; $pass++) {
     AssertPreserved $pass $expectedVersion
 }
 Write-Host "Windows v$priorVersion shipped installer -> v$Version candidate in-place upgrade both passed."
+
+# The same disposable runner also exercises the actual new uninstaller.
+# A silent uninstall must NOT delete the catalog, offline preview store, or
+# external user originals, nor block waiting for an interactive MsgBox.
+$uninstaller = Get-ChildItem -LiteralPath $installRoot -Filter "unins*.exe" -File |
+    Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
+if (!$uninstaller) { throw "Candidate uninstaller was not installed" }
+$uninstallProcess = Start-Process -FilePath $uninstaller.FullName -ArgumentList @(
+    "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"
+) -PassThru
+if (-not $uninstallProcess.WaitForExit(120000)) {
+    Stop-Process -Id $uninstallProcess.Id -Force -ErrorAction SilentlyContinue
+    throw "Candidate silent uninstall timed out: possible interactive dialog"
+}
+if ($uninstallProcess.ExitCode -ne 0) {
+    throw "Candidate silent uninstall failed with $($uninstallProcess.ExitCode)"
+}
+if (Test-Path -LiteralPath (Join-Path $installRoot "app\\PhotoCurator.exe")) {
+    throw "Candidate uninstaller left the installed application executable"
+}
+foreach ($file in @($probeConfig, $probeOffline)) {
+    if (!(Test-Path -LiteralPath $file -PathType Leaf)) {
+        throw "Candidate uninstall removed retained user data: $file"
+    }
+    if ((Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -ne $originalHash) {
+        throw "Candidate uninstall modified retained user data: $file"
+    }
+}
+if ((Get-FileHash -LiteralPath $externalMarker -Algorithm SHA256).Hash -ne $externalHash) {
+    throw "Candidate uninstall modified an external original photo"
+}
+Write-Host "Native silent uninstall preserved catalog probe, offline preview and external originals."
+
