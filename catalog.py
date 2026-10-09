@@ -224,6 +224,25 @@ def _windows_volume_info(path):
     }
 
 
+def _posix_mount_for_path(path):
+    """Find the actual filesystem mount, not always the '/' path anchor.
+
+    External USB/SD mounts and bind mounts cannot be identified by '/'.
+    A source on /media/disk must have an identity different from the system
+    volume even while both paths are visible at the same time.
+    """
+    current = Path(os.path.realpath(str(path)))
+    device = os.stat(current).st_dev
+    while current.parent != current:
+        if os.path.ismount(current):
+            break
+        parent = current.parent
+        if os.stat(parent).st_dev != device:
+            break
+        current = parent
+    return str(current)
+
+
 def volume_info_for_path(path):
     path = os.path.realpath(os.path.expanduser(str(path)))
     if os.name == "nt":
@@ -231,29 +250,56 @@ def volume_info_for_path(path):
         # unreadable/replaced volume as a different fake identity.
         return _windows_volume_info(path)
 
-    anchor = Path(path).anchor or str(Path(path).parent)
-    try:
-        st = os.stat(anchor)
-        device = str(st.st_dev)
-    except OSError:
-        device = "unknown"
-    try:
-        capacity = int(shutil.disk_usage(anchor).total)
-    except OSError:
-        capacity = 0
-    basis = f"{device}|{anchor}|{capacity}"
+    # The old code used Path(path).anchor ('/') for every source, silently
+    # merging distinct removable disks into one catalog data_source. Discover
+    # the containing mounted filesystem and its actual device identity.
+    mount = _posix_mount_for_path(path)
+    device = str(os.stat(path).st_dev)
+    capacity = int(shutil.disk_usage(mount).total)
+    basis = f"{device}|{mount}|{capacity}"
     return {
         "identity_key": "posix-volume:" + hashlib.sha256(
             basis.encode("utf-8", errors="replace")
         ).hexdigest(),
         "kind": "volume",
-        "mount_path": os.path.realpath(anchor),
+        "mount_path": mount,
         "volume_guid": "",
         "volume_serial": device,
-        "volume_label": Path(anchor).name or anchor,
+        "volume_label": Path(mount).name or mount,
         "fs_type": "",
         "capacity_bytes": capacity,
     }
+
+
+def _verified_windows_mount(identity, mounted):
+    """Match only the physical volume GUID, never a drive-letter alias.
+
+    The old win-mount:F: fallback marked another disk using the same letter
+    as connected, which risks contaminating persistent offline previews.
+    Legacy mount-only and unsigned fallback identities remain offline until
+    the source is explicitly re-registered with a verifiable identity.
+    """
+    identity = str(identity or "").lower()
+    if not identity.startswith("win-guid:"):
+        return None
+    observed = mounted.get(identity)
+    if (not observed or
+            str(observed.get("identity_key") or "").lower() != identity or
+            not observed.get("mount_path")):
+        return None
+    return observed
+
+
+
+def _verified_posix_mount(identity, mount_path):
+    """A live directory is not enough: verify the original volume identity."""
+    if not mount_path or not Path(mount_path).is_dir():
+        return False
+    try:
+        observed = volume_info_for_path(mount_path)
+    except (OSError, ValueError):
+        return False
+    return str(observed.get("identity_key") or "") == str(identity or "")
 
 
 def _relative_to_mount(folder, mount_path):
@@ -529,14 +575,15 @@ def refresh_connections(db_path):
         for row in sources:
             identity = str(row["identity_key"])
             if os.name == "nt":
-                info = mounted.get(identity)
-                if not info and identity.startswith("win-mount:"):
-                    info = mounted.get(identity)
+                info = _verified_windows_mount(identity, mounted)
                 connected = bool(info)
                 mount_path = info["mount_path"] if info else str(row["last_mount"] or "")
             else:
                 mount_path = str(row["last_mount"] or "")
-                connected = bool(mount_path and Path(mount_path).exists())
+                # An empty original mountpoint can remain on the system disk
+                # after USB removal. A matching path alone is NOT proof that
+                # the original medium is back, especially after a disk swap.
+                connected = _verified_posix_mount(identity, mount_path)
 
             if connected:
                 db.execute(
