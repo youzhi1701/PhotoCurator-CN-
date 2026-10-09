@@ -5,6 +5,7 @@ import tempfile
 import sqlite3
 import time
 import threading
+from contextlib import closing
 import unittest
 from pathlib import Path
 
@@ -56,7 +57,7 @@ class WalOnceRegression(unittest.TestCase):
                 self.assertTrue(Path(str(db_path) + "-wal").exists())
 
                 first = backup_database(db_path, backup_dir, "schema-upgrade", keep=1)
-                with sqlite3.connect(first) as snapshot:
+                with closing(sqlite3.connect(first)) as snapshot:
                     self.assertEqual(snapshot.execute(
                         "SELECT choice FROM decisions WHERE path='p1'"
                     ).fetchone()[0], "keep")
@@ -69,7 +70,7 @@ class WalOnceRegression(unittest.TestCase):
                 self.assertTrue(second.exists())
                 self.assertFalse(first.exists())
                 self.assertEqual(old_snapshot.read_bytes(), b"previous manually managed backup")
-                with sqlite3.connect(second) as snapshot:
+                with closing(sqlite3.connect(second)) as snapshot:
                     self.assertEqual(snapshot.execute("PRAGMA quick_check").fetchone()[0], "ok")
                     self.assertEqual(snapshot.execute(
                         "SELECT COUNT(*) FROM decisions"

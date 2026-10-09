@@ -1174,9 +1174,11 @@ def media_record(db_path, media_id):
     init_catalog_schema(db_path)
     with _connect(db_path) as db:
         row = db.execute(
-            """SELECT m.*,r.current_root,r.original_root
+            """SELECT m.*,r.current_root,r.original_root,
+                      s.identity_key AS source_identity_key
                FROM media_catalog m
                JOIN library_root r ON r.root_id=m.root_id
+               LEFT JOIN data_source s ON s.source_id=m.source_id
                WHERE m.media_id=?""",
             (str(media_id),),
         ).fetchone()

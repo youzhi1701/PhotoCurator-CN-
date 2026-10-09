@@ -2152,16 +2152,19 @@ TASK_MANAGER.register('restore_trash', _background_restore_trash)
 TASK_MANAGER.register('purge_trash', _background_purge_trash)
 
 
-def _thumb_cache_path(image_path):
-    # Catalog-backed previews use a stable media id, so a drive-letter change
-    # (F: -> G:) does not invalidate the offline preview.
-    try:
-        media_id = catalog_media_id_for_path(INDEX_DB, image_path)
-        if media_id:
-            return OFFLINE_PREVIEW_DIR / f"{media_id}.jpg"
-    except Exception:
-        pass
+def _thumb_cache_path(image_path, *, trusted_media_id=None):
+    """Only explicitly verified catalog jobs may write durable media-id previews.
 
+    A normal /api/thumb call resolves an arbitrary currently selected path,
+    possibly on a *different* drive reusing the old letter. Deriving media_id
+    from that path can poison the persistent offline preview for the old disk.
+    Normal UI thumbnails therefore go only to a rebuildable fingerprint cache.
+    """
+    if trusted_media_id is not None:
+        media_id = str(trusted_media_id).lower()
+        if not re.fullmatch(r'[0-9a-f]{32,64}', media_id):
+            raise ValueError("invalid durable catalog media identity")
+        return OFFLINE_PREVIEW_DIR / f"{media_id}.jpg"
     p = Path(image_path)
     try:
         st = p.stat()
@@ -2171,38 +2174,58 @@ def _thumb_cache_path(image_path):
         mtime_ns = 0
         size_bytes = 0
     key = hashlib.md5(
-        f"{image_path}:{mtime_ns}:{size_bytes}:v3".encode()
+        f"{image_path}:{mtime_ns}:{size_bytes}:v4".encode()
     ).hexdigest()
     return THUMB_DIR / f"{key}.jpg"
 
 
-def make_thumb_file(image_path, size=300, *, expected_signature=None):
-    out = _thumb_cache_path(image_path)
+def make_thumb_file(image_path, size=300, *, expected_signature=None,
+                    trusted_media_id=None, verified_source=None):
+    """Decode into an atomic cache entry, optionally a trusted offline preview."""
+    # Only a source identity/metadata-validated background job can request
+    # durable media-ID storage. An untrusted path can never create or replace
+    # another disk's offline preview.
+    if trusted_media_id is not None and (
+            expected_signature is None or verified_source is None):
+        logger.warning("refused durable preview without photo and volume identity")
+        return None
+
+    def source_matches():
+        if verified_source is not None:
+            source_root, expected_identity = verified_source
+            if not _offline_preview_source_matches({
+                'root': {'current_root': source_root},
+                'source': {'identity_key': expected_identity},
+            }):
+                return False
+        if expected_signature is None:
+            return True
+        try:
+            return _file_action_signature(image_path) == list(expected_signature)
+        except (OSError, ValueError):
+            return False
+
+    if not source_matches():
+        return None
+    out = _thumb_cache_path(image_path, trusted_media_id=trusted_media_id)
     if out.exists():
         return out
     with _THUMB_BUILD_SEMAPHORE:
-        # Another request may have produced the same thumbnail while this one
-        # waited for a decode slot.
+        if not source_matches():
+            return None
         if out.exists():
             return out
         tmp = out.with_name(
             out.name + f".{os.getpid()}.{threading.get_ident()}.tmp"
         )
         try:
-            with open_image_pil(image_path) as src:   # RAW-aware
+            with open_image_pil(image_path) as src:
                 src.draft('RGB', (size * 2, size * 2))
-                # Honor EXIF orientation and fully detach from the source file
-                # before saving, so Windows never keeps the original photo locked.
                 img = ImageOps.exif_transpose(src).convert('RGB')
                 img.thumbnail((size, size), Image.Resampling.BILINEAR)
                 img.save(tmp, format='JPEG', quality=80)
-            # The preview may be created long after the source was scanned.
-            # A drive swap or same-path photo replacement must not poison the
-            # durable offline preview keyed by the *old* catalog media_id.
-            if expected_signature is not None and (
-                _file_action_signature(image_path) != list(expected_signature)
-            ):
-                raise RuntimeError("生成离线预览期间照片发生变化，拒绝覆盖持久预览")
+            if not source_matches():
+                raise RuntimeError("生成预览期间原照片发生变化，拒绝写入缓存")
             os.replace(tmp, out)
             return out
         except Exception as e:
@@ -2289,7 +2312,13 @@ def _background_build_offline_previews(payload):
         if signature is None:
             skipped += 1
             continue
-        made = make_thumb_file(candidate, size=360, expected_signature=signature)
+        made = make_thumb_file(
+            candidate, size=360, expected_signature=signature,
+            trusted_media_id=media_id,
+            verified_source=(
+                root, str(snap.get('source', {}).get('identity_key') or '')
+            ),
+        )
         if made and Path(made).is_file():
             built += 1
         else:
@@ -7915,20 +7944,27 @@ def api_catalog_thumb():
     if cached.is_file():
         return send_file(str(cached), mimetype='image/jpeg')
 
-    candidates = []
-    rel = str(record.get('relative_path') or '')
-    current_root = str(record.get('current_root') or '')
-    if current_root and rel:
-        candidates.append(os.path.join(current_root, rel))
-    candidates.extend([
-        str(record.get('current_path') or ''),
-        str(record.get('original_path') or ''),
-    ])
-    for candidate in candidates:
-        if candidate and Path(candidate).is_file():
-            made = make_thumb_file(candidate)
-            if made and Path(made).is_file():
-                return send_file(str(made), mimetype='image/jpeg')
+    # Cached offline previews are always viewable without the source disk.
+    # On a cache miss, never read a file merely because the old drive letter
+    # now exists: it could belong to a completely different USB disk.
+    if (str(record.get('state') or '') != 'present'
+            or str(record.get('lifecycle') or 'normal') != 'normal'):
+        abort(404)
+    root = str(record.get('current_root') or '')
+    identity = str(record.get('source_identity_key') or '')
+    source = {'root': {'current_root': root},
+              'source': {'identity_key': identity}}
+    if not _offline_preview_source_matches(source):
+        abort(404)
+    candidate = str(record.get('current_path') or '')
+    signature = _offline_preview_candidate_signature(root, record)
+    if signature is None:
+        abort(404)
+    # A regular UI request is intentionally NOT allowed to publish a durable
+    # media-ID thumbnail. Only the verified background builder may do so.
+    made = make_thumb_file(candidate, expected_signature=signature)
+    if made and Path(made).is_file() and _offline_preview_source_matches(source):
+        return send_file(str(made), mimetype='image/jpeg')
     abort(404)
 
 
