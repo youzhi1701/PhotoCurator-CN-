@@ -5720,7 +5720,8 @@ let cullFilter='all', cullType='all', rankFilter='all', lastFmtSig='';
 function setupFilterBar(){
   const bar=document.getElementById('filterBar');
   if(currentStep==='cull'){
-    if(!photos.length && !coreRunning && !isRunning && !cullVisibleTotal){
+    if(!photos.length && !coreRunning && !isRunning && !cullVisibleTotal &&
+       !(coreSnapshots.cull&&coreSnapshots.cull.stats&&coreSnapshots.cull.stats.images)){
       bar.style.display='none';
       bar.innerHTML='';
       return;
@@ -5799,9 +5800,11 @@ function normalizedFolder(p){
 }
 function sameFolder(a,b){return normalizedFolder(a)===normalizedFolder(b);}
 function resetWorkspaceForFolder(){
-  cullChunkToken++;
+  cullChunkToken++;dedupRequestSerial++;
   cullLiveStore.clear();dedupLiveStore.clear();
-  cullReady=false;
+  cullWindowStart=0;cullNextOffset=0;cullVisibleTotal=0;cullGlobalStats=null;cullPageBusy=false;
+  dedupWindowStart=0;dedupNextOffset=0;dedupVisibleTotal=0;dedupPageBusy=false;
+  coreSnapshots={cull:null,dedup:null};cullReady=false;
   photos=[];lbList=[];folderStatus={};
   lastRankSig='';lastCullSig='';lastDedupSig='';lastCullMoveSig='';lastGallerySig='';
   gItems=[];gPage=0;
@@ -6490,8 +6493,14 @@ function snapshotPipelineConfig(){
 async function startStep(step,config=null){
   const cfg=config||snapshotPipelineConfig();
   runningStep=step;
-  if(step==='cull'){cullReady=false;cullLiveStore.clear();}
-  if(step==='dedup')dedupLiveStore.clear();
+  if(step==='cull'){
+    cullReady=false;cullLiveStore.clear();cullWindowStart=0;cullNextOffset=0;
+    cullGlobalStats=null;cullVisibleTotal=0;cullChunkToken++;
+  }
+  if(step==='dedup'){
+    dedupLiveStore.clear();dedupWindowStart=0;dedupNextOffset=0;
+    dedupVisibleTotal=0;dedupRequestSerial++;
+  }
   pollFailures=0;largeResultWarned=false;
   document.getElementById('progressWrap').style.display='block';
   if(step===currentStep){
@@ -6786,43 +6795,66 @@ function dedupRowsForPayload(d){
   rows.forEach(g=>{if(g&&g.group_id!=null)dedupLiveStore.set(String(g.group_id),g);});
   return Array.from(dedupLiveStore.values());
 }
-// Bound initial DOM/image work; retain the existing explicit "load more".
+// Windowed similarity review: bounded DOM, incremental scroll loading.
 const DEDUP_UI_PAGE_SIZE=64;
 let dedupRequestSerial=0;
-async function loadDedupPage(reset=false){
-  if(currentStep!=='dedup')return;
-  const requestSerial=++dedupRequestSerial;
-  const requestFolder=folder,requestFilter=dedupStatusFilter;
-  const offset=reset?0:dedupLiveStore.size;
+async function loadDedupPage(reset=false,prepend=false){
+  if(currentStep!=='dedup'||(dedupPageBusy&&!reset))return;
+  const serial=++dedupRequestSerial,requestFolder=folder,requestFilter=dedupStatusFilter;
+  const offset=reset?0:(prepend?Math.max(0,dedupWindowStart-DEDUP_UI_PAGE_SIZE):dedupNextOffset);
+  const limit=prepend?Math.max(0,dedupWindowStart-offset):DEDUP_UI_PAGE_SIZE;
+  if(!limit)return;
+  dedupPageBusy=true;
   try{
-    const d=await fetch('/api/results/dedup?offset='+offset+'&limit='+DEDUP_UI_PAGE_SIZE+'&status='+encodeURIComponent(requestFilter))
+    const d=await fetch('/api/results/dedup?offset='+offset+'&limit='+limit+'&status='+encodeURIComponent(requestFilter))
       .then(async r=>{const x=await r.json();if(!r.ok)throw new Error(x.error||('HTTP '+r.status));return x;});
-    // Older responses must never replace the groups of another step/source/filter.
-    if(requestSerial!==dedupRequestSerial||currentStep!=='dedup'||
+    if(serial!==dedupRequestSerial||currentStep!=='dedup'||
        requestFilter!==dedupStatusFilter||!sameFolder(requestFolder,folder))return;
-    if(reset)dedupLiveStore.clear();
-    (d.photos||[]).forEach(g=>dedupLiveStore.set(String(g.group_id),g));
+    const anchor=reset?null:captureGalleryAnchor('.dedup-group','data-group');
+    const incoming=(d.photos||[]).filter(g=>g&&g.group_id!=null);
+    if(reset){dedupLiveStore.clear();dedupWindowStart=0;dedupNextOffset=0;}
+    if(prepend){
+      const combined=[...incoming,...dedupLiveStore.values()];
+      dedupLiveStore.clear();
+      combined.slice(0,DEDUP_WINDOW_CAP).forEach(g=>dedupLiveStore.set(String(g.group_id),g));
+      dedupWindowStart=offset;
+      dedupNextOffset=dedupWindowStart+dedupLiveStore.size;
+    }else{
+      incoming.forEach(g=>dedupLiveStore.set(String(g.group_id),g));
+      dedupNextOffset=Number(d.next_offset||offset+incoming.length);
+      while(dedupLiveStore.size>DEDUP_WINDOW_CAP){
+        dedupLiveStore.delete(dedupLiveStore.keys().next().value);
+        dedupWindowStart++;
+      }
+    }
     dedupVisibleTotal=Number(d.total||0);dedupStatusCounts=d.counts||dedupStatusCounts;
     photos=Array.from(dedupLiveStore.values());
-    renderDedupGroups(photos);
-    setupFilterBar();
-    updateDedupLoadMore();
-    // Similar groups load asynchronously; restore scroll only after cards exist.
-    if(reset)requestAnimationFrame(()=>{
-      if(requestSerial!==dedupRequestSerial||currentStep!=='dedup'||
+    lastDedupSig='';renderDedupGroups(photos);
+    setupFilterBar();updateDedupLoadMore();
+    if(!reset)requestAnimationFrame(()=>restoreGalleryAnchor(anchor));
+    else requestAnimationFrame(()=>{
+      if(serial!==dedupRequestSerial||currentStep!=='dedup'||
          !sameFolder(requestFolder,folder))return;
-      const mainScroll=document.querySelector('main.main');
-      const previous=workspaceScrollByStep.get(workspaceViewKey('dedup',requestFolder));
-      if(mainScroll&&Number.isFinite(previous))mainScroll.scrollTop=previous;
+      const scroll=document.querySelector('main.main');
+      const position=workspaceScrollByStep.get(workspaceViewKey('dedup',requestFolder));
+      if(scroll&&Number.isFinite(position))scroll.scrollTop=position;
     });
-  }catch(err){toast('载入相似组失败：'+(err.message||'未知错误'),'bad');}
+  }catch(err){
+    if(serial===dedupRequestSerial)toast('载入相似组失败：'+(err.message||'未知错误'),'bad');
+  }finally{if(serial===dedupRequestSerial)dedupPageBusy=false;}
 }
 function updateDedupLoadMore(){
-  const btn=document.getElementById('dedupLoadMore');
-  if(!btn)return;
-  const left=Math.max(0,dedupVisibleTotal-dedupLiveStore.size);
-  btn.style.display=left?'inline-flex':'none';
-  btn.textContent=left?'加载更多（剩余 '+left+'）':'';
+  const next=document.getElementById('dedupLoadMore'),prev=document.getElementById('dedupLoadEarlier');
+  const shown=dedupLiveStore.size,first=shown?dedupWindowStart+1:0,last=dedupWindowStart+shown;
+  if(next){
+    const left=Math.max(0,dedupVisibleTotal-dedupNextOffset);
+    next.style.display=left?'inline-flex':'none';
+    next.textContent=left?'继续加载 · '+first+'–'+last+' / '+dedupVisibleTotal:'';
+  }
+  if(prev){
+    prev.style.display=dedupWindowStart>0?'inline-flex':'none';
+    prev.textContent=dedupWindowStart>0?'加载上一批 · '+first+'–'+last+' / '+dedupVisibleTotal:'';
+  }
 }
 async function loadRemainingDedup(total,offset){return loadDedupPage(false);}
 
@@ -6831,6 +6863,23 @@ function maybeLoadAllDedup(d){
   // loaded on demand so background completion never freezes the review UI.
   updateDedupLoadMore();
 }
+
+// Background result transport stays bounded while the workbench remains
+// continuously scrollable. The explicit controls also work without a wheel.
+let reviewScrollRaf=0;
+document.querySelector('main.main').addEventListener('scroll',()=>{
+  if(reviewScrollRaf)return;
+  reviewScrollRaf=requestAnimationFrame(()=>{
+    reviewScrollRaf=0;
+    if(document.getElementById('photoView').hidden)return;
+    const main=document.querySelector('main.main');
+    if(main.scrollHeight-main.scrollTop-main.clientHeight>720)return;
+    if(currentStep==='cull'&&!cullPageBusy&&cullNextOffset<cullVisibleTotal)
+      loadCullPage(false);
+    if(currentStep==='dedup'&&!dedupPageBusy&&dedupNextOffset<dedupVisibleTotal)
+      loadDedupPage(false);
+  });
+},{passive:true});
 
 function poll(step){
   fetch('/api/progress/'+step)
