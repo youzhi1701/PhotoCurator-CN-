@@ -44,6 +44,7 @@ jobs:
             test_quality_annotations.py \
             quality_annotations_input_test.py \
             test_offline_preview_guard.py \
+            test_storage_cleanup_containment.py \
             scene_labels.py \
             test_scene_labels.py \
             test_raw_pair_protection.py \
@@ -944,6 +945,7 @@ jobs:
           python -m unittest -v test_exact_duplicates
           python -m unittest -v test_quality_annotations
           python -m unittest -v test_offline_preview_guard
+          python -m unittest -v test_storage_cleanup_containment
           python -m unittest -v test_scene_labels
           python -m unittest -v test_raw_pair_protection
           python -m unittest -v test_rank_topn_selection
