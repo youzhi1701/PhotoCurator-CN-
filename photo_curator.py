@@ -9474,6 +9474,96 @@ def api_move_blurry():
                     'selected': selected_left, 'total': eligible_total}), 202
 
 
+def _new_export_directory(folder, label):
+    """Atomically reserve a fresh output directory, never reuse a symlink.
+
+    Previous exports are user files, even if a directory appears empty at the
+    time of checking. A check-then-mkdir(exist_ok=True) can follow a planted
+    junction or race another export into overwriting existing user content.
+    """
+    root = Path(folder).resolve()
+    if not _verified_trash_library_volume(root):
+        raise RuntimeError("原始照片磁盘离线或身份不符，拒绝向该设备写入导出文件")
+    stamp = time.strftime('%Y%m%d_%H%M%S')
+    for number in range(1000):
+        suffix = '' if number == 0 else f'_{stamp}_{number}'
+        destination = root / f'{label}{suffix}'
+        try:
+            destination.mkdir()  # never follow/reuse existing directories
+            if not _verified_trash_library_volume(root):
+                raise RuntimeError("导出期间原始照片磁盘身份发生变化")
+            return destination
+        except FileExistsError:
+            continue
+    raise FileExistsError("无法预留唯一导出目录，请检查已有文件夹")
+
+
+def _verified_export_source(path, folder):
+    """Only copy an actual selected-library photo, not a link or stale alias."""
+    raw = Path(path)
+    if not raw.is_absolute() or raw.is_symlink():
+        raise ValueError("导出照片路径不可用或是符号链接")
+    src = raw.resolve()
+    root = Path(folder).resolve()
+    if (not src.is_relative_to(root) or not src.is_file()
+            or src.suffix.lower() not in IMG_EXTS
+            or src.is_relative_to(root / SOFTWARE_TRASH_DIR)):
+        raise ValueError("优选照片不属于当前照片库")
+    return src
+
+
+def _copy_export_photo_no_replace(src, dst):
+    """Stream to a unique temp file and publish without ever overwriting."""
+    src, dst = Path(src), Path(dst)
+    before = _file_action_signature(src)
+    temp = None
+    try:
+        with open(src, 'rb') as reader:
+            if [int(st) for st in (
+                    os.fstat(reader.fileno()).st_dev,
+                    os.fstat(reader.fileno()).st_ino,
+                    os.fstat(reader.fileno()).st_size,
+                    os.fstat(reader.fileno()).st_mtime_ns)] != before:
+                raise RuntimeError("优选照片在导出前被替换，已拒绝复制")
+            with tempfile.NamedTemporaryFile(
+                    dir=dst.parent, prefix=dst.name + '.',
+                    suffix='.photocurator-export', delete=False) as writer:
+                temp = Path(writer.name)
+                shutil.copyfileobj(reader, writer, length=1024 * 1024)
+                writer.flush()
+                os.fsync(writer.fileno())
+            after_handle = os.fstat(reader.fileno())
+            if ([int(after_handle.st_dev), int(after_handle.st_ino),
+                 int(after_handle.st_size), int(after_handle.st_mtime_ns)] != before
+                    or _file_action_signature(src) != before):
+                raise RuntimeError("导出期间原片内容/设备发生变化，未发布不可信副本")
+        shutil.copystat(src, temp)
+        _rename_no_replace(temp, dst)
+        temp = None
+    finally:
+        if temp is not None:
+            temp.unlink(missing_ok=True)
+
+
+def _save_wallpaper_no_replace(image, dst):
+    """A wallpaper is published atomically; a racing file is not overwritten."""
+    dst = Path(dst)
+    temp = None
+    try:
+        with tempfile.NamedTemporaryFile(
+                dir=dst.parent, prefix=dst.name + '.',
+                suffix='.jpg.tmp', delete=False) as writer:
+            temp = Path(writer.name)
+            image.save(writer, format='JPEG', quality=92)
+            writer.flush()
+            os.fsync(writer.fileno())
+        _rename_no_replace(temp, dst)
+        temp = None
+    finally:
+        if temp is not None:
+            temp.unlink(missing_ok=True)
+
+
 @app.route('/api/export', methods=['POST'])
 def api_export():
     blocked = _reject_mutation_while_running()
@@ -9493,26 +9583,20 @@ def api_export():
     if not top:
         return jsonify({'error': '当前没有可导出的优选照片'}), 400
 
-    base = Path(folder) / f"TOP_{topn}"
-    dest = base
-    if dest.exists() and any(dest.iterdir()):
-        stamp = time.strftime('%Y%m%d_%H%M%S')
-        dest = Path(folder) / f"TOP_{topn}_{stamp}"
-        n = 1
-        while dest.exists():
-            n += 1
-            dest = Path(folder) / f"TOP_{topn}_{stamp}_{n}"
-    dest.mkdir(parents=True, exist_ok=True)
+    try:
+        dest = _new_export_directory(folder, f"TOP_{topn}")
+    except (OSError, ValueError, RuntimeError) as exc:
+        return jsonify({'error': str(exc)}), 409
 
     copied = failed = 0
     for item in top:
         try:
-            src = Path(item['path'])
-            if src.is_file():
-                shutil.copy2(str(src), str(dest / f"{item['rank']:03d}_{src.name}"))
-                copied += 1
-            else:
-                failed += 1
+            if not _verified_trash_library_volume(folder):
+                raise RuntimeError("导出途中源硬盘已断开或被另一磁盘替换")
+            src = _verified_export_source(item['path'], folder)
+            _copy_export_photo_no_replace(
+                src, dest / f"{item['rank']:03d}_{src.name}")
+            copied += 1
         except Exception as e:
             failed += 1
             logger.warning(f"export fail {item['path']}: {e}")
@@ -9587,31 +9671,29 @@ def api_export_phonebg():
                         'dest': str(Path(folder) / 'PhoneBG'),
                         'note': '还没有标记为手机壁纸的照片。'})
 
-    base = Path(folder) / 'PhoneBG'
-    dest = base
-    if dest.exists() and any(dest.iterdir()):
-        stamp = time.strftime('%Y%m%d_%H%M%S')
-        dest = Path(folder) / f'PhoneBG_{stamp}'
-        n = 1
-        while dest.exists():
-            n += 1
-            dest = Path(folder) / f'PhoneBG_{stamp}_{n}'
-
-    orig_dir = dest / '原始照片'
-    crop_dir = dest / '壁纸_19.5x9'
-    orig_dir.mkdir(parents=True, exist_ok=True)
-    crop_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        dest = _new_export_directory(folder, 'PhoneBG')
+        orig_dir = dest / '原始照片'
+        crop_dir = dest / '壁纸_19.5x9'
+        orig_dir.mkdir()
+        crop_dir.mkdir()
+    except (OSError, ValueError, RuntimeError) as exc:
+        return jsonify({'error': str(exc)}), 409
 
     copied = cropped = failed = 0
     for item in flagged:
-        src = Path(item['path'])
-        if not src.is_file():
+        try:
+            if not _verified_trash_library_volume(folder):
+                raise RuntimeError("导出途中原始硬盘已断开或设备身份不符")
+            src = _verified_export_source(item['path'], folder)
+            stem = f"{item['rank']:03d}_{src.stem}"
+        except Exception as exc:
             failed += 1
+            logger.warning("phonebg invalid source %s: %s", item.get('path'), exc)
             continue
 
-        stem = f"{item['rank']:03d}_{src.stem}"
         try:
-            shutil.copy2(str(src), str(orig_dir / f"{stem}{src.suffix}"))
+            _copy_export_photo_no_replace(src, orig_dir / f"{stem}{src.suffix}")
             copied += 1
         except Exception as e:
             failed += 1
@@ -9619,9 +9701,8 @@ def api_export_phonebg():
 
         try:
             with open_image_pil(src) as im:
-                crop_to_phone(im).save(
-                    str(crop_dir / f"{stem}.jpg"), format='JPEG', quality=92
-                )
+                wallpaper = crop_to_phone(im)
+                _save_wallpaper_no_replace(wallpaper, crop_dir / f"{stem}.jpg")
             cropped += 1
         except Exception as e:
             failed += 1
