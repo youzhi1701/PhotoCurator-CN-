@@ -1170,6 +1170,20 @@ def _safe_storage_target(data_root, *parts):
     return target
 
 
+
+def _direct_storage_entry(folder, item):
+    """Accept only real files/dirs below this cache, never aliases to photos."""
+    folder, item = Path(folder), Path(item)
+    if item.is_symlink() or (
+            callable(getattr(item, "is_junction", None)) and item.is_junction()):
+        return False
+    try:
+        expected = folder.resolve().joinpath(*item.relative_to(folder).parts)
+        return os.path.normcase(os.path.normpath(str(expected))) == (
+            os.path.normcase(os.path.normpath(str(item.resolve()))))
+    except (OSError, ValueError):
+        return False
+
 def clear_offline_previews(data_root, db_path, root_id=None):
     """Explicitly clear durable offline previews; never called by cache cleanup."""
     preview_dir = _safe_storage_target(data_root, "offline_previews")
@@ -1298,7 +1312,7 @@ def clear_rebuildable_storage(data_root, category):
         freed = 0
         if log_dir.is_dir():
             for p in log_dir.iterdir():
-                if not p.is_file() or p.name == "photocurator.log":
+                if not _direct_storage_entry(log_dir, p) or not p.is_file() or p.name == "photocurator.log":
                     continue
                 try:
                     freed += int(p.stat().st_size)
@@ -1314,7 +1328,7 @@ def clear_rebuildable_storage(data_root, category):
         freed = 0
         if target.is_dir():
             for p in target.iterdir():
-                if not p.is_file():
+                if not _direct_storage_entry(target, p) or not p.is_file():
                     continue
                 try:
                     freed += int(p.stat().st_size)
@@ -1335,7 +1349,7 @@ def clear_rebuildable_storage(data_root, category):
     freed = 0
     if target.is_dir():
         for p in list(target.rglob("*")):
-            if not p.is_file():
+            if not _direct_storage_entry(target, p) or not p.is_file():
                 continue
             try:
                 freed += int(p.stat().st_size)
@@ -1344,7 +1358,8 @@ def clear_rebuildable_storage(data_root, category):
             except OSError:
                 continue
         for p in sorted(
-            (x for x in target.rglob("*") if x.is_dir()),
+            (x for x in target.rglob("*") if x.is_dir()
+             and _direct_storage_entry(target, x)),
             key=lambda x: len(x.parts),
             reverse=True,
         ):
