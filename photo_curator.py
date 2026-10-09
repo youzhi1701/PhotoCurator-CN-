@@ -761,7 +761,7 @@ def _prune_index_db():
 threading.Thread(target=_prune_index_db, daemon=True,
                  name='photocurator-index-prune').start()
 
-APP_VERSION = "1.7.14"
+APP_VERSION = "1.7.15"
 IS_CODESPACES = os.environ.get('CODESPACES', '').strip().lower() == 'true'
 CODESPACE_NAME = os.environ.get('CODESPACE_NAME', '').strip()
 _CODESPACES_DOMAIN_RAW = os.environ.get(
@@ -1564,6 +1564,38 @@ def _move_reviewed_files(paths, kind, root, mode='source', custom_output=''):
     return result
 
 
+_TRASH_MANIFEST_LOCK = threading.Lock()
+
+
+def _scoped_software_trash_record(original, trash_path, root):
+    """Only trust metadata for photos inside this library's own recycle bin.
+
+    This manifest is stored on user-writable removable media: after reinstall
+    it is *input*, not proof of an authorized deletion. Reject path traversal,
+    symlinks, another disk, and paths outside the software-owned trash folder.
+    """
+    try:
+        library = Path(root).resolve()
+        trash_dir = library / SOFTWARE_TRASH_DIR
+        original_raw, trash_raw = Path(original), Path(trash_path)
+        if (not original_raw.is_absolute() or not trash_raw.is_absolute()
+                or trash_dir.is_symlink() or original_raw.is_symlink()
+                or trash_raw.is_symlink()):
+            return False
+        photo = original_raw.resolve()
+        trashed = trash_raw.resolve()
+        if (photo == library or photo == trashed or trashed == trash_dir
+                or not photo.is_relative_to(library)
+                or photo.is_relative_to(trash_dir)
+                or not trashed.is_relative_to(trash_dir)
+                or photo.suffix.lower() not in IMG_EXTS
+                or trashed.suffix.lower() not in IMG_EXTS):
+            return False
+        return True
+    except (OSError, RuntimeError, ValueError):
+        return False
+
+
 def _trash_manifest_file(root):
     if not root:
         return None
@@ -1571,58 +1603,90 @@ def _trash_manifest_file(root):
 
 
 def _write_trash_manifest(root):
-    """Keep restore metadata beside trash files so reinstall can recover it."""
+    """Publish an fsync'd, unique temporary manifest; preserve offline entries."""
     target = _trash_manifest_file(root)
     if target is None:
         return
-    try:
-        root_real = os.path.realpath(str(root))
-        with _DB_LOCK, connect_db(INDEX_DB, timeout=15) as db:
-            rows = db.execute(
-                "SELECT original_path,trash_path,source_step,deleted_at FROM software_trash"
-            ).fetchall()
-        data = []
-        for original, trash_path, source_step, deleted_at in rows:
-            try:
-                if os.path.commonpath([os.path.realpath(str(original)), root_real]) != root_real:
-                    continue
-            except Exception:
-                continue
-            # An absent trash file can mean an offline/remounted drive. Keep
-            # the manifest record so recovery metadata survives reinstall.
-            data.append({'original_path': str(original), 'trash_path': str(trash_path),
-                         'source_step': str(source_step or ''), 'deleted_at': float(deleted_at)})
-        target.parent.mkdir(parents=True, exist_ok=True)
-        tmp = target.with_suffix(target.suffix + '.tmp')
-        tmp.write_text(json.dumps({'version': 1, 'items': data}, ensure_ascii=False, indent=2), encoding='utf-8')
-        os.replace(str(tmp), str(target))
-    except Exception:
-        logger.debug("trash manifest save failed", exc_info=True)
+    temp_path = None
+    with _TRASH_MANIFEST_LOCK:
+        try:
+            if target.parent.is_symlink() or target.is_symlink():
+                raise OSError("软件回收站目录/清单不能是符号链接")
+            with _DB_LOCK, connect_db(INDEX_DB, timeout=15) as db:
+                rows = db.execute(
+                    "SELECT original_path,trash_path,source_step,deleted_at FROM software_trash"
+                ).fetchall()
+            data = [
+                {'original_path': str(original), 'trash_path': str(trash_path),
+                 'source_step': str(source_step or ''), 'deleted_at': float(deleted_at)}
+                for original, trash_path, source_step, deleted_at in rows
+                if _scoped_software_trash_record(original, trash_path, root)
+            ]
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(
+                    mode='w', encoding='utf-8', dir=target.parent,
+                    prefix=TRASH_MANIFEST_NAME + '.', suffix='.tmp',
+                    delete=False) as stream:
+                temp_path = Path(stream.name)
+                json.dump({'version': 1, 'items': data}, stream,
+                          ensure_ascii=False, indent=2)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temp_path, target)
+            temp_path = None
+        except (OSError, ValueError, TypeError):
+            logger.debug("trash manifest save failed", exc_info=True)
+        finally:
+            if temp_path is not None:
+                try:
+                    temp_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
 
 
 def _import_trash_manifest(root):
     target = _trash_manifest_file(root)
-    if target is None or not target.is_file():
+    if target is None or target.is_symlink() or target.parent.is_symlink():
         return
     try:
+        if not target.is_file() or target.stat().st_size > 32 * 1024 * 1024:
+            return
         doc = json.loads(target.read_text(encoding='utf-8'))
+        if not isinstance(doc, dict) or doc.get('version') != 1:
+            return
+        entries = doc.get('items')
+        if not isinstance(entries, list) or len(entries) > 100_000:
+            return
         rows = []
-        for item in doc.get('items') or []:
+        for item in entries:
+            if not isinstance(item, dict):
+                continue
             original = str(item.get('original_path') or '')
             trash_path = str(item.get('trash_path') or '')
-            if not original or not Path(trash_path).is_file():
+            if (not _scoped_software_trash_record(original, trash_path, root)
+                    or not Path(trash_path).is_file()):
                 continue
-            rows.append((original, trash_path, str(item.get('source_step') or ''),
-                         float(item.get('deleted_at') or time.time())))
+            try:
+                deleted_at = float(item.get('deleted_at') or time.time())
+                if not (0 < deleted_at < 10**12):
+                    continue
+            except (TypeError, ValueError, OverflowError):
+                continue
+            rows.append((
+                original, trash_path, str(item.get('source_step') or '')[:128],
+                deleted_at,
+            ))
         if rows:
             with _DB_LOCK, connect_db(INDEX_DB, timeout=15) as db:
                 db.executemany(
                     "INSERT OR IGNORE INTO software_trash "
-                    "(original_path,trash_path,source_step,deleted_at) VALUES(?,?,?,?)", rows
+                    "(original_path,trash_path,source_step,deleted_at) VALUES(?,?,?,?)",
+                    rows,
                 )
                 db.commit()
-    except Exception:
+    except (OSError, ValueError, TypeError):
         logger.debug("trash manifest import failed", exc_info=True)
+
 
 def _trash_destination(src, root):
     """Choose a reversible PhotoCurator-owned trash path on the source drive."""
@@ -1630,8 +1694,10 @@ def _trash_destination(src, root):
     root = Path(root).resolve()
     try:
         rel_parent = src.parent.relative_to(root)
-    except Exception:
-        rel_parent = Path()
+    except ValueError as exc:
+        raise ValueError("原照片不属于当前图库，禁止移动到软件回收站") from exc
+    if src.is_relative_to(root / SOFTWARE_TRASH_DIR):
+        raise ValueError("回收站内的文件不能再次移入回收站")
     base = root / SOFTWARE_TRASH_DIR / rel_parent
     base.mkdir(parents=True, exist_ok=True)
     return _unique_destination(base / src.name)
@@ -1668,6 +1734,9 @@ def _move_to_software_trash(src, root, source_step, planned_trash_path=None, sid
     src = Path(src)
     original = str(src.resolve())
     root = Path(root).resolve()
+    if (not Path(original).is_relative_to(root)
+            or Path(original).is_relative_to(root / SOFTWARE_TRASH_DIR)):
+        raise ValueError("待操作的原片不属于当前照片库")
     if planned_trash_path:
         dst = Path(planned_trash_path).resolve()
         trash_root = (root / SOFTWARE_TRASH_DIR).resolve()
@@ -1719,6 +1788,8 @@ def _trash_rows(root=None):
             "FROM software_trash ORDER BY deleted_at DESC"
         ).fetchall():
             tid, original, trash_path, source_step, deleted_at = row
+            if root and not _scoped_software_trash_record(original, trash_path, root):
+                continue
             if root:
                 try:
                     if os.path.commonpath([
