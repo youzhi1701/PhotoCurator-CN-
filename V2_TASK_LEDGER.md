@@ -1,6 +1,6 @@
 # PhotoCurator-CN V2.0 · 断点恢复任务账本
 
-此文件与 [PROJECT_PROGRESS.md](PROJECT_PROGRESS.md) / [RELEASE_ACCEPTANCE.md](RELEASE_ACCEPTANCE.md) 配合使用。恢复时必须先核对 GitHub main、PR、Actions、工作流产物的真实状态，不能仅凭本文件判定完成。
+此文件与 [历史工程检查点](docs/archive/PROJECT_PROGRESS.md) / [RELEASE_ACCEPTANCE.md](RELEASE_ACCEPTANCE.md) 配合使用。恢复时必须先核对 GitHub main、PR、Actions、工作流产物的真实状态，不能仅凭本文件判定完成。
 
 ## 本轮工作（v2.0.0 Candidate）
 

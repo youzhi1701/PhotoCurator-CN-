@@ -12,7 +12,7 @@ V2 测试包：在 Candidate 工作流页面的 **Artifacts** 下载 `PhotoCurat
 
 V2 当前支持全图库分页筛选、照片窗口有界显示、相似组回溯、离线图库历史、设备身份校验以及可恢复的软件回收站。**尚未通过真实 4TB 硬盘、热插拔、跨相机 RAW/HEIF、断电恢复、Windows 实机完整验收及签名发布门禁。**
 
-历史 Candidate 的构建记录、修复细节和验收证据，请查看 [中文更新日志](CHANGELOG_CN.md)、[项目进度](PROJECT_PROGRESS.md) 和 [V2 任务台账](V2_TASK_LEDGER.md)，不再在首页堆叠过期测试包和重复说明。
+历史 Candidate 的构建记录、修复细节和验收证据，请查看 [中文更新日志](CHANGELOG_CN.md)、[历史工程检查点](docs/archive/PROJECT_PROGRESS.md) 和 [V2 任务台账](V2_TASK_LEDGER.md)，不再在首页堆叠过期测试包和重复说明。
 <!-- LATEST_RELEASE_END -->
 
 > **当前源码版本：v2.0.0 Candidate。** 正式可下载版本仍为 v1.5.0 Stable。Windows 候选版安装包与当前后续开发提交可能不同步；正式发布以真实 Release 及验收结果为准。
@@ -331,7 +331,7 @@ PhotoCurator-CN-/
 ## 文档归档与目录约定
 
 - 主入口：`README.md`，仅介绍当前版本、下载和核心使用方式，不重复堆叠历次候选构建说明。
-- 当前进度：`V2_TASK_LEDGER.md`、`PROJECT_PROGRESS.md`、`RELEASE_ACCEPTANCE.md`。
+- 当前进度：`V2_TASK_LEDGER.md`、`docs/archive/PROJECT_PROGRESS.md`、`RELEASE_ACCEPTANCE.md`。
 - 完整更新记录：`CHANGELOG_CN.md`。
 - 历史资料：[`docs/archive/CHANGELOG-v1.5.md`](docs/archive/CHANGELOG-v1.5.md) 与 [`docs/upstream/README.md`](docs/upstream/README.md)。归档不代表产品功能删除。
 - `photo_curator.py`、`catalog.py`、`background_tasks.py` 等现有运行入口先保持原路径；重构前应证明调用链和 Windows 打包链路兼容。
