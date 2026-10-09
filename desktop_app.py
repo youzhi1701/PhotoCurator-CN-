@@ -618,6 +618,13 @@ def self_test():
         raise RuntimeError("packaged HEIC support is unavailable")
 
     if IS_FROZEN:
+        # The rank screen offers actual local human-face evidence. OpenCV's
+        # XML cascade is a package data asset, not a Python import: fail the
+        # candidate self-test instead of silently downgrading every photo to
+        # "未识别" when PyInstaller forgot to bundle it.
+        import scene_labels
+        if scene_labels._face_detector() is None:
+            raise RuntimeError("packaged OpenCV face-cascade data unavailable")
         try:
             if DATA_ROOT.resolve() == legacy_frozen_data_root(INSTALL_ROOT).resolve():
                 raise RuntimeError("packaged writable data root is still coupled to the install directory")
