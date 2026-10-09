@@ -103,6 +103,20 @@ class ExactDuplicateIndexTests(unittest.TestCase):
             self.assertEqual(actual.read_bytes(), b"AAAA")
             self.assertEqual(other.read_bytes(), b"BBBB")
 
+    def test_corrupt_cache_json_is_safely_rebuilt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            a, b = Path(tmp) / "a.jpg", Path(tmp) / "b.jpg"
+            a.write_bytes(b"same")
+            b.write_bytes(b"same")
+            cache = Path(tmp) / "exact.json"
+            for broken in ('[]', 'null', '"not an index"', '{"version":1,"entries":[]}'):
+                cache.write_text(broken, encoding="utf-8")
+                self.assertEqual(exact_duplicate_groups([a, b], cache_path=cache),
+                                 [[str(a), str(b)]])
+                doc = json.loads(cache.read_text(encoding="utf-8"))
+                self.assertEqual(doc["version"], 1)
+                self.assertIsInstance(doc["entries"], dict)
+
     def test_untrusted_cache_cannot_forge_byte_identical_group(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
