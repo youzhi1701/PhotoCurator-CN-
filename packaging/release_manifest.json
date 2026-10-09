@@ -1,8 +1,8 @@
 {
   "product": "PhotoCurator",
   "channel": "candidate",
-  "version": "1.7.17",
-  "installer": "PhotoCurator-Setup-v1.7.17.exe",
+  "version": "1.7.18",
+  "installer": "PhotoCurator-Setup-v1.7.18.exe",
   "upgrade_mode": "in_place",
   "same_app_id": true,
   "data_root": "%LOCALAPPDATA%/PhotoCurator/data",
@@ -24,7 +24,7 @@
   "replace": [
     "app"
   ],
-  "notes": "v1.7.17 Candidate：已登记的图库外接盘重新占用原盘符时，软件回收站基于持久 Catalog 的物理卷身份确认在线可用性，阻止错误磁盘的清单导入/覆写、缩略图展示、恢复、移动与永久删除，后台排队执行时再次核验。继续保留 v1.7.16 的 RAW/JPG 一对一保护和 DirEntry 安全扫描；真实设备实盘、签名与语义识别误判集验收仍未完成。",
+  "notes": "v1.7.18 Candidate：在 v1.7.17 的硬盘身份防护之外，精确重复缓存只作为性能提示；缓存 SHA-256 参与候选重复组时，必须重新核对实际文件字节及扫描前后设备/文件身份，防止缓存伪造导致不相同的照片误判为字节级重复。已登记的图库外接盘重新占用原盘符时，软件回收站基于持久 Catalog 的物理卷身份确认在线可用性，阻止错误磁盘的清单导入/覆写、缩略图展示、恢复、移动与永久删除，后台排队执行时再次核验。继续保留 v1.7.16 的 RAW/JPG 一对一保护和 DirEntry 安全扫描；真实设备实盘、签名与语义识别误判集验收仍未完成。",
   "release_date": "2026-10-09",
   "published_version": "1.5.0",
   "published_installer": "PhotoCurator-Setup-v1.5.0.exe"
