@@ -32,7 +32,12 @@
 | [#61](https://github.com/youzhi1701/PhotoCurator-CN-/pull/61) | 持久图库每批次写入前检查原设备身份，扫描中途拔盘/换盘不插入异盘照片 | Source [37813476841](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37813476841)、Candidate [37813476828](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37813476828) 通过，已合并 |
 | [#62](https://github.com/youzhi1701/PhotoCurator-CN-/pull/62) | 优选卡片和大图直接显示质量候选标签及可信的人像内容线索 | Source [37813971966](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37813971966)、Candidate [37813971831](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37813971831) 通过，已合并 |
 | [#60](https://github.com/youzhi1701/PhotoCurator-CN-/pull/60) | 验证真实 v1.5.0 → v1.7.9 升级中软件配置、离线预览和原片哈希不变 | Windows 日志实测两次安装都成功，但 YAML 在调用 PowerShell 脚本后误把空 LASTEXITCODE 当成失败；以 #63 修复并合并 |
-| [#63](https://github.com/youzhi1701/PhotoCurator-CN-/pull/63) | v1.7.10 Candidate 版本号/安装器、修正升级验收脚本调用并集成 #60 测试 | **等待本 PR 的 Source + Windows Candidate 双门禁，未验证前不标完成** |
+| [#63](https://github.com/youzhi1701/PhotoCurator-CN-/pull/63) | v1.7.10 Candidate 版本号/安装器、整合已发布 v1.5.0 安装器覆盖升级测试（SHA-256 校验），保留用户配置与离线预览 | Source [37816419000](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37816419000)、Windows [37816419017](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37816419017) 均通过；已合并 |
+
+
+| [#65](https://github.com/youzhi1701/PhotoCurator-CN-/pull/65) | 空扫描与数据缺失处理：避免异常/空结果误判整个旧图库均已消失 | Source [37818869453](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37818869453)、Windows [37818869457](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37818869457) 通过；已合并 |
+| [#66](https://github.com/youzhi1701/PhotoCurator-CN-/pull/66) | RAW+JPEG 同拍保护：仅对真正 JPEG 配对执行折叠，PNG/TIFF/HEIF 不再被误隐藏 | Source [37817846937](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37817846937)、Windows [37817846878](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37817846878) 通过；已合并 |
+| [#67](https://github.com/youzhi1701/PhotoCurator-CN-/pull/67) | 跨盘移动复制窗口的源文件身份复核及 Windows 安全回归（替代冲突 #64） | Source [37820472201](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37820472201)、Windows [37820472163](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37820472163) 通过；已合并 |
 
 以上状态只代表相应代码和已有自动化测试通过；**没有执行 4TB 外接机械硬盘、19,000 张以上真实图库、全格式 RAW/HEIF 样本以及多版本覆盖安装等完整实机验收**。本轮没有将候选包发布成 Stable。
 
@@ -47,7 +52,7 @@
 | 5. 人工筛选与集中复核 | #41–#46、#50 已加强批量复核、一次性授权、状态及源文件身份保护 | 相似/精选全部交互边界、历史选择恢复、跨设备重连的人工复核与撤销一致性实测 |
 | 6. UI 布局与性能 | 相似组 64 组分批显示、屏外渲染跳过，Top-N 有界排序；19,000 条合成数据回归已通过 | 统一工作台密度/缩放/弹窗/完整虚拟化、空闲 CPU/GPU、19,000+ 张图库响应及 Windows 高 DPI、多分辨率实测 |
 | 7. 回收站与文件生命周期 | 二次复核、原子入队、离线历史、文件及 XMP/AAE 身份绑定、跨盘 SHA-256/no-replace 与中断恢复已加固 | 真实断电/崩溃窗口、跨卷与 sidecar、同名竞态实机确认、掉盘后恢复、持久状态原子同步全链路验证 |
-| 8. Windows 安装/升级/正式发布 | v1.7.9 Candidate 版本元数据与已发布 v1.5.0 地址保持分离；正式发布已加入强制 QA 批准和签名门禁 | #60 覆盖升级仍在 CI、真实设备/数据库备份验证、实际数字签名和正式 Release 签核 |
+| 8. Windows 安装/升级/正式发布 | v1.7.10 Candidate 版本元数据与已发布 v1.5.0 地址保持分离；#63 在 Windows Runner 验证旧版覆盖升级；正式发布有强制 QA/签名门禁 | 真实设备与真实资料迁移/数据库备份恢复测试、实际数字签名证书与正式 Release 签核 |
 
 ## 发布原则与下次继续规则
 
@@ -55,6 +60,13 @@
 2. 以 `main` 实时 SHA 为唯一代码基线；对 `perf/v1.8.0-runtime-architecture` 等旧开发分支只审查差异、隔离迁移，不整分支覆盖当前主线。
 3. 代码开发、PR 合并、Source/Windows 自动化通过、Candidate EXE 生成、真实设备长时验收、Stable 版本发布，是**六种不同状态**。缺任何发布门禁均不得公开标称“V2.0 正式完成”。
 4. 下一轮核心优先级：**场景语义分析/可信度与误判集 → 持久图库/断盘恢复实测 → 大图库性能/布局 → 文件生命周期真实断电、跨盘与 sidecar 回归 → Windows 覆盖升级与发布签核**。始终先复核 GitHub 实际进度，避免重复修改、避免破坏原始照片。
+
+## 最新主线与发布阻塞同步
+
+- 已核对并合并 PR #67，主线代码提交：`1ef8d061a3c6e77eb16003fdd07dde535e25ad27`（2026-10-09）。
+- PR #63、#65、#66、#67 均已完成各自 Source/Windows 双门禁；#64 为冲突/过时分支，不得再整分支合并。
+- 代码 CI、Windows Candidate 与旧版覆盖升级自动化不等于实机原厂硬盘场景验收，也不代表数字签名凭据已配置。
+- 正式版 Release 仍需 `RELEASE_ACCEPTANCE.md` 的完整人工和设备验收。
 
 ## 最新交接说明（2026-10-09）
 
