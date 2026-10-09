@@ -50,7 +50,7 @@ class ActualCrashRecoveryTests(unittest.TestCase):
                 producer.shutdown()
 
             environment = dict(os.environ)
-            project = str(Path(__file__).resolve().parent)
+            project = str(Path(__file__).resolve().parents[1])
             environment["PYTHONPATH"] = os.pathsep.join(
                 (project, environment.get("PYTHONPATH", ""))
             )

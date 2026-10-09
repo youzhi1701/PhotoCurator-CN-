@@ -81,6 +81,25 @@ def audit():
         except (SyntaxError, UnicodeError) as exc:
             errors.append(f"Python source cannot compile: {path.name}: {exc}")
 
+    # A moved test is not safe if workflow commands still refer to its old path.
+    # Check the declared targets without executing any test or touching user files.
+    root_tests = sorted(ROOT.glob("test_*.py"))
+    for path in root_tests:
+        errors.append(f"Test left in repository root: {path.name}")
+
+    workflows = ROOT / ".github" / "workflows"
+    test_files = {path.name for path in (ROOT / "tests").glob("*.py")}
+    for workflow in sorted(workflows.glob("*.yml")):
+        content = workflow.read_text(encoding="utf-8")
+        for match in re.finditer(r"tests/([\w]+\.py)", content):
+            name = match.group(1)
+            if name not in test_files:
+                errors.append(f"Broken CI test file: {workflow.name} -> tests/{name}")
+        for match in re.finditer(r"(?<![\w])tests\.([\w]+)", content):
+            name = match.group(1) + ".py"
+            if name not in test_files:
+                errors.append(f"Broken CI test module: {workflow.name} -> {name}")
+
     if not (ROOT / "tests" / "__init__.py").exists():
         errors.append("tests package initializer missing")
 
@@ -119,7 +138,7 @@ def audit():
 
     print("PhotoCurator repository structure audit")
     print(f"Modules checked: {len(sizes)}/{len(PRODUCTION)}")
-    print(f"Root Python files syntax-checked: {len(python_files)}")
+    print(f"Python files syntax-checked: {len(python_files)}")
     print(f"Routes checked: {len(routes)}")
     print(f"Launcher aliases checked: {len(LAUNCHERS)}")
     for name, (lines, nbytes) in sorted(sizes.items(), key=lambda kv: -kv[1][1])[:5]:

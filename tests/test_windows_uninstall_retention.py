@@ -8,7 +8,7 @@ from pathlib import Path
 
 class WindowsUninstallRetentionTests(unittest.TestCase):
     def test_uninstaller_preserves_all_runtime_data_and_user_originals(self):
-        src = (Path(__file__).parent / "packaging" / "PhotoCurator.iss").read_text(
+        src = (Path(__file__).resolve().parents[1] / "packaging" / "PhotoCurator.iss").read_text(
             encoding="utf-8")
         uninstaller = src.split("[UninstallDelete]", 1)[1].split("[Code]", 1)[0]
         self.assertNotRegex(uninstaller, r"(?im)^\s*Type\s*:\s*filesandordirs")

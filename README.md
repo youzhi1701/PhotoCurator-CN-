@@ -275,7 +275,9 @@ PhotoCurator-CN-/
 ├─ photo_dedup_batch.py    # 相似特征 / 分组
 ├─ photo_ranking_v3.py
 ├─ raw_loader.py
-├─ packaging/
+├─ packaging/              # Windows EXE 与安装器
+├─ tests/                  # 回归测试、冒烟测试、发布质量门禁
+├─ tools/                  # 仓库维护和检查工具
 ├─ vendor/
 ├─ .github/workflows/
 ├─ docs/                      # 上游资料与历史版本文档
