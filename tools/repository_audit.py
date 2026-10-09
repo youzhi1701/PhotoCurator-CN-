@@ -70,6 +70,17 @@ def audit():
                                   f"{routes[route_key]} and {node.name}")
                 routes[route_key] = node.name
 
+    # Include root-level test and utility files in the syntax inventory. This
+    # catches files omitted from hard-coded CI compile lists without importing
+    # modules, accessing personal data or executing application code.
+    python_files = sorted(ROOT.glob("*.py"))
+    for path in python_files:
+        try:
+            source = path.read_text(encoding="utf-8-sig")
+            compile(source, str(path), "exec")
+        except (SyntaxError, UnicodeError) as exc:
+            errors.append(f"Python source cannot compile: {path.name}: {exc}")
+
     for alias, target in LAUNCHERS.items():
         path = ROOT / alias
         target_path = ROOT / target
@@ -105,6 +116,7 @@ def audit():
 
     print("PhotoCurator repository structure audit")
     print(f"Modules checked: {len(sizes)}/{len(PRODUCTION)}")
+    print(f"Root Python files syntax-checked: {len(python_files)}")
     print(f"Routes checked: {len(routes)}")
     print(f"Launcher aliases checked: {len(LAUNCHERS)}")
     for name, (lines, nbytes) in sorted(sizes.items(), key=lambda kv: -kv[1][1])[:5]:
