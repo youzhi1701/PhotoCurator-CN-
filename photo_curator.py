@@ -66,6 +66,7 @@ from catalog import (
     clear_offline_previews as catalog_clear_offline_previews,
     remove_library_root as catalog_remove_library_root,
     root_snapshot as catalog_root_snapshot,
+    volume_info_for_path as catalog_volume_info_for_path,
     media_record as catalog_media_record,
     media_id_for_path as catalog_media_id_for_path,
     update_media_lifecycle as catalog_update_media_lifecycle,
@@ -759,7 +760,7 @@ def _prune_index_db():
 threading.Thread(target=_prune_index_db, daemon=True,
                  name='photocurator-index-prune').start()
 
-APP_VERSION = "1.7.11"
+APP_VERSION = "1.7.12"
 IS_CODESPACES = os.environ.get('CODESPACES', '').strip().lower() == 'true'
 CODESPACE_NAME = os.environ.get('CODESPACE_NAME', '').strip()
 _CODESPACES_DOMAIN_RAW = os.environ.get(
@@ -2152,7 +2153,7 @@ def _thumb_cache_path(image_path):
     return THUMB_DIR / f"{key}.jpg"
 
 
-def make_thumb_file(image_path, size=300):
+def make_thumb_file(image_path, size=300, *, expected_signature=None):
     out = _thumb_cache_path(image_path)
     if out.exists():
         return out
@@ -2172,6 +2173,13 @@ def make_thumb_file(image_path, size=300):
                 img = ImageOps.exif_transpose(src).convert('RGB')
                 img.thumbnail((size, size), Image.Resampling.BILINEAR)
                 img.save(tmp, format='JPEG', quality=80)
+            # The preview may be created long after the source was scanned.
+            # A drive swap or same-path photo replacement must not poison the
+            # durable offline preview keyed by the *old* catalog media_id.
+            if expected_signature is not None and (
+                _file_action_signature(image_path) != list(expected_signature)
+            ):
+                raise RuntimeError("生成离线预览期间照片发生变化，拒绝覆盖持久预览")
             os.replace(tmp, out)
             return out
         except Exception as e:
@@ -2184,6 +2192,45 @@ def make_thumb_file(image_path, size=300):
             return None
 
 
+def _offline_preview_source_matches(snapshot):
+    """Only decode thumbnails from the disk that owns this saved library.
+
+    The last drive letter / connected flag alone is never proof of identity:
+    another USB disk may occupy the same path after disconnect.
+    """
+    root = str((snapshot.get('root') or {}).get('current_root') or '')
+    expected = str((snapshot.get('source') or {}).get('identity_key') or '')
+    if not root or not expected or not Path(root).is_dir():
+        return False
+    try:
+        observed = catalog_volume_info_for_path(root)
+        return str(observed.get('identity_key') or '') == expected
+    except (OSError, ValueError, RuntimeError):
+        return False
+
+
+def _offline_preview_candidate_signature(root, item):
+    """Return a stable physical snapshot only for unchanged catalog photos."""
+    name = str(item.get('current_path') or '')
+    if not name:
+        return None
+    candidate = Path(name)
+    if candidate.is_symlink():
+        return None
+    try:
+        root_cmp = os.path.normcase(os.path.realpath(root))
+        photo_cmp = os.path.normcase(os.path.realpath(name))
+        if os.path.commonpath([root_cmp, photo_cmp]) != root_cmp:
+            return None
+        signature = _file_action_signature(candidate)
+        if (signature[2] != int(item['size'])
+                or signature[3] != int(item['mtime_ns'])):
+            return None
+        return signature
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
 def _background_build_offline_previews(payload):
     """Generate a small durable preview batch, then yield the worker queue."""
     root_id = str(payload.get('root_id') or '').strip()
@@ -2193,6 +2240,11 @@ def _background_build_offline_previews(payload):
     snap = catalog_root_snapshot(INDEX_DB, root_id, limit=64, offset=offset)
     if not snap:
         return {'ok': False, 'error': 'library root missing'}
+    if not _offline_preview_source_matches(snap):
+        # Do not continue walking a missing or drive-letter-reused source.
+        # The database and previously rendered offline previews remain intact.
+        return {'ok': False, 'error': '原始图库设备未连接或身份不匹配，保留历史预览'}
+    root = str(snap['root']['current_root'])
     built = 0
     skipped = 0
     for item in snap.get('items') or []:
@@ -2210,10 +2262,11 @@ def _background_build_offline_previews(payload):
             skipped += 1
             continue
         candidate = str(item.get('current_path') or '')
-        if not candidate or not Path(candidate).is_file():
+        signature = _offline_preview_candidate_signature(root, item)
+        if signature is None:
             skipped += 1
             continue
-        made = make_thumb_file(candidate, size=360)
+        made = make_thumb_file(candidate, size=360, expected_signature=signature)
         if made and Path(made).is_file():
             built += 1
         else:

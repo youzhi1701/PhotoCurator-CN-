@@ -1014,7 +1014,7 @@ def root_snapshot(db_path, root_id, limit=2000, offset=0):
     offset = max(0, int(offset or 0))
     with _connect(db_path) as db:
         root = db.execute(
-            """SELECT r.*,s.display_name AS source_name,s.kind,s.connected,
+            """SELECT r.*,s.identity_key,s.display_name AS source_name,s.kind,s.connected,
                       s.last_mount,s.capacity_bytes,s.last_seen_at AS source_last_seen
                FROM library_root r
                JOIN data_source s ON s.source_id=r.source_id
@@ -1065,6 +1065,7 @@ def root_snapshot(db_path, root_id, limit=2000, offset=0):
     return {
         "source": {
             "source_id": str(root["source_id"]),
+            "identity_key": str(root["identity_key"]),
             "display_name": str(root["source_name"]),
             "kind": str(root["kind"]),
             "connected": bool(root["connected"]),
