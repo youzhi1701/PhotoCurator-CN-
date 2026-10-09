@@ -5086,8 +5086,11 @@ let lastRankSig='', lastCullSig='', lastDedupSig='', lastStep=null, weightTimer=
 // Result paging/filter state must exist before the first UI bootstrap call.
 // Keep boot-critical state together here so setupFilterBar() cannot touch
 // a later lexical declaration and abort the rest of the interaction bindings.
-let cullChunkToken=0, cullVisibleTotal=0;
-let dedupChunkToken=0;
+let cullChunkToken=0, cullVisibleTotal=0, cullNextOffset=0, cullWindowStart=0;
+let cullPageBusy=false, cullGlobalStats=null;
+const CULL_WINDOW_CAP=600, CULL_FETCH_SIZE=200;
+let dedupChunkToken=0, dedupNextOffset=0, dedupWindowStart=0, dedupPageBusy=false;
+const DEDUP_WINDOW_CAP=192;
 let dedupStatusFilter='pending', dedupVisibleTotal=0;
 let dedupStatusCounts={pending:0,reviewed:0,updated:0};
 // These controls are needed by setupFilterBar() during initial page boot.
@@ -5599,6 +5602,10 @@ function updateVisibleStepStatus(step,d){
   if('sharp'in st)document.getElementById('sSharp').textContent=st.sharp;
   if('blurry'in st)document.getElementById('sBlurry').textContent=st.blurry;
   if('soft'in st)document.getElementById('sSoft').textContent=st.soft;
+  if(step==='cull'&&'markable'in st){
+    cullGlobalStats={move_selected:Number(st.move_selected||0),markable:Number(st.markable||0)};
+    updateCullMoveButton();
+  }
   if(st.folder_status)folderStatus=st.folder_status;
   if('duplicate_groups'in st)document.getElementById('sGroups').textContent=st.duplicate_groups;
   else if('groups'in st)document.getElementById('sGroups').textContent=st.groups;
@@ -5683,7 +5690,11 @@ document.querySelectorAll('.step').forEach(t=>t.onclick=()=>{
       document.getElementById('progressWrap').style.display='none';
       return;
     }
-    if(currentStep==='cull')renderCullStep(cullRowsForPayload(d));
+    if(currentStep==='cull'){
+      cullReady=!!d.complete;
+      renderCullStep(cullRowsForPayload(d));
+      if(d.complete)loadCullPage(true);
+    }
     else if(currentStep==='dedup'){
       const st=d.stats||{};
       dedupStatusCounts={
@@ -5709,7 +5720,7 @@ let cullFilter='all', cullType='all', rankFilter='all', lastFmtSig='';
 function setupFilterBar(){
   const bar=document.getElementById('filterBar');
   if(currentStep==='cull'){
-    if(!photos.length && !coreRunning && !isRunning){
+    if(!photos.length && !coreRunning && !isRunning && !cullVisibleTotal){
       bar.style.display='none';
       bar.innerHTML='';
       return;
@@ -5721,25 +5732,27 @@ function setupFilterBar(){
     const types=[['all','全部格式'],['raw','仅 RAW'],['standard','普通图片'],
       ...(hasHeic?[['heic','仅 HEIC']]:[]),
       ...(rawFmts.length>1?rawFmts.map(f=>['ext:'+f.toLowerCase(),'仅 '+f]):[])];
-    if(!types.some(([k])=>k===cullType))cullType='all';
+    // Keep a selected RAW subtype even when this page happens to contain
+    // no examples; the backend filters the entire library, not visible cards.
     bar.style.display='flex';
-    const markable=photos.filter(p=>!['pending_trash','pending_permanent_delete','trashed','permanently_deleted','pending_restore'].includes(p.lifecycle));
-    const moveSelected=markable.filter(p=>p.move_selected===true).length;
+    const markable=photos.filter(p=>visibleInReview(p));
+    const moveSelected=cullGlobalStats ? Number(cullGlobalStats.move_selected||0)
+      :markable.filter(p=>p.move_selected===true).length;
+    const moveTotal=cullGlobalStats ? Number(cullGlobalStats.markable||0) :markable.length;
     bar.innerHTML=opts.map(([k,l])=>`<button class="chip${k===cullFilter?' active':''}" data-f="${k}">${l}</button>`).join('')
       +`<span class="chip-sep"></span>`
       +types.map(([k,l])=>`<button class="chip${k===cullType?' active':''}" data-t="${k}">${l}</button>`).join('')
-      +(markable.length?`<span class="chip-sep"></span><span class="move-summary">待删除 <b id="cullMoveCount">${moveSelected}/${markable.length}</b></span><button class="chip move-bulk" id="moveSelAll">选择模糊</button><button class="chip move-bulk" id="moveSelNone">取消模糊选择</button>`:'')
-      +`<span class="chip-sep"></span><button class="chip" id="cullLoadMore" style="display:none"></button>`;
+      +(moveTotal?`<span class="chip-sep"></span><span class="move-summary">待删除 <b id="cullMoveCount">${moveSelected}/${moveTotal}</b></span><button class="chip move-bulk" id="moveSelAll">选择模糊</button><button class="chip move-bulk" id="moveSelNone">取消模糊选择</button>`:'')
+      +`<span class="chip-sep"></span><button class="chip" id="cullLoadEarlier" style="display:none"></button><button class="chip" id="cullLoadMore" style="display:none"></button>`;
     bar.querySelectorAll('.chip[data-f]').forEach(c=>c.onclick=()=>{cullFilter=c.dataset.f;gPage=0;
-      bar.querySelectorAll('.chip[data-f]').forEach(x=>x.classList.toggle('active',x.dataset.f===cullFilter));
-      renderCullStep(photos);});
+      cullLiveStore.clear();lastCullSig='';loadCullPage(true);});
     bar.querySelectorAll('.chip[data-t]').forEach(c=>c.onclick=()=>{cullType=c.dataset.t;gPage=0;
-      bar.querySelectorAll('.chip[data-t]').forEach(x=>x.classList.toggle('active',x.dataset.t===cullType));
-      renderCullStep(photos);});
+      cullLiveStore.clear();lastCullSig='';loadCullPage(true);});
     const ma=document.getElementById('moveSelAll'),mn=document.getElementById('moveSelNone');
     if(ma)ma.onclick=()=>setAllBlurryMoveSelection(true);
     if(mn)mn.onclick=()=>setAllBlurryMoveSelection(false);
     const more=document.getElementById('cullLoadMore');if(more)more.onclick=()=>loadCullPage(false);
+    const earlier=document.getElementById('cullLoadEarlier');if(earlier)earlier.onclick=()=>loadCullPage(false,true);
     updateCullMoveButton();updateCullLoadMore();
     return;
   }
@@ -5748,9 +5761,10 @@ function setupFilterBar(){
     const counts=dedupStatusCounts||{};
     const opts=[['pending','待筛选'],['reviewed','已筛选'],['updated','新增待复核']];
     bar.innerHTML=opts.map(([k,l])=>`<button class="chip${dedupStatusFilter===k?' active':''}" data-dstatus="${k}">${l} <span>${Number(counts[k]||0)}</span></button>`).join('')
-      +'<span class="chip-sep"></span><button class="chip" id="dedupLoadMore" style="display:none"></button>';
+      +'<span class="chip-sep"></span><button class="chip" id="dedupLoadEarlier" style="display:none"></button><button class="chip" id="dedupLoadMore" style="display:none"></button>';
     bar.querySelectorAll('[data-dstatus]').forEach(b=>b.onclick=()=>{dedupStatusFilter=b.dataset.dstatus;loadDedupPage(true);});
     const more=document.getElementById('dedupLoadMore');if(more)more.onclick=()=>loadDedupPage(false);
+    const earlier=document.getElementById('dedupLoadEarlier');if(earlier)earlier.onclick=()=>loadDedupPage(false,true);
     updateDedupLoadMore();
     return;
   }
@@ -6574,9 +6588,9 @@ function applyLatestCoreSnapshot(){
   if(!d)return;
   if(currentStep==='cull'){
     const rows=d.photos||[];
-    cullLiveStore.clear();rows.forEach(p=>{if(p&&p.path)cullLiveStore.set(p.path,p);});
-    renderCullStep(Array.from(cullLiveStore.values()));
-    if(!d.running)maybeLoadAllCull(d);
+    if(!d.running){cullReady=!!d.complete;loadCullPage(true);}
+    else{cullLiveStore.clear();rows.forEach(p=>{if(p&&p.path)cullLiveStore.set(p.path,p);});
+      renderCullStep(Array.from(cullLiveStore.values()));}
   }else if(currentStep==='dedup'){
     loadDedupPage(true);
   }
@@ -6589,6 +6603,11 @@ async function pollCore(){
   try{
     const rows=await Promise.all(['cull','dedup'].map(k=>fetch('/api/progress/'+k).then(r=>r.json())));
     coreSnapshots.cull=rows[0];coreSnapshots.dedup=rows[1];
+    cullReady=!!rows[0].complete;
+    if(rows[0].stats&&'markable'in rows[0].stats){
+      cullGlobalStats={move_selected:Number(rows[0].stats.move_selected||0),
+                       markable:Number(rows[0].stats.markable||0)};
+    }
     if(currentStep==='cull')updateVisibleStepStatus('cull',rows[0]);
     if(currentStep==='dedup')updateVisibleStepStatus('dedup',rows[1]);
     updateNewResultsButton();
@@ -6694,7 +6713,7 @@ function updateCullLoadMore(){
 }
 async function loadRemainingCull(total,offset){return loadCullPage(false);}
 function maybeLoadAllCull(d){
-  cullVisibleTotal=Number(d.result_total||cullVisibleTotal||0);
+  if(cullFilter==='all'&&cullType==='all')cullVisibleTotal=Number(d.result_total||cullVisibleTotal||0);
   updateCullLoadMore();
 }
 function dedupRowsForPayload(d){
@@ -6774,7 +6793,7 @@ function poll(step){
         largeResultWarned=true;
         toast('本次已完整分析 '+(d.result_total||0)+' 张照片，完整结果正在后台分批载入。','info');
       }
-      if(step==='cull'&&step===currentStep)maybeLoadAllCull(d);
+      if(step==='cull'&&step===currentStep){cullReady=!!d.complete;loadCullPage(true);}
       if(step==='dedup'&&step===currentStep)maybeLoadAllDedup(d);
 
       if(step===currentStep)document.getElementById('progressFill').style.width='100%';
@@ -7394,6 +7413,7 @@ function renderCullStep(items){
   updatePager();
 }
 function cullMoveCounts(){
+  if(cullGlobalStats)return {total:Number(cullGlobalStats.markable||0),selected:Number(cullGlobalStats.move_selected||0)};
   const markable=photos.filter(p=>visibleInReview(p));
   return {total:markable.length,selected:markable.filter(p=>p.move_selected===true).length};
 }
@@ -7416,12 +7436,16 @@ function updateCullMoveButton(){
   }
 }
 function applyMoveSelectionResponse(path,d){
+  if(Number.isFinite(Number(d.selected))&&Number.isFinite(Number(d.total))){
+    cullGlobalStats={move_selected:Number(d.selected),markable:Number(d.total)};
+  }
   if(path){
     const pp=photos.find(x=>x.path===path);
     if(pp)pp.move_selected=!!d.move_selected;
   }
   lastCullSig='';lastCullMoveSig='';
-  renderCullStep(photos);
+  if(cullFilter==='pending')loadCullPage(true);
+  else renderCullStep(photos);
   updateCullMoveButton();
   if(document.getElementById('lightbox').classList.contains('open')&&currentStep==='cull')showLb();
 }
@@ -7437,8 +7461,11 @@ function setAllBlurryMoveSelection(selected){
     body:JSON.stringify({all:selected})})
     .then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;})
     .then(d=>{
+      if(Number.isFinite(Number(d.selected))&&Number.isFinite(Number(d.total)))
+        cullGlobalStats={move_selected:Number(d.selected),markable:Number(d.total)};
       photos.forEach(p=>{if(p.tier==='blurry')p.move_selected=selected;});
-      lastCullSig='';lastCullMoveSig='';renderCullStep(photos);updateCullMoveButton();
+      if(cullFilter==='pending'){loadCullPage(true);}
+      else{lastCullSig='';lastCullMoveSig='';renderCullStep(photos);updateCullMoveButton();}
       toast(selected?'已选择全部模糊照片':'已取消全部模糊照片的移动选择','good');
     }).catch(err=>toast('批量选择失败：'+(err.message||'未知错误'),'bad'));
 }
@@ -7450,7 +7477,10 @@ function cullSetTier(path,tier){
       document.getElementById('sSharp').textContent=d.sharp;document.getElementById('sSoft').textContent=d.soft;document.getElementById('sBlurry').textContent=d.blurry;
       const pp=photos.find(x=>x.path===path||x.path===d.path);
       if(pp){pp.tier=d.tier;pp.badge=d.badge;pp.badgeType=d.badgeType;pp.kept=d.kept;pp.rejected=!d.kept;pp.move_selected=!!d.move_selected;if(d.path)pp.path=d.path;if(d.thumb)pp.thumb=d.thumb;}
-      lastCullSig='';lastCullMoveSig='';renderCullStep(photos);updateCullMoveButton();
+      if(Number.isFinite(Number(d.move_selected_count))&&Number.isFinite(Number(d.move_total)))
+        cullGlobalStats={move_selected:Number(d.move_selected_count),markable:Number(d.move_total)};
+      if(cullFilter!=='all')loadCullPage(true);
+      else{lastCullSig='';lastCullMoveSig='';renderCullStep(photos);updateCullMoveButton();}
     }).catch(err=>toast('分类修改失败：'+(err.message||'未知错误'),'bad'));
 }
 
