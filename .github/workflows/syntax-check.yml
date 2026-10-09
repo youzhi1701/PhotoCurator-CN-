@@ -62,12 +62,12 @@ jobs:
             tests/test_raw_pair_protection.py \
             tests/test_rank_topn_selection.py \
             raw_loader.py \
-            "基础冒烟测试.py" \
-            "Codespaces冒烟测试.py" \
-            windows_smoke_test.py \
-            ui_smoke_test.py \
-            release_gate_test.py \
-            performance_gate_test.py
+            "tests/基础冒烟测试.py" \
+            "tests/Codespaces冒烟测试.py" \
+            tests/windows_smoke_test.py \
+            tests/ui_smoke_test.py \
+            tests/release_gate_test.py \
+            tests/performance_gate_test.py
 
       - name: Audit repository structure
         run: python tools/repository_audit.py
@@ -846,7 +846,7 @@ jobs:
 
       - name: Compile Python sources
         run: |
-          python -m py_compile db_runtime.py desktop_app.py runtime_paths.py catalog.py photo_curator.py background_tasks.py photo_dedup_batch.py exact_duplicates.py tests/test_exact_duplicates.py photo_ranking_v3.py raw_loader.py tests/test_export_containment.py tests/test_permanent_volume_guard.py tests/test_cull_paged_review.py "基础冒烟测试.py" "Codespaces冒烟测试.py" windows_smoke_test.py ui_smoke_test.py
+          python -m py_compile db_runtime.py desktop_app.py runtime_paths.py catalog.py photo_curator.py background_tasks.py photo_dedup_batch.py exact_duplicates.py tests/test_exact_duplicates.py photo_ranking_v3.py raw_loader.py tests/test_export_containment.py tests/test_permanent_volume_guard.py tests/test_cull_paged_review.py "tests/基础冒烟测试.py" "tests/Codespaces冒烟测试.py" tests/windows_smoke_test.py tests/ui_smoke_test.py
 
       - name: Runtime data path and migration smoke test
         shell: powershell
@@ -950,8 +950,8 @@ jobs:
       - name: Unicode path and background lifecycle smoke test
         shell: bash
         run: |
-          python "基础冒烟测试.py"
-          python release_gate_test.py
+          python -m tests.基础冒烟测试
+          python -m tests.release_gate_test
 
       - name: Background task history regression
         shell: bash
@@ -983,19 +983,19 @@ jobs:
       - name: Performance architecture regression gate
         shell: bash
         run: |
-          python performance_gate_test.py
+          python -m tests.performance_gate_test
           python -m tests.test_desktop_instance_guard
           python -m tests.test_frontend_stale_request
 
       - name: Real desktop UI interaction smoke test
         shell: bash
         run: |
-          python ui_smoke_test.py
+          python -m tests.ui_smoke_test
 
       - name: Codespaces forwarding security smoke test
         shell: bash
         run: |
-          python "Codespaces冒烟测试.py"
+          python -m tests.Codespaces冒烟测试
 
       - name: Technical identifier localization guard
         shell: bash

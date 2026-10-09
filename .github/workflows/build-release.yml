@@ -95,17 +95,17 @@ jobs:
       - name: Release-gate source tests
         shell: powershell
         run: |
-          python -m py_compile db_runtime.py desktop_app.py runtime_paths.py catalog.py photo_curator.py background_tasks.py raw_loader.py exact_duplicates.py tests/test_exact_duplicates.py ui_smoke_test.py windows_smoke_test.py performance_gate_test.py
+          python -m py_compile db_runtime.py desktop_app.py runtime_paths.py catalog.py photo_curator.py background_tasks.py raw_loader.py exact_duplicates.py tests/test_exact_duplicates.py tests/ui_smoke_test.py tests/windows_smoke_test.py tests/performance_gate_test.py
           if ($LASTEXITCODE -ne 0) { throw "py_compile failed" }
-          python -c "import runpy; runpy.run_path('\u57fa\u7840\u5192\u70df\u6d4b\u8bd5.py', run_name='__main__')"
+          python -c "import runpy; runpy.run_path('tests/\u57fa\u7840\u5192\u70df\u6d4b\u8bd5.py', run_name='__main__')"
           if ($LASTEXITCODE -ne 0) { throw "base smoke test failed" }
           python -m unittest -v tests.test_exact_duplicates
           if ($LASTEXITCODE -ne 0) { throw "exact duplicate regression failed" }
-          python release_gate_test.py
+          python -m tests.release_gate_test
           if ($LASTEXITCODE -ne 0) { throw "release_gate_test failed" }
-          python performance_gate_test.py
+          python -m tests.performance_gate_test
           if ($LASTEXITCODE -ne 0) { throw "performance_gate_test failed" }
-          python ui_smoke_test.py
+          python -m tests.ui_smoke_test
           if ($LASTEXITCODE -ne 0) { throw "ui_smoke_test failed" }
           pip-audit -r requirements.txt
           if ($LASTEXITCODE -ne 0) { throw "pip-audit failed" }
