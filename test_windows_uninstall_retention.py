@@ -22,8 +22,12 @@ class WindowsUninstallRetentionTests(unittest.TestCase):
         # The release installer is allowed to replace ONLY its own program
         # directory during an *upgrade*, never any user runtime data.
         install = src.split("[InstallDelete]", 1)[1].split("[Files]", 1)[0]
-        self.assertIn('Name: "{app}\\app"', install)
-        self.assertNotIn('{localappdata}\\PhotoCurator\\data', install)
+        # Comments explain retained data locations; only executable Inno
+        # Setup directives can delete anything during an upgrade.
+        directives = [line.strip() for line in install.splitlines()
+                      if line.strip() and not line.lstrip().startswith(';')]
+        self.assertEqual(directives,
+                         ['Type: filesandordirs; Name: "{app}\\app"'])
 
 
 if __name__ == "__main__":
