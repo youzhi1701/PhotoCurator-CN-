@@ -1,11 +1,11 @@
-## v1.7.18 Candidate（2026-10-09，待 CI）
+## v1.7.18 Candidate（2026-10-09，Source/Windows CI 已通过；待真实硬件及签名 QA）
 
 - 修复精确重复的信任边界：SHA-256 本地 JSON 缓存仅是性能提示；复用摘要参与候选重复组时必须重新流式哈希原片并核对打开句柄及前后文件身份。不相同照片不能因缓存篡改误被标记精确重复。
 - 原始文件的直接符号链接不再进入精确哈希；取消或文件变化时直接舍弃相关组，不触发文件写入或删除。
 - 覆盖恶意缓存、正常缓存验证、无重复组性能及链接越界的回归测试。
 - TOP-N 与 PhoneBG 导出改为独占预留新相册目录；跳过已存在路径和 symlink/junction，相册文件通过独立暂存与无覆盖提交，按当前真实设备/源文件身份进行确认，避免并发覆写外部相片与旧导出。
 - 新增导出目录劫持、重复导出、输出竞争、源照片被替换、壁纸导出和错盘阻断测试，并加入 Source/Windows CI。
-- 统一 Python 源码、Windows EXE/Installer、候选流水线版本 v1.7.18。实机、签名与正式 QA 待验收；不创建 Stable 标签。
+- 统一 Python 源码、Windows EXE/Installer、候选流水线版本 v1.7.18。[Source/Windows smoke](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37886666065)、[Windows Native Candidate](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37886666032) 已通过；实机、签名与正式 QA 待验收；不创建 Stable 标签。
 
 ## v1.7.17 Candidate（2026-10-09，待自动化验收）
 
