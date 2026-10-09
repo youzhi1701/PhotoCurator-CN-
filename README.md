@@ -5,34 +5,34 @@
 
 | 版本 | 用途 | 下载 |
 | --- | --- | --- |
-| **v1.7.13 Candidate（最新代码测试版）** | 完整执行 GitHub Windows 测试，但尚未经真实硬盘及正式签名验收 | [Windows Candidate 构建与测试记录](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37874982341) |
-| **v1.5.0 Stable（最后已正式发布版）** | 需要已经正式发布的安装器 | [下载 PhotoCurator-Setup-v1.5.0.exe](https://github.com/youzhi1701/PhotoCurator-CN-/releases/download/v1.5.0/PhotoCurator-Setup-v1.5.0.exe) |
+| **v1.7.14 Candidate（当前开发候选）** | 最新 Source / Windows CI 全部通过，尚未通过实盘和签名门禁 | [Windows Candidate CI](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37878225848) |
+| **v1.5.0 Stable（最后正式发布版）** | 需要经过正式发布流程的安装器 | [PhotoCurator-Setup-v1.5.0.exe](https://github.com/youzhi1701/PhotoCurator-CN-/releases/download/v1.5.0/PhotoCurator-Setup-v1.5.0.exe) |
 
-Windows Candidate 的 Actions 构件名为 `PhotoCurator-v1.7.13-test-installer`；其中包含 `PhotoCurator-Setup-v1.7.13.exe` 与单独的 `.exe.sha256`。**这只是自动化测试构件，不等于 V2.0 最终发布版。**
+当前 v1.7.14 Windows 自动化构件为 `PhotoCurator-v1.7.14-test-installer`，包含 `PhotoCurator-Setup-v1.7.14.exe` 和 `.exe.sha256`。**不是 V2.0 Stable 正式版，不建议直接用于唯一原片。**
 
-**安装器 SHA-256：** `e8a40a73c5bac1ee8f111d19ef888a01403bb46b9d99ae4f4aa0bd682323e23e`
+候选安装器 SHA-256：`bf72867e2a94506d4200cd927f41cd9c33ace6a80238fab2fb97832a8cbd255f`。下载构件有效期至 2026-10-23。
 
-[Source syntax check](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37874982398) 和 [Build Windows Candidate](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37874982341) 均为 SUCCESS；构建通过实际 Windows EXE/原生窗口响应性、v1.5.0→v1.7.13 原位覆盖升级数据留存、真实静默卸载后原片及配置保留验证。Actions 构件有效期至 **2026-10-23**。
+[Source syntax check](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37878225849) 与 [Build Windows Candidate](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37878225848) 均成功；Windows 验证包括原生窗口响应、真实 v1.5.0→v1.7.14 原位升级及配置和离线预览留存、静默卸载后用户原片保持不变、进程崩溃/恢复回归。
 
-> **重要：** 候选版尚未完成真实 4TB 外接机械硬盘、19,000+ 张真实图库、各品牌 RAW/HEIF 样本、突然断电、完整高 DPI 交互和代码签名验收。正式投入珍贵照片前应先备份原片。自动分析只提供建议，任何删除都需要人工复核；不得将 Candidate 标为 V2.0 Stable。
+> V2.0 正式发布前仍需真实外接 4TB HDD、19,000+ 实拍图库、RAW/HEIF 完整样本、突然断电、高 DPI 多机器交互、语义模型误判评测、有效代码签名与 QA 批准；目前不得把候选版称为最终正式版。
 <!-- LATEST_RELEASE_END -->
 
-> 面向大图库的 Windows 照片清理工具。v1.7.13 Candidate 在稳定桌面运行层基础上继续收口持久 Catalog、扫描会话与缺失判定、离线图库与设备识别、文件生命周期、数据库升级保护和 Windows 发布门禁；当前仍处于 Candidate 验证阶段，不等同于已发布 Stable。
+> 面向大图库的 Windows 照片清理工具。v1.7.14 Candidate 在稳定桌面运行层基础上继续收口持久 Catalog、扫描会话与缺失判定、离线图库与设备识别、文件生命周期、数据库升级保护和 Windows 发布门禁；当前仍处于 Candidate 验证阶段，不等同于已发布 Stable。
 
 | 项目 | 信息 |
 | --- | --- |
-| 当前源码版本 | **v1.7.14 Candidate（新代码构建验证中）** |
+| 当前源码版本 | **v1.7.14 Candidate（Source / Windows CI 已通过）** |
 | 项目类型 | Windows 照片筛选桌面应用 |
 | 上游基线 | Photo Curator v7.0 |
-| 当前状态 | **v1.7.13 Candidate · Source/Windows CI 成功 · 真实设备及数字签名验收未完成** |
+| 当前状态 | **v1.7.14 Candidate · Source/Windows CI 成功 · 真实设备及数字签名验收未完成** |
 
-## v1.7.14 待发布验证的改进
+## v1.7.14 已验证的代码改进
 
 - 修复 Linux 大小写不同原片的生命周期及父子图库重叠统计隔离。
 - 进一步校验外接盘唯一身份和文件指纹，禁止历史图库缩略图误读取被替换磁盘，并隔离普通缓存与持久离线预览。
 - 对后台任务执行真正的子进程异常终止和数据库恢复演练，补充 Windows 文件句柄释放回归。
 
-此版本仅为待验收 Candidate 源码，**没有完成真实硬盘测试和代码签名，因此不作为最终版下载**。上方 v1.7.13 下载记录是上一轮已经验证的历史候选包。
+此版本已通过源码、Windows 原生 CI 和覆盖升级/卸载/崩溃恢复自动回归；**尚未完成真实硬盘与代码签名，因此不作为最终稳定版**。
 
 ## v1.7.13 新增修复（尚非 V2.0 正式版）
 
@@ -230,15 +230,15 @@ GitHub Actions：
 
 普通 `main` 推送只运行源码/结构门禁，不会反复消耗 Windows 正式安装包构建；Windows Candidate 通过 Pull Request 或手动触发完成真实 EXE、窗口存活和测试安装包验证。正式 Release 仅由显式发布请求或匹配版本标签触发。
 
-发布目标由 `packaging/release_manifest.json` 驱动。当前目标为 **1.7.13 Candidate**；只有全部 Release Gate 通过后，才允许创建正式标签：
+发布目标由 `packaging/release_manifest.json` 驱动。当前目标为 **1.7.14 Candidate**；只有全部 Release Gate 通过后，才允许创建正式标签：
 
-`v1.7.13`
+ `v1.7.14`
 
 发布工作流接受 `v*` 标签，但会在构建开始时强制检查：**Git 标签必须与 manifest 中的版本完全一致**。标签不一致会直接失败，避免误把旧代码发布成新版本或把新代码挂到旧标签。
 
-当前 Candidate 安装包目标名称（构建验证后才可下载）：
+当前 Candidate 安装包目标名称（自动化构件，尚非 Stable）：
 
-`PhotoCurator-Setup-v1.7.13.exe`
+ `PhotoCurator-Setup-v1.7.14.exe`
 
 当前已经公开可下载的 Stable 安装包仍为 **v1.5.0**。
 
@@ -339,7 +339,7 @@ PhotoCurator-CN-/
 
 许可证保持原项目 **MIT License**。
 
-## v1.7.13 从 Candidate 晋级 Stable 的发布门槛
+## v1.7.14 从 Candidate 晋级 Stable 的发布门槛
 
 正式发布前必须同时满足：
 - Python / 嵌入式 JavaScript / HTML / CSS 自动检查通过
@@ -361,4 +361,4 @@ PhotoCurator-CN-/
 - 覆盖升级不破坏用户数据库、索引、设置、日志、任务状态和用户照片
 - GitHub Release 中真实存在与版本一致、非空且校验通过的 Windows 安装包
 
-在上述门槛没有全部满足前，v1.7.13 只能保持 **Candidate**，不能标记为 Stable。
+在上述门槛没有全部满足前，v1.7.14 只能保持 **Candidate**，不能标记为 Stable。
