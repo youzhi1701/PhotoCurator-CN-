@@ -2,7 +2,14 @@
 
 > 此文件记录已经提交并验证的代码工作，以及尚未满足正式发布标准的工作。**不得把候选安装包、自动化测试或 GitHub 合并等同于用户实机验收与正式发布。**
 >
-> 最初历史开发基线为 main `81dbb510deb58f191448ed13d791094f9a1f9d7e`（PR #50）；最新 V2.0 候选源码已合并至 main `bf62baf9e8d3268330723549122d2ccf8c419594`（PR #84），版本为 v1.7.14；Source/Windows 自动化均成功，实盘、语义模型评测与正式签名仍未完成。每次恢复时必须重新读取 GitHub main 最新 SHA、未合并 PR、CI 和构件；本文件不是实时 API。
+> 最初历史开发基线为 main `81dbb510deb58f191448ed13d791094f9a1f9d7e`（PR #50）；最新 V2.0 候选源码已合并至 main `6708cb2d709ef982a222a37866d142a050d373d6`（PR #85），版本为 v1.7.15；Source/Windows 自动化均成功，实盘、语义模型评测与正式签名仍未完成。每次恢复时必须重新读取 GitHub main 最新 SHA、未合并 PR、CI 和构件；本文件不是实时 API。
+
+## 2026-10-09 V2.0 新增候选 v1.7.15（已通过 CI，尚非 Stable）
+
+- [PR #85](https://github.com/youzhi1701/PhotoCurator-CN-/pull/85) 已合并至 main `6708cb2d709ef982a222a37866d142a050d373d6`，新增外接设备回收站清单的目录可信边界、符号链接/伪造元数据阻断、离线记录保留、并发写入原子发布与 6 项安全回归。
+- [Source 和 Windows smoke](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37879822374)：**success**；[Windows Candidate 安装器构建及已发布 v1.5.0→v1.7.15 覆盖升级、卸载留存](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37879822456)：**success**。
+- Windows 测试 ZIP 构件：`PhotoCurator-v1.7.15-test-installer`（[GitHub Actions 下载](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37879822456)，有效期至 2026-10-23），包含 `PhotoCurator-Setup-v1.7.15.exe`；构建时安装器 SHA-256：`e5ce68661babf904f93ad76831d431caba253b21b5b693e0419d36b25242454d`。
+- **未解决的硬门禁**：4TB/19k+ 原片实盘、真实设备拔插/断电、完整 RAW/HEIF 机型与场景识别误判评测、Win10/11 高 DPI 多机运行、实际 Authenticode 签名与真实用户最终批准。v1.7.15 仍是 Candidate，正式 Stable 仍为 v1.5.0，不创建虚假的 v2.0 稳定标签。
 
 ## 2026-10-09 第三批实际完成的 V2.0 代码与 CI 回归（非 Stable）
 
