@@ -1,8 +1,9 @@
-## v1.7.15 Candidate（2026-10-09，待完整 CI）
+## v1.7.15 Candidate（2026-10-09，Source/Windows 自动化验证成功）
 
 - 外接硬盘的回收站清单属于不可信输入：修复路径逃逸、符号链接及伪造清单混入回收站的问题。
 - 回收站清单改为互斥写入、唯一临时文件、fsync 后原子发布，防止并发临时文件抢占。
 - 移动原片前验证图库根路径；新增导入、筛选、清单持久化、安全边界回归。
+- [Source/Windows smoke](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37879822374) 与 [Windows Candidate 打包、v1.5.0 覆盖升级和卸载验证](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37879822456) 均成功。安装器 SHA-256：`e5ce68661babf904f93ad76831d431caba253b21b5b693e0419d36b25242454d`。
 - 正式 V2.0 Stable 仍需要真实硬盘、格式/语义误判评测和签名 QA 验证。
 
 ## v1.7.8 Candidate — 跨盘文件复制验证
