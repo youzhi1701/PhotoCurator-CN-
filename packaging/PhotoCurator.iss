@@ -63,21 +63,19 @@ Filename: "{tmp}\MicrosoftEdgeWebview2Setup.exe"; Parameters: "/silent /install"
 Filename: "{app}\app\{#MyAppExeName}"; Description: "打开 PhotoCurator"; Flags: nowait postinstall skipifsilent
 
 [UninstallDelete]
-; 可重建数据始终清理；用户决策与索引配置仅在卸载确认后删除。
-Type: filesandordirs; Name: "{localappdata}\PhotoCurator\data\cache"
-Type: filesandordirs; Name: "{localappdata}\PhotoCurator\data\logs"
-Type: filesandordirs; Name: "{localappdata}\PhotoCurator\data\内置测试数据"
-; 清理旧版安装目录中遗留的可重建数据，但保留 legacy config 作为安全回退。
-Type: filesandordirs; Name: "{app}\data\cache"
-Type: filesandordirs; Name: "{app}\data\logs"
-Type: filesandordirs; Name: "{app}\data\内置测试数据"
+; DelTree/filesandordirs can be dangerous if runtime cache directories were
+; replaced with junctions pointing to real photographs. Uninstalling the
+; PROGRAM must not traverse or delete ANY user-writable runtime directory.
+; Runtime cache, offline previews, catalog, history and the recycle bin are
+; retained. Users may clear rebuildable cache through the app's guarded
+; storage-management controls BEFORE uninstalling.
 
 [Code]
 const
   PhotoCuratorMutex = 'Local\PhotoCurator_CN_youzh1701';
 
 var
-  DeleteSettings: Boolean;
+  ClearRecents: Boolean;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
@@ -97,14 +95,23 @@ end;
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if CurUninstallStep = usUninstall then
-    DeleteSettings := MsgBox(
-      '是否同时删除 PhotoCurator 的设置？' + #13#10 +
-      '无论选择什么，都不会删除你的原照片、筛选结果、自定义输出目录或 PhotoCurator 软件回收站。',
-      mbConfirmation, MB_YESNO) = IDYES;
-
-  if (CurUninstallStep = usPostUninstall) and DeleteSettings then
   begin
-    DelTree(ExpandConstant('{localappdata}\PhotoCurator\data\config'), True, True, True);
-    DelTree(ExpandConstant('{app}\data\config'), True, True, True);
+    { An unattended upgrade/uninstall must never block on a custom dialog.
+      Silent uninstall always retains all user data and recent folders. }
+    ClearRecents := False;
+    if not UninstallSilent then
+      ClearRecents := MsgBox(
+      '是否清除 PhotoCurator 最近打开的文件夹记录？' + #13#10 +
+      '图库索引、人工筛选决策、离线预览、日志和软件回收站将全部保留。' + #13#10 +
+      '卸载程序不会递归删除任何照片目录或运行数据。',
+      mbConfirmation, MB_YESNO) = IDYES;
+  end;
+
+  if (CurUninstallStep = usPostUninstall) and ClearRecents then
+  begin
+    { Delete only two explicitly named regular configuration entries. Never
+      recursively traverse any user-modifiable directory during uninstall. }
+    DeleteFile(ExpandConstant('{localappdata}\PhotoCurator\data\config\recents.json'));
+    DeleteFile(ExpandConstant('{app}\data\config\recents.json'));
   end;
 end;

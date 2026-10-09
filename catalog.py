@@ -130,6 +130,14 @@ def init_catalog_schema(db_path):
                       ON media_catalog(root_id, relative_path)""")
         db.execute("""CREATE INDEX IF NOT EXISTS idx_media_catalog_generation
                       ON media_catalog(root_id, scan_generation)""")
+        # Path-based thumbnail/history lookup needs matching-collation B-trees.
+        path_collation = "NOCASE" if os.name == "nt" else "BINARY"
+        index_suffix = "nocase" if os.name == "nt" else "binary"
+        for field in ("current_path", "original_path"):
+            db.execute(
+                f"CREATE INDEX IF NOT EXISTS idx_media_catalog_{field}_{index_suffix} "
+                f"ON media_catalog({field} COLLATE {path_collation}, last_seen_at DESC)"
+            )
         db.execute("""CREATE TABLE IF NOT EXISTS scan_session (
             session_id TEXT PRIMARY KEY,
             root_id TEXT NOT NULL,
@@ -1173,11 +1181,12 @@ def media_id_for_path(db_path, path):
     real = _canonical_path(path)
     init_catalog_schema(db_path)
     with _connect(db_path) as db:
+        path_collation = "NOCASE" if os.name == "nt" else "BINARY"
         row = db.execute(
-            """SELECT media_id FROM media_catalog
-               WHERE current_path COLLATE NOCASE = ?
-                  OR original_path COLLATE NOCASE = ?
-               ORDER BY last_seen_at DESC LIMIT 1""",
+            f"""SELECT media_id FROM media_catalog
+                WHERE current_path COLLATE {path_collation} = ?
+                   OR original_path COLLATE {path_collation} = ?
+                ORDER BY last_seen_at DESC LIMIT 1""",
             (real, real),
         ).fetchone()
     return str(row["media_id"]) if row else None
