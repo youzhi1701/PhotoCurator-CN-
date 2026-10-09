@@ -23,6 +23,24 @@ class StorageCleanupContainmentTests(unittest.TestCase):
             self.assertFalse((thumbs / "cache.jpg").exists())
             self.assertEqual((offline / "favorite.jpg").read_bytes(), b"must remain")
 
+    def test_nested_feature_link_cannot_escape_cache_tree(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            features = base / "data" / "config" / "dedup_features"
+            photos = base / "external-photos"
+            features.mkdir(parents=True)
+            photos.mkdir()
+            user_file = photos / "original.jpg"
+            user_file.write_bytes(b"user photo")
+            (features / "index.bin").write_bytes(b"rebuildable")
+            try:
+                (features / "linked-photos").symlink_to(photos, target_is_directory=True)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"symlink unavailable: {exc}")
+            result = clear_rebuildable_storage(base / "data", "features")
+            self.assertEqual(result["removed"], 1)
+            self.assertEqual(user_file.read_bytes(), b"user photo")
+
     def test_symlinked_storage_roots_cannot_delete_external_photos(self):
         for kind, parts in (
             ("offline", ("offline_previews",)),
