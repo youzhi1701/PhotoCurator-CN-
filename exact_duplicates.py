@@ -30,7 +30,7 @@ def _file_identity(info_stat):
 
 
 def _stat_key(path):
-    info = _file_identity(os.stat(path))
+    info = _file_identity(os.stat(path, follow_symlinks=False))
     return info, json.dumps([os.path.realpath(str(path)), *info],
                             ensure_ascii=False, separators=(",", ":"))
 
@@ -82,14 +82,46 @@ def _save_cache(cache_path, entries):
                 pass
 
 
+
+class _HashCancelled(Exception):
+    """Abort the entire duplicate pass; a partial group is never approval."""
+
+
+def _sha256_guarded(raw, expected, cancelled=None):
+    """Hash only the exact regular-file identity indexed before the read.
+
+    A cache key or a matching path name cannot prove the opened bytes belong
+    to the originally indexed photo (notably during USB hot-swap).
+    """
+    if cancelled is not None and cancelled():
+        raise _HashCancelled()
+    if _stat_key(raw)[0] != expected:
+        return None
+    sha = hashlib.sha256()
+    with open(raw, "rb") as fh:
+        if _file_identity(os.fstat(fh.fileno())) != expected:
+            return None
+        while True:
+            if cancelled is not None and cancelled():
+                raise _HashCancelled()
+            block = fh.read(CHUNK)
+            if not block:
+                break
+            sha.update(block)
+        if _file_identity(os.fstat(fh.fileno())) != expected:
+            return None
+    if _stat_key(raw)[0] != expected:
+        return None
+    return sha.hexdigest()
+
 def exact_duplicate_groups(paths, *, cache_path=None, cancelled=None):
     """Return byte-identical groups, preserving the original traversal order.
 
     Distinct paths with the same size are streamed through SHA-256 (1 MiB
     chunks). A file changed while being hashed is discarded, never accepted.
     Unique-size files are never opened for hashing. Unreadable/missing files
-    are safely ignored. The optional cache uses path + high-resolution stat
-    identity and is pruned each completed scan.
+    are safely ignored. A cached hash is always reverified if it could prove
+    a duplicate; caches never authorize a false byte-exact match.
 
     Results are read-only recommendations; a matching digest never authorizes
     file deletion.
@@ -114,6 +146,7 @@ def exact_duplicate_groups(paths, *, cache_path=None, cancelled=None):
     old_cache = _load_cache(cache_path)
     keep_cache = {}
     by_content = defaultdict(list)
+    cached_paths = set()
     for size, bucket in by_size.items():
         if len(bucket) < 2:
             continue
@@ -122,33 +155,54 @@ def exact_duplicate_groups(paths, *, cache_path=None, cancelled=None):
                 return []
             previous_identity, cache_key = stats[raw]
             try:
-                current_identity, _ = _stat_key(raw)
-                if current_identity != previous_identity:
+                if _stat_key(raw)[0] != previous_identity:
                     continue
                 digest = old_cache.get(cache_key)
                 if digest is None:
-                    sha = hashlib.sha256()
-                    with open(raw, "rb") as fh:
-                        # Path stat alone has a TOCTOU window: a different
-                        # file can be opened after the pre-hash check. Bind
-                        # the content digest to the opened file descriptor.
-                        if _file_identity(os.fstat(fh.fileno())) != previous_identity:
-                            continue
-                        for block in iter(lambda: fh.read(CHUNK), b""):
-                            if cancelled is not None and cancelled():
-                                return []
-                            sha.update(block)
-                        if _file_identity(os.fstat(fh.fileno())) != previous_identity:
-                            continue
-                    digest = sha.hexdigest()
-                after_identity, _ = _stat_key(raw)
-                if after_identity != previous_identity:
+                    digest = _sha256_guarded(raw, previous_identity, cancelled)
+                else:
+                    cached_paths.add(raw)
+                if digest is None or _stat_key(raw)[0] != previous_identity:
                     continue
+            except _HashCancelled:
+                return []
             except (OSError, ValueError):
                 continue
             keep_cache[cache_key] = digest
             by_content[(size, digest)].append(raw)
 
-    if cancelled is None or not cancelled():
-        _save_cache(cache_path, keep_cache)
-    return [members for members in by_content.values() if len(members) > 1]
+    # The JSON cache is a performance hint, *not* cryptographic evidence.
+    # If a cached hash participates in a candidate duplicate group, stream
+    # its real bytes again before exposing that group as "byte-exact".
+    # A forged/stale cache can otherwise claim two different images are equal
+    # despite no actual SHA-256 calculation in the current scan.
+    verified = defaultdict(list)
+    for (size, digest), members in by_content.items():
+        if len(members) < 2:
+            continue
+        if not any(path in cached_paths for path in members):
+            verified[(size, digest)].extend(members)
+            continue
+        for raw in members:
+            if cancelled is not None and cancelled():
+                return []
+            if raw not in cached_paths:
+                verified[(size, digest)].append(raw)
+                continue
+            identity, cache_key = stats[raw]
+            try:
+                actual_digest = _sha256_guarded(raw, identity, cancelled)
+            except _HashCancelled:
+                return []
+            except (OSError, ValueError):
+                actual_digest = None
+            if actual_digest is None:
+                keep_cache.pop(cache_key, None)
+                continue
+            keep_cache[cache_key] = actual_digest
+            verified[(size, actual_digest)].append(raw)
+
+    if cancelled is not None and cancelled():
+        return []
+    _save_cache(cache_path, keep_cache)
+    return [members for members in verified.values() if len(members) > 1]
