@@ -9,6 +9,7 @@
 
 > Windows 10 / 11 x64 · 正式安装版 EXE  
 > 当前源码为 **v1.7.11 Candidate**；只有 Windows Candidate、数据完整性、安装/升级与发布验证全部通过，并且新的 EXE 真正发布后，这里的正式下载链接才会切到 v1.7.11。
+> **最新试用版：v1.7.11 Candidate（非正式版）**。可前往 [Windows CI 测试安装包](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37867935635) 的 Artifacts 下载 **PhotoCurator-v1.7.11-test-installer**（包含 EXE 和 SHA-256；有效期 14 天）。第一次正式使用前请先用副本/测试数据验证，真实硬盘验收尚未完成。
 <!-- LATEST_RELEASE_END -->
 
 > 面向大图库的 Windows 照片清理工具。v1.7.11 Candidate 在稳定桌面运行层基础上继续收口持久 Catalog、扫描会话与缺失判定、离线图库与设备识别、文件生命周期、数据库升级保护和 Windows 发布门禁；当前仍处于 Candidate 验证阶段，不等同于已发布 Stable。
