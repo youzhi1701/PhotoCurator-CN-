@@ -965,6 +965,7 @@ jobs:
           python -m unittest -v test_catalog_thumb_disk_swap
           python -m unittest -v test_windows_uninstall_retention
           python -m unittest -v test_storage_cleanup_containment
+          python -m unittest -v test_trash_manifest_containment
           python -m unittest -v test_scene_labels
           python -m unittest -v test_raw_pair_protection
           python -m unittest -v test_unavailable_decoder_catalog
