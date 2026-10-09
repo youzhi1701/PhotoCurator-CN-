@@ -44,6 +44,7 @@ jobs:
             test_quality_annotations.py \
             quality_annotations_input_test.py \
             test_runtime_migration_wal.py \
+            test_background_process_crash.py \
             test_offline_preview_guard.py \
             test_unavailable_decoder_catalog.py \
             test_generated_album_filters.py \
@@ -948,6 +949,7 @@ jobs:
       - name: Background task history regression
         run: |
           python -m unittest -v test_background_task_history
+          python -m unittest -v test_background_process_crash
           python -m unittest -v test_catalog_unique_count
           python -m unittest -v test_catalog_path_indexes
           python -m unittest -v test_catalog_case_identity
