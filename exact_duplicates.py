@@ -21,13 +21,16 @@ CACHE_VERSION = 1
 CHUNK = 1024 * 1024
 
 
-def _stat_key(path):
-    info_stat = os.stat(path)
+def _file_identity(info_stat):
     if not stat.S_ISREG(info_stat.st_mode):
         raise OSError("not a regular file")
-    info = (int(info_stat.st_size), int(info_stat.st_mtime_ns),
+    return (int(info_stat.st_size), int(info_stat.st_mtime_ns),
             int(getattr(info_stat, "st_ctime_ns", 0)),
             int(info_stat.st_dev), int(info_stat.st_ino))
+
+
+def _stat_key(path):
+    info = _file_identity(os.stat(path))
     return info, json.dumps([os.path.realpath(str(path)), *info],
                             ensure_ascii=False, separators=(",", ":"))
 
@@ -126,10 +129,17 @@ def exact_duplicate_groups(paths, *, cache_path=None, cancelled=None):
                 if digest is None:
                     sha = hashlib.sha256()
                     with open(raw, "rb") as fh:
+                        # Path stat alone has a TOCTOU window: a different
+                        # file can be opened after the pre-hash check. Bind
+                        # the content digest to the opened file descriptor.
+                        if _file_identity(os.fstat(fh.fileno())) != previous_identity:
+                            continue
                         for block in iter(lambda: fh.read(CHUNK), b""):
                             if cancelled is not None and cancelled():
                                 return []
                             sha.update(block)
+                        if _file_identity(os.fstat(fh.fileno())) != previous_identity:
+                            continue
                     digest = sha.hexdigest()
                 after_identity, _ = _stat_key(raw)
                 if after_identity != previous_identity:

@@ -77,6 +77,31 @@ class ExactDuplicateIndexTests(unittest.TestCase):
             self.assertEqual(exact_duplicate_groups(
                 [a, b], cancelled=lambda: True), [])
 
+    def test_path_swap_between_stat_and_open_is_not_exact_match(self):
+        import builtins
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            actual = root / "original.jpg"
+            other = root / "comparison.jpg"
+            impostor = root / "different-file.jpg"
+            actual.write_bytes(b"AAAA")
+            other.write_bytes(b"BBBB")
+            impostor.write_bytes(b"BBBB")
+            real_open = builtins.open
+
+            def redirected_open(path, mode="r", *args, **kwargs):
+                if str(path) == str(actual) and mode == "rb":
+                    # This models a removable-path race immediately after
+                    # stat: the opened descriptor belongs to another inode,
+                    # even though the user-visible path still stats as original.
+                    return real_open(impostor, mode, *args, **kwargs)
+                return real_open(path, mode, *args, **kwargs)
+
+            with patch("exact_duplicates.open", side_effect=redirected_open, create=True):
+                self.assertEqual(exact_duplicate_groups([actual, other]), [])
+            self.assertEqual(actual.read_bytes(), b"AAAA")
+            self.assertEqual(other.read_bytes(), b"BBBB")
+
     def test_byte_identical_alias_is_grouped_even_when_image_decode_fails(self):
         dd = FastBatchDeduplicator(use_orb_confirm=False)
         dd.reset()
