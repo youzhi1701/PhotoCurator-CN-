@@ -49,7 +49,7 @@ class ExportFileContainmentTests(unittest.TestCase):
         self.assertEqual((body['copied'], body['failed']), (1, 0))
         dest = Path(body['dest'])
         self.assertNotEqual(dest, shortcut)
-        self.assertEqual(dest.parent, self.root)
+        self.assertEqual(dest.parent.resolve(), self.root.resolve())
         self.assertEqual((dest / '001_photo.jpg').read_bytes(), self.photo.read_bytes())
         self.assertEqual(existing.read_bytes(), b'valuable user photo')
 
