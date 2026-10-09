@@ -2,7 +2,21 @@
 
 > 此文件记录已经提交并验证的代码工作，以及尚未满足正式发布标准的工作。**不得把候选安装包、自动化测试或 GitHub 合并等同于用户实机验收与正式发布。**
 >
-> 最初历史开发基线为 main `81dbb510deb58f191448ed13d791094f9a1f9d7e`（PR #50）；最新候选的业务代码已合并至 main `00dabf12be59ca940d0dfa942fcc53669c552248`（PR #69）。每次恢复时必须重新读取 GitHub main 最新 SHA、未合并 PR、CI 和构件；本文件不是实时 API。
+> 最初历史开发基线为 main `81dbb510deb58f191448ed13d791094f9a1f9d7e`（PR #50）；最新安全修复已经合并至 main `f6d9f05674dd2c3e0f13a2f52a7bf55e815ff320`（PR #74）；**现有公开下载的 v1.7.12 测试构件构建于本轮修改之前，并不包含下列修复**。每次恢复时必须重新读取 GitHub main 最新 SHA、未合并 PR、CI 和构件；本文件不是实时 API。
+
+## 2026-10-09 最新完成的代码修复（非 Stable 发布）
+
+| PR | 本轮内容 | Source / Windows CI |
+| --- | --- | --- |
+| [#70](https://github.com/youzhi1701/PhotoCurator-CN-/pull/70) | SQLite 旧版迁移改为在线 WAL 一致性快照、快速完整性检查、原子无覆盖备份；新增断电恢复相关回归 | [源码通过](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37871879060) / [Windows 通过](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37871878978) |
+| [#71](https://github.com/youzhi1701/PhotoCurator-CN-/pull/71) | 后台已恢复任务在处理器尚未注册时不再反复空转；注册后按优先级继续处理 | [源码通过](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37872005024) / [Windows 通过](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37872004843) |
+| [#72](https://github.com/youzhi1701/PhotoCurator-CN-/pull/72) | 清理缓存/日志/离线预览时拒绝透过符号链接、Junction 和重定向子目录触及照片源 | [源码通过](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37872342494) / [Windows 通过](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37872342577) |
+| [#73](https://github.com/youzhi1701/PhotoCurator-CN-/pull/73) | SHA-256 精确去重在读文件前后验证已打开文件句柄身份，防扫描期间路径替换导致误匹配 | [源码通过](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37872291129) / [Windows 通过](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37872291322) |
+| [#74](https://github.com/youzhi1701/PhotoCurator-CN-/pull/74) | 自动 SQLite 备份先完整校验后原子发布；纳秒唯一命名，避免误清理升级前历史恢复点 | [源码通过](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37872588044) / [Windows 通过](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37872588038) |
+
+另外，主线提交 `3c540af`、`0358fa0`、`b679db1` 修正智能质量评分异常输入容错，补充测试并纳入检查。
+
+**严格交付边界：** 上述仅代表相应代码开发和 CI 已完成；完整 V2.0 的场景语义模型/误判评测、真实大型硬盘与多品牌 RAW/HEIF、断电实盘、Windows 多机器及高 DPI 交互验收、真实数字签名仍未完成。当前不得创建/宣称 V2.0 Stable，也不得把旧版 v1.7.12 构件冒充本轮最终安装包。
 
 ## 最新已合并的 V2.0 开发升级
 
