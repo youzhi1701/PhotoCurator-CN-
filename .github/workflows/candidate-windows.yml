@@ -116,7 +116,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "rank topn regression failed" }
           # Previously the Windows candidate did not execute the catalog,
           # source-identity, RAW/JPEG pairing or sidecar safety regressions.
-          python -m unittest -v test_catalog_unique_count test_missing_delete_safety test_safe_move_integrity test_raw_pair_protection test_scene_labels test_quality_annotations test_offline_preview_guard test_storage_cleanup_containment
+          python -m unittest -v test_catalog_unique_count test_missing_delete_safety test_safe_move_integrity test_raw_pair_protection test_unavailable_decoder_catalog test_scene_labels test_quality_annotations test_offline_preview_guard test_storage_cleanup_containment
           if ($LASTEXITCODE -ne 0) { throw "Windows native catalog/file/scene regression failed" }
           python release_gate_test.py
           if ($LASTEXITCODE -ne 0) { throw "release_gate_test failed" }
