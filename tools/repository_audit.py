@@ -91,11 +91,11 @@ def audit():
     test_files = {path.name for path in (ROOT / "tests").glob("*.py")}
     for workflow in sorted(workflows.glob("*.yml")):
         content = workflow.read_text(encoding="utf-8")
-        for match in re.finditer(r"tests/([A-Za-z_][A-Za-z_0-9]*\.py)", content):
+        for match in re.finditer(r"tests/([\w]+\.py)", content):
             name = match.group(1)
             if name not in test_files:
                 errors.append(f"Broken CI test file: {workflow.name} -> tests/{name}")
-        for match in re.finditer(r"(?<![A-Za-z_0-9])tests\.([A-Za-z_][A-Za-z_0-9]*)", content):
+        for match in re.finditer(r"(?<![\w])tests\.([\w]+)", content):
             name = match.group(1) + ".py"
             if name not in test_files:
                 errors.append(f"Broken CI test module: {workflow.name} -> {name}")
