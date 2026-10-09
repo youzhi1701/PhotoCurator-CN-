@@ -17,7 +17,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request'
     runs-on: windows-latest
     env:
-      CANDIDATE_VERSION: "1.7.19"
+      CANDIDATE_VERSION: "2.0.0"
       PYTHONUTF8: "1"
       PYTHONIOENCODING: "utf-8"
 
@@ -104,7 +104,7 @@ jobs:
       - name: Release-gate source tests
         shell: powershell
         run: |
-          python -m py_compile db_runtime.py desktop_app.py runtime_paths.py catalog.py photo_curator.py background_tasks.py raw_loader.py exact_duplicates.py test_exact_duplicates.py test_export_containment.py test_permanent_volume_guard.py ui_smoke_test.py windows_smoke_test.py performance_gate_test.py
+          python -m py_compile db_runtime.py desktop_app.py runtime_paths.py catalog.py photo_curator.py background_tasks.py raw_loader.py exact_duplicates.py test_exact_duplicates.py test_export_containment.py test_permanent_volume_guard.py test_cull_paged_review.py ui_smoke_test.py windows_smoke_test.py performance_gate_test.py
           if ($LASTEXITCODE -ne 0) { throw "py_compile failed" }
           python -c "import runpy; runpy.run_path('\u57fa\u7840\u5192\u70df\u6d4b\u8bd5.py', run_name='__main__')"
           if ($LASTEXITCODE -ne 0) { throw "base smoke test failed" }
@@ -118,7 +118,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "rank topn regression failed" }
           # Previously the Windows candidate did not execute the catalog,
           # source-identity, RAW/JPEG pairing or sidecar safety regressions.
-          python -m unittest -v test_catalog_unique_count test_device_connection_identity test_missing_delete_safety test_permanent_volume_guard test_scan_error_fail_closed test_catalog_path_indexes test_catalog_case_identity test_safe_move_integrity test_raw_pair_protection test_unavailable_decoder_catalog test_generated_album_filters test_export_containment test_scene_labels test_quality_annotations test_offline_preview_guard test_catalog_thumb_disk_swap test_storage_cleanup_containment test_trash_manifest_containment
+          python -m unittest -v test_catalog_unique_count test_device_connection_identity test_missing_delete_safety test_permanent_volume_guard test_scan_error_fail_closed test_catalog_path_indexes test_catalog_case_identity test_safe_move_integrity test_raw_pair_protection test_unavailable_decoder_catalog test_generated_album_filters test_export_containment test_cull_paged_review test_scene_labels test_quality_annotations test_offline_preview_guard test_catalog_thumb_disk_swap test_storage_cleanup_containment test_trash_manifest_containment
           if ($LASTEXITCODE -ne 0) { throw "Windows native catalog/file/scene regression failed" }
           python release_gate_test.py
           if ($LASTEXITCODE -ne 0) { throw "release_gate_test failed" }
@@ -293,12 +293,12 @@ jobs:
           Set-Content -Path "$exe.sha256" -Value $sha -Encoding ascii
           Write-Host "Verified candidate file integrity hash: $hash"
 
-      - name: Upload v1.7.19 test installer
+      - name: Upload v2.0.0 test installer
         uses: actions/upload-artifact@v7
         with:
-          name: PhotoCurator-v1.7.19-test-installer
+          name: PhotoCurator-v2.0.0-test-installer
           path: |
-            release/PhotoCurator-Setup-v1.7.19.exe
-            release/PhotoCurator-Setup-v1.7.19.exe.sha256
+            release/PhotoCurator-Setup-v2.0.0.exe
+            release/PhotoCurator-Setup-v2.0.0.exe.sha256
           if-no-files-found: error
           retention-days: 14

@@ -20,4 +20,20 @@ assert "workspaceScrollByStep.set(workspaceViewKey(currentStep,folder)" in sourc
 assert "workspaceScrollByStep.get(workspaceViewKey(requestedStep,requestedFolder))" in tabs
 assert "if(requestedStep==='dedup')return;" in tabs
 assert "workspaceScrollByStep.get(workspaceViewKey('dedup',requestFolder))" in dedup
-print("Navigation, scroll restoration and format filter guards OK")
+catalog=source.split("async function loadCatalogRoot(",1)[1].split("let lastStorageSummaryAt=",1)[0]
+assert "token=++catalogRootRequestSerial" in catalog
+assert "token!==catalogRootRequestSerial" in catalog
+assert "if(token===catalogRootRequestSerial)catalogRootLoading=false" in catalog
+assert "catalogRootRequestSerial++" in source.split("function resetWorkspaceForFolder()",1)[1].split("function updateStartAvailability()",1)[0]
+cull_loader=source.split("async function loadCullPage(",1)[1].split("function updateCullLoadMore()",1)[0]
+assert "requestedFilter!==cullFilter" in cull_loader
+assert "requestedType!==cullType" in cull_loader
+assert "token!==cullChunkToken" in cull_loader
+assert "CULL_WINDOW_CAP" in cull_loader
+assert "cullNextOffset" in cull_loader
+dedup_loader=source.split("async function loadDedupPage(",1)[1].split("function updateDedupLoadMore()",1)[0]
+assert "DEDUP_WINDOW_CAP" in dedup_loader
+assert "dedupNextOffset" in dedup_loader
+assert "captureGalleryAnchor" in source and "restoreGalleryAnchor" in source
+assert "loadCullPage(false)" in source and "loadDedupPage(false)" in source
+print("Stale catalog/root navigation, paged review and scroll guards OK")

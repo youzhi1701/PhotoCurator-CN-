@@ -1,8 +1,8 @@
 {
   "product": "PhotoCurator",
   "channel": "candidate",
-  "version": "1.7.19",
-  "installer": "PhotoCurator-Setup-v1.7.19.exe",
+  "version": "2.0.0",
+  "installer": "PhotoCurator-Setup-v2.0.0.exe",
   "upgrade_mode": "in_place",
   "same_app_id": true,
   "data_root": "%LOCALAPPDATA%/PhotoCurator/data",
@@ -24,7 +24,7 @@
   "replace": [
     "app"
   ],
-  "notes": "v1.7.19 Candidate：人工永久删除的复核令牌绑定原片所属实体磁盘身份，后台队列执行及原片不可逆 unlink 前再次核验物理卷（含未登记历史目录）；旧任务缺失实体身份直接拒绝，防止 USB 盘符复用时误删异盘照片。继承 v1.7.18 精确去重缓存防投毒与无覆盖导出。在 v1.7.17 的硬盘身份防护之外，精确重复缓存只作为性能提示；缓存 SHA-256 参与候选重复组时，必须重新核对实际文件字节及扫描前后设备/文件身份，防止缓存伪造导致不相同的照片误判为字节级重复。已登记的图库外接盘重新占用原盘符时，软件回收站基于持久 Catalog 的物理卷身份确认在线可用性，阻止错误磁盘的清单导入/覆写、缩略图展示、恢复、移动与永久删除，后台排队执行时再次核验。继续保留 v1.7.16 的 RAW/JPG 一对一保护和 DirEntry 安全扫描；真实设备实盘、签名与语义识别误判集验收仍未完成。",
+  "notes": "V2.0 Candidate 测试版：全库清晰度/格式/待删除筛选改由服务器统一过滤和分页，支持连续滚动、前后窗口回溯，Cull 单窗口最多 600 张卡片、相似组最多 192 组；完整图库范围的待删除总数与计数一致；稀有 RAW/HEIF 扩展可在未加载其照片前选中；离线图库快速切换时旧请求不会覆盖新视图。保持原先实体硬盘身份校验、可恢复回收站、去重准确性、真实 v1.5.0 升级与卸载保护。仍需用户真实大图库/USB/RAW/Windows QA，未签名不得作为正式 Stable。",
   "release_date": "2026-10-09",
   "published_version": "1.5.0",
   "published_installer": "PhotoCurator-Setup-v1.5.0.exe"

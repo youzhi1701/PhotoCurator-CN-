@@ -761,7 +761,7 @@ def _prune_index_db():
 threading.Thread(target=_prune_index_db, daemon=True,
                  name='photocurator-index-prune').start()
 
-APP_VERSION = "1.7.19"
+APP_VERSION = "2.0.0"
 IS_CODESPACES = os.environ.get('CODESPACES', '').strip().lower() == 'true'
 CODESPACE_NAME = os.environ.get('CODESPACE_NAME', '').strip()
 _CODESPACES_DOMAIN_RAW = os.environ.get(
@@ -5087,7 +5087,12 @@ let lastRankSig='', lastCullSig='', lastDedupSig='', lastStep=null, weightTimer=
 // Keep boot-critical state together here so setupFilterBar() cannot touch
 // a later lexical declaration and abort the rest of the interaction bindings.
 let cullChunkToken=0, cullVisibleTotal=0;
+let cullNextOffset=0, cullWindowStart=0;
+let cullPageBusy=false, cullGlobalStats=null, cullAvailableFormats=[];
+const CULL_WINDOW_CAP=600, CULL_FETCH_SIZE=200;
 let dedupChunkToken=0;
+let dedupNextOffset=0, dedupWindowStart=0, dedupPageBusy=false;
+const DEDUP_WINDOW_CAP=192;
 let dedupStatusFilter='pending', dedupVisibleTotal=0;
 let dedupStatusCounts={pending:0,reviewed:0,updated:0};
 // These controls are needed by setupFilterBar() during initial page boot.
@@ -5599,6 +5604,10 @@ function updateVisibleStepStatus(step,d){
   if('sharp'in st)document.getElementById('sSharp').textContent=st.sharp;
   if('blurry'in st)document.getElementById('sBlurry').textContent=st.blurry;
   if('soft'in st)document.getElementById('sSoft').textContent=st.soft;
+  if(step==='cull'&&'markable'in st){
+    cullGlobalStats={move_selected:Number(st.move_selected||0),markable:Number(st.markable||0)};
+    updateCullMoveButton();
+  }
   if(st.folder_status)folderStatus=st.folder_status;
   if('duplicate_groups'in st)document.getElementById('sGroups').textContent=st.duplicate_groups;
   else if('groups'in st)document.getElementById('sGroups').textContent=st.groups;
@@ -5683,7 +5692,11 @@ document.querySelectorAll('.step').forEach(t=>t.onclick=()=>{
       document.getElementById('progressWrap').style.display='none';
       return;
     }
-    if(currentStep==='cull')renderCullStep(cullRowsForPayload(d));
+    if(currentStep==='cull'){
+      cullReady=!!d.complete;
+      renderCullStep(cullRowsForPayload(d));
+      if(d.complete)loadCullPage(true);
+    }
     else if(currentStep==='dedup'){
       const st=d.stats||{};
       dedupStatusCounts={
@@ -5709,37 +5722,41 @@ let cullFilter='all', cullType='all', rankFilter='all', lastFmtSig='';
 function setupFilterBar(){
   const bar=document.getElementById('filterBar');
   if(currentStep==='cull'){
-    if(!photos.length && !coreRunning && !isRunning){
+    if(!photos.length && !coreRunning && !isRunning && !cullVisibleTotal &&
+       !(coreSnapshots.cull&&coreSnapshots.cull.stats&&coreSnapshots.cull.stats.images)){
       bar.style.display='none';
       bar.innerHTML='';
       return;
     }
     const opts=[['all','全部'],['sharp','清晰'],['soft','轻微软 ★'],['blurry','模糊'],['pending','待删除']];
     // Per-format chips (NEF, CR2, ARW, ...) built from what's actually loaded.
-    const rawFmts=[...new Set(photos.filter(p=>p.raw).map(p=>p.fmt||'RAW'))].sort();
-    const hasHeic=photos.some(p=>p.heic);
+    const globalFormats=cullAvailableFormats.length?cullAvailableFormats:photos;
+    const rawFmts=[...new Set(globalFormats.filter(p=>p.raw).map(p=>p.fmt||'RAW'))].sort();
+    const hasHeic=globalFormats.some(p=>p.heic);
     const types=[['all','全部格式'],['raw','仅 RAW'],['standard','普通图片'],
       ...(hasHeic?[['heic','仅 HEIC']]:[]),
       ...(rawFmts.length>1?rawFmts.map(f=>['ext:'+f.toLowerCase(),'仅 '+f]):[])];
-    if(!types.some(([k])=>k===cullType))cullType='all';
+    // Keep a selected RAW subtype even when this page happens to contain
+    // no examples; the backend filters the entire library, not visible cards.
     bar.style.display='flex';
-    const markable=photos.filter(p=>!['pending_trash','pending_permanent_delete','trashed','permanently_deleted','pending_restore'].includes(p.lifecycle));
-    const moveSelected=markable.filter(p=>p.move_selected===true).length;
+    const markable=photos.filter(p=>visibleInReview(p));
+    const moveSelected=cullGlobalStats ? Number(cullGlobalStats.move_selected||0)
+      :markable.filter(p=>p.move_selected===true).length;
+    const moveTotal=cullGlobalStats ? Number(cullGlobalStats.markable||0) :markable.length;
     bar.innerHTML=opts.map(([k,l])=>`<button class="chip${k===cullFilter?' active':''}" data-f="${k}">${l}</button>`).join('')
       +`<span class="chip-sep"></span>`
       +types.map(([k,l])=>`<button class="chip${k===cullType?' active':''}" data-t="${k}">${l}</button>`).join('')
-      +(markable.length?`<span class="chip-sep"></span><span class="move-summary">待删除 <b id="cullMoveCount">${moveSelected}/${markable.length}</b></span><button class="chip move-bulk" id="moveSelAll">选择模糊</button><button class="chip move-bulk" id="moveSelNone">取消模糊选择</button>`:'')
-      +`<span class="chip-sep"></span><button class="chip" id="cullLoadMore" style="display:none"></button>`;
+      +(moveTotal?`<span class="chip-sep"></span><span class="move-summary">待删除 <b id="cullMoveCount">${moveSelected}/${moveTotal}</b></span><button class="chip move-bulk" id="moveSelAll">选择模糊</button><button class="chip move-bulk" id="moveSelNone">取消模糊选择</button>`:'')
+      +`<span class="chip-sep"></span><button class="chip" id="cullLoadEarlier" style="display:none"></button><button class="chip" id="cullLoadMore" style="display:none"></button>`;
     bar.querySelectorAll('.chip[data-f]').forEach(c=>c.onclick=()=>{cullFilter=c.dataset.f;gPage=0;
-      bar.querySelectorAll('.chip[data-f]').forEach(x=>x.classList.toggle('active',x.dataset.f===cullFilter));
-      renderCullStep(photos);});
+      cullLiveStore.clear();lastCullSig='';loadCullPage(true);});
     bar.querySelectorAll('.chip[data-t]').forEach(c=>c.onclick=()=>{cullType=c.dataset.t;gPage=0;
-      bar.querySelectorAll('.chip[data-t]').forEach(x=>x.classList.toggle('active',x.dataset.t===cullType));
-      renderCullStep(photos);});
+      cullLiveStore.clear();lastCullSig='';loadCullPage(true);});
     const ma=document.getElementById('moveSelAll'),mn=document.getElementById('moveSelNone');
     if(ma)ma.onclick=()=>setAllBlurryMoveSelection(true);
     if(mn)mn.onclick=()=>setAllBlurryMoveSelection(false);
     const more=document.getElementById('cullLoadMore');if(more)more.onclick=()=>loadCullPage(false);
+    const earlier=document.getElementById('cullLoadEarlier');if(earlier)earlier.onclick=()=>loadCullPage(false,true);
     updateCullMoveButton();updateCullLoadMore();
     return;
   }
@@ -5748,9 +5765,10 @@ function setupFilterBar(){
     const counts=dedupStatusCounts||{};
     const opts=[['pending','待筛选'],['reviewed','已筛选'],['updated','新增待复核']];
     bar.innerHTML=opts.map(([k,l])=>`<button class="chip${dedupStatusFilter===k?' active':''}" data-dstatus="${k}">${l} <span>${Number(counts[k]||0)}</span></button>`).join('')
-      +'<span class="chip-sep"></span><button class="chip" id="dedupLoadMore" style="display:none"></button>';
+      +'<span class="chip-sep"></span><button class="chip" id="dedupLoadEarlier" style="display:none"></button><button class="chip" id="dedupLoadMore" style="display:none"></button>';
     bar.querySelectorAll('[data-dstatus]').forEach(b=>b.onclick=()=>{dedupStatusFilter=b.dataset.dstatus;loadDedupPage(true);});
     const more=document.getElementById('dedupLoadMore');if(more)more.onclick=()=>loadDedupPage(false);
+    const earlier=document.getElementById('dedupLoadEarlier');if(earlier)earlier.onclick=()=>loadDedupPage(false,true);
     updateDedupLoadMore();
     return;
   }
@@ -5785,9 +5803,12 @@ function normalizedFolder(p){
 }
 function sameFolder(a,b){return normalizedFolder(a)===normalizedFolder(b);}
 function resetWorkspaceForFolder(){
-  cullChunkToken++;
+  catalogRootRequestSerial++;catalogRootLoading=false;
+  cullChunkToken++;dedupRequestSerial++;
   cullLiveStore.clear();dedupLiveStore.clear();
-  cullReady=false;
+  cullWindowStart=0;cullNextOffset=0;cullVisibleTotal=0;cullGlobalStats=null;cullPageBusy=false;cullAvailableFormats=[];
+  dedupWindowStart=0;dedupNextOffset=0;dedupVisibleTotal=0;dedupPageBusy=false;
+  coreSnapshots={cull:null,dedup:null};cullReady=false;
   photos=[];lbList=[];folderStatus={};
   lastRankSig='';lastCullSig='';lastDedupSig='';lastCullMoveSig='';lastGallerySig='';
   gItems=[];gPage=0;
@@ -6102,7 +6123,7 @@ function renderSources(){
   });
 }
 
-let catalogRootLoading=false;
+let catalogRootLoading=false, catalogRootRequestSerial=0;
 function catalogCardHtml(item){
   const missing=item.state==='missing';
   const life=String(item.lifecycle||'normal');
@@ -6121,8 +6142,12 @@ function catalogCardHtml(item){
 }
 const CATALOG_PAGE_SIZE=400,CATALOG_DOM_WINDOW=800;
 async function loadCatalogRoot(rootId,{append=false,prepend=false}={}){
-  if(catalogRootLoading)return;
+  // A different root is a new navigation request, not "busy" work to drop.
+  // Ignore late responses from the previous root or an unselected folder.
+  if(catalogRootLoading&&(append||prepend))return;
+  const token=++catalogRootRequestSerial;
   catalogRootLoading=true;
+  const requestFolder=folder;
   showPhotoView();
   try{
     const sameView=catalogRootView&&catalogRootView.root_id===rootId;
@@ -6137,6 +6162,7 @@ async function loadCatalogRoot(rootId,{append=false,prepend=false}={}){
       :CATALOG_PAGE_SIZE;
     const r=await fetch('/api/catalog-root/'+encodeURIComponent(rootId)+'?limit='+limit+'&offset='+offset);
     const d=await r.json();
+    if(token!==catalogRootRequestSerial||!sameFolder(requestFolder,folder))return;
     if(!r.ok||d.error)throw new Error(d.error||('HTTP '+r.status));
     const incoming=d.items||[];
     const g=document.getElementById('gallery');
@@ -6220,9 +6246,9 @@ async function loadCatalogRoot(rootId,{append=false,prepend=false}={}){
       document.getElementById('photoView').appendChild(more);
     }
   }catch(err){
-    toast('读取离线图库失败：'+(err.message||'未知错误'),'bad');
+    if(token===catalogRootRequestSerial)toast('读取离线图库失败：'+(err.message||'未知错误'),'bad');
   }finally{
-    catalogRootLoading=false;
+    if(token===catalogRootRequestSerial)catalogRootLoading=false;
   }
 }
 
@@ -6476,8 +6502,14 @@ function snapshotPipelineConfig(){
 async function startStep(step,config=null){
   const cfg=config||snapshotPipelineConfig();
   runningStep=step;
-  if(step==='cull'){cullReady=false;cullLiveStore.clear();}
-  if(step==='dedup')dedupLiveStore.clear();
+  if(step==='cull'){
+    cullReady=false;cullLiveStore.clear();cullWindowStart=0;cullNextOffset=0;
+    cullGlobalStats=null;cullVisibleTotal=0;cullAvailableFormats=[];cullChunkToken++;
+  }
+  if(step==='dedup'){
+    dedupLiveStore.clear();dedupWindowStart=0;dedupNextOffset=0;
+    dedupVisibleTotal=0;dedupRequestSerial++;
+  }
   pollFailures=0;largeResultWarned=false;
   document.getElementById('progressWrap').style.display='block';
   if(step===currentStep){
@@ -6574,9 +6606,9 @@ function applyLatestCoreSnapshot(){
   if(!d)return;
   if(currentStep==='cull'){
     const rows=d.photos||[];
-    cullLiveStore.clear();rows.forEach(p=>{if(p&&p.path)cullLiveStore.set(p.path,p);});
-    renderCullStep(Array.from(cullLiveStore.values()));
-    if(!d.running)maybeLoadAllCull(d);
+    if(!d.running){cullReady=!!d.complete;loadCullPage(true);}
+    else{cullLiveStore.clear();rows.forEach(p=>{if(p&&p.path)cullLiveStore.set(p.path,p);});
+      renderCullStep(Array.from(cullLiveStore.values()));}
   }else if(currentStep==='dedup'){
     loadDedupPage(true);
   }
@@ -6589,6 +6621,11 @@ async function pollCore(){
   try{
     const rows=await Promise.all(['cull','dedup'].map(k=>fetch('/api/progress/'+k).then(r=>r.json())));
     coreSnapshots.cull=rows[0];coreSnapshots.dedup=rows[1];
+    cullReady=!!rows[0].complete;
+    if(rows[0].stats&&'markable'in rows[0].stats){
+      cullGlobalStats={move_selected:Number(rows[0].stats.move_selected||0),
+                       markable:Number(rows[0].stats.markable||0)};
+    }
     if(currentStep==='cull')updateVisibleStepStatus('cull',rows[0]);
     if(currentStep==='dedup')updateVisibleStepStatus('dedup',rows[1]);
     updateNewResultsButton();
@@ -6668,33 +6705,98 @@ function cullRowsForPayload(d){
   return Array.from(cullLiveStore.values());
 }
 
-async function loadCullPage(reset=false){
-  if(currentStep!=='cull')return;
-  const token=++cullChunkToken;
-  const offset=reset?0:cullLiveStore.size;
+function captureGalleryAnchor(selector,attr){
+  const scroll=document.querySelector('main.main'), gallery=document.getElementById('gallery');
+  if(!scroll||!gallery)return null;
+  const edge=scroll.getBoundingClientRect().top+64;
+  const nodes=gallery.querySelectorAll(selector);
+  for(const node of nodes){
+    const rect=node.getBoundingClientRect();
+    if(rect.bottom>edge && node.getAttribute(attr)!==null){
+      return {key:node.getAttribute(attr),top:rect.top,attr,selector};
+    }
+  }
+  return null;
+}
+function restoreGalleryAnchor(anchor){
+  if(!anchor)return;
+  const scroll=document.querySelector('main.main'),gallery=document.getElementById('gallery');
+  if(!scroll||!gallery)return;
+  // Dataset paths may contain punctuation; compare attributes rather than
+  // interpolating user filenames into a CSS selector.
+  const node=Array.from(gallery.querySelectorAll(anchor.selector))
+    .find(el=>el.getAttribute(anchor.attr)===anchor.key);
+  if(node)scroll.scrollTop+=node.getBoundingClientRect().top-anchor.top;
+}
+async function loadCullPage(reset=false,prepend=false){
+  if(currentStep!=='cull'||(cullPageBusy&&!reset))return;
+  const token=++cullChunkToken,requestFolder=folder;
+  const requestedFilter=cullFilter,requestedType=cullType;
+  const offset=reset?0:(prepend?Math.max(0,cullWindowStart-CULL_FETCH_SIZE):cullNextOffset);
+  const limit=prepend?Math.max(0,cullWindowStart-offset):CULL_FETCH_SIZE;
+  if(!limit)return;
+  cullPageBusy=true;
   try{
-    const d=await fetch('/api/results/cull?offset='+offset+'&limit=200')
-      .then(async r=>{const x=await r.json();if(!r.ok)throw new Error(x.error||('HTTP '+r.status));return x;});
-    if(token!==cullChunkToken||currentStep!=='cull')return;
-    if(reset)cullLiveStore.clear();
-    (d.photos||[]).forEach(p=>{if(p&&p.path)cullLiveStore.set(p.path,p);});
+    const url='/api/results/cull?offset='+offset+'&limit='+limit
+      +'&filter='+encodeURIComponent(requestedFilter)+'&ftype='+encodeURIComponent(requestedType);
+    const d=await fetch(url).then(async r=>{
+      const x=await r.json();
+      if(!r.ok)throw new Error(x.error||('HTTP '+r.status));
+      return x;
+    });
+    if(token!==cullChunkToken||currentStep!=='cull'||
+       !sameFolder(requestFolder,folder)||requestedFilter!==cullFilter||
+       requestedType!==cullType)return;
+    const anchor=reset?null:captureGalleryAnchor('.photo-card','data-path');
+    const incoming=(d.photos||[]).filter(p=>p&&p.path);
+    if(reset){cullLiveStore.clear();cullWindowStart=0;cullNextOffset=0;}
+    if(prepend){
+      const combined=[...incoming,...cullLiveStore.values()];
+      cullLiveStore.clear();
+      combined.slice(0,CULL_WINDOW_CAP).forEach(p=>cullLiveStore.set(p.path,p));
+      cullWindowStart=offset;
+      cullNextOffset=cullWindowStart+cullLiveStore.size;
+    }else{
+      incoming.forEach(p=>cullLiveStore.set(p.path,p));
+      cullNextOffset=Number(d.next_offset||offset+incoming.length);
+      while(cullLiveStore.size>CULL_WINDOW_CAP){
+        const first=cullLiveStore.keys().next().value;
+        cullLiveStore.delete(first);
+        cullWindowStart++;
+      }
+    }
     cullVisibleTotal=Number(d.total||0);
+    if(d.stats)cullGlobalStats=d.stats;
+    if(Array.isArray(d.formats))cullAvailableFormats=d.formats;
     photos=Array.from(cullLiveStore.values());
-    renderCullStep(photos);
-    setupFilterBar();
-    updateCullLoadMore();
-  }catch(err){toast('载入清晰度结果失败：'+(err.message||'未知错误'),'bad');}
+    lastCullSig='';renderCullStep(photos);
+    setupFilterBar();updateCullLoadMore();
+    if(!reset)requestAnimationFrame(()=>restoreGalleryAnchor(anchor));
+    else if(requestedFilter!=='all'||requestedType!=='all'){
+      const main=document.querySelector('main.main');if(main)main.scrollTop=0;
+    }
+  }catch(err){
+    if(token===cullChunkToken)toast('载入清晰度结果失败：'+(err.message||'未知错误'),'bad');
+  }finally{if(token===cullChunkToken)cullPageBusy=false;}
 }
 function updateCullLoadMore(){
-  const btn=document.getElementById('cullLoadMore');
-  if(!btn)return;
-  const left=Math.max(0,cullVisibleTotal-cullLiveStore.size);
-  btn.style.display=left?'inline-flex':'none';
-  btn.textContent=left?'加载更多（剩余 '+left+'）':'';
+  const next=document.getElementById('cullLoadMore');
+  const prev=document.getElementById('cullLoadEarlier');
+  const shown=cullLiveStore.size,first=shown?cullWindowStart+1:0;
+  const last=cullWindowStart+shown;
+  if(next){
+    const left=Math.max(0,cullVisibleTotal-cullNextOffset);
+    next.style.display=left?'inline-flex':'none';
+    next.textContent=left?'继续加载 · '+first+'–'+last+' / '+cullVisibleTotal:'';
+  }
+  if(prev){
+    prev.style.display=cullWindowStart>0?'inline-flex':'none';
+    prev.textContent=cullWindowStart>0?'加载上一批 · '+first+'–'+last+' / '+cullVisibleTotal:'';
+  }
 }
 async function loadRemainingCull(total,offset){return loadCullPage(false);}
 function maybeLoadAllCull(d){
-  cullVisibleTotal=Number(d.result_total||cullVisibleTotal||0);
+  if(cullFilter==='all'&&cullType==='all')cullVisibleTotal=Number(d.result_total||cullVisibleTotal||0);
   updateCullLoadMore();
 }
 function dedupRowsForPayload(d){
@@ -6703,43 +6805,70 @@ function dedupRowsForPayload(d){
   rows.forEach(g=>{if(g&&g.group_id!=null)dedupLiveStore.set(String(g.group_id),g);});
   return Array.from(dedupLiveStore.values());
 }
-// Bound initial DOM/image work; retain the existing explicit "load more".
+// Windowed similarity review: bounded DOM, incremental scroll loading.
 const DEDUP_UI_PAGE_SIZE=64;
 let dedupRequestSerial=0;
-async function loadDedupPage(reset=false){
-  if(currentStep!=='dedup')return;
-  const requestSerial=++dedupRequestSerial;
-  const requestFolder=folder,requestFilter=dedupStatusFilter;
-  const offset=reset?0:dedupLiveStore.size;
+async function loadDedupPage(reset=false,prepend=false){
+  if(currentStep!=='dedup'||(dedupPageBusy&&!reset))return;
+  const requestSerial=++dedupRequestSerial,requestFolder=folder,requestFilter=dedupStatusFilter;
+  const offset=reset?0:(prepend?Math.max(0,dedupWindowStart-DEDUP_UI_PAGE_SIZE):dedupNextOffset);
+  const limit=prepend?Math.max(0,dedupWindowStart-offset):DEDUP_UI_PAGE_SIZE;
+  if(!limit)return;
+  dedupPageBusy=true;
   try{
-    const d=await fetch('/api/results/dedup?offset='+offset+'&limit='+DEDUP_UI_PAGE_SIZE+'&status='+encodeURIComponent(requestFilter))
+    const url='/api/results/dedup?offset='+offset
+      +(prepend?'&limit='+limit:'&limit='+DEDUP_UI_PAGE_SIZE)
+      +'&status='+encodeURIComponent(requestFilter);
+    const d=await fetch(url)
       .then(async r=>{const x=await r.json();if(!r.ok)throw new Error(x.error||('HTTP '+r.status));return x;});
-    // Older responses must never replace the groups of another step/source/filter.
     if(requestSerial!==dedupRequestSerial||currentStep!=='dedup'||
        requestFilter!==dedupStatusFilter||!sameFolder(requestFolder,folder))return;
+    const anchor=reset?null:captureGalleryAnchor('.dedup-group','data-group');
+    const incoming=(d.photos||[]).filter(g=>g&&g.group_id!=null);
     if(reset)dedupLiveStore.clear();
-    (d.photos||[]).forEach(g=>dedupLiveStore.set(String(g.group_id),g));
+    if(reset){dedupWindowStart=0;dedupNextOffset=0;}
+    if(prepend){
+      const combined=[...incoming,...dedupLiveStore.values()];
+      dedupLiveStore.clear();
+      combined.slice(0,DEDUP_WINDOW_CAP).forEach(g=>dedupLiveStore.set(String(g.group_id),g));
+      dedupWindowStart=offset;
+      dedupNextOffset=dedupWindowStart+dedupLiveStore.size;
+    }else{
+      incoming.forEach(g=>dedupLiveStore.set(String(g.group_id),g));
+      dedupNextOffset=Number(d.next_offset||offset+incoming.length);
+      while(dedupLiveStore.size>DEDUP_WINDOW_CAP){
+        dedupLiveStore.delete(dedupLiveStore.keys().next().value);
+        dedupWindowStart++;
+      }
+    }
     dedupVisibleTotal=Number(d.total||0);dedupStatusCounts=d.counts||dedupStatusCounts;
     photos=Array.from(dedupLiveStore.values());
-    renderDedupGroups(photos);
-    setupFilterBar();
-    updateDedupLoadMore();
-    // Similar groups load asynchronously; restore scroll only after cards exist.
-    if(reset)requestAnimationFrame(()=>{
+    lastDedupSig='';renderDedupGroups(photos);
+    setupFilterBar();updateDedupLoadMore();
+    if(!reset)requestAnimationFrame(()=>restoreGalleryAnchor(anchor));
+    else requestAnimationFrame(()=>{
       if(requestSerial!==dedupRequestSerial||currentStep!=='dedup'||
          !sameFolder(requestFolder,folder))return;
-      const mainScroll=document.querySelector('main.main');
-      const previous=workspaceScrollByStep.get(workspaceViewKey('dedup',requestFolder));
-      if(mainScroll&&Number.isFinite(previous))mainScroll.scrollTop=previous;
+      const scroll=document.querySelector('main.main');
+      const position=workspaceScrollByStep.get(workspaceViewKey('dedup',requestFolder));
+      if(scroll&&Number.isFinite(position))scroll.scrollTop=position;
     });
-  }catch(err){toast('载入相似组失败：'+(err.message||'未知错误'),'bad');}
+  }catch(err){
+    if(requestSerial===dedupRequestSerial)toast('载入相似组失败：'+(err.message||'未知错误'),'bad');
+  }finally{if(requestSerial===dedupRequestSerial)dedupPageBusy=false;}
 }
 function updateDedupLoadMore(){
-  const btn=document.getElementById('dedupLoadMore');
-  if(!btn)return;
-  const left=Math.max(0,dedupVisibleTotal-dedupLiveStore.size);
-  btn.style.display=left?'inline-flex':'none';
-  btn.textContent=left?'加载更多（剩余 '+left+'）':'';
+  const next=document.getElementById('dedupLoadMore'),prev=document.getElementById('dedupLoadEarlier');
+  const shown=dedupLiveStore.size,first=shown?dedupWindowStart+1:0,last=dedupWindowStart+shown;
+  if(next){
+    const left=Math.max(0,dedupVisibleTotal-dedupNextOffset);
+    next.style.display=left?'inline-flex':'none';
+    next.textContent=left?'继续加载 · '+first+'–'+last+' / '+dedupVisibleTotal:'';
+  }
+  if(prev){
+    prev.style.display=dedupWindowStart>0?'inline-flex':'none';
+    prev.textContent=dedupWindowStart>0?'加载上一批 · '+first+'–'+last+' / '+dedupVisibleTotal:'';
+  }
 }
 async function loadRemainingDedup(total,offset){return loadDedupPage(false);}
 
@@ -6748,6 +6877,23 @@ function maybeLoadAllDedup(d){
   // loaded on demand so background completion never freezes the review UI.
   updateDedupLoadMore();
 }
+
+// Background result transport stays bounded while the workbench remains
+// continuously scrollable. The explicit controls also work without a wheel.
+let reviewScrollRaf=0;
+document.querySelector('main.main').addEventListener('scroll',()=>{
+  if(reviewScrollRaf)return;
+  reviewScrollRaf=requestAnimationFrame(()=>{
+    reviewScrollRaf=0;
+    if(document.getElementById('photoView').hidden)return;
+    const main=document.querySelector('main.main');
+    if(main.scrollHeight-main.scrollTop-main.clientHeight>720)return;
+    if(currentStep==='cull'&&!cullPageBusy&&cullNextOffset<cullVisibleTotal)
+      loadCullPage(false);
+    if(currentStep==='dedup'&&!dedupPageBusy&&dedupNextOffset<dedupVisibleTotal)
+      loadDedupPage(false);
+  });
+},{passive:true});
 
 function poll(step){
   fetch('/api/progress/'+step)
@@ -6774,7 +6920,7 @@ function poll(step){
         largeResultWarned=true;
         toast('本次已完整分析 '+(d.result_total||0)+' 张照片，完整结果正在后台分批载入。','info');
       }
-      if(step==='cull'&&step===currentStep)maybeLoadAllCull(d);
+      if(step==='cull'&&step===currentStep){cullReady=!!d.complete;loadCullPage(true);}
       if(step==='dedup'&&step===currentStep)maybeLoadAllDedup(d);
 
       if(step===currentStep)document.getElementById('progressFill').style.width='100%';
@@ -7394,6 +7540,7 @@ function renderCullStep(items){
   updatePager();
 }
 function cullMoveCounts(){
+  if(cullGlobalStats)return {total:Number(cullGlobalStats.markable||0),selected:Number(cullGlobalStats.move_selected||0)};
   const markable=photos.filter(p=>visibleInReview(p));
   return {total:markable.length,selected:markable.filter(p=>p.move_selected===true).length};
 }
@@ -7416,12 +7563,16 @@ function updateCullMoveButton(){
   }
 }
 function applyMoveSelectionResponse(path,d){
+  if(Number.isFinite(Number(d.selected))&&Number.isFinite(Number(d.total))){
+    cullGlobalStats={move_selected:Number(d.selected),markable:Number(d.total)};
+  }
   if(path){
     const pp=photos.find(x=>x.path===path);
     if(pp)pp.move_selected=!!d.move_selected;
   }
   lastCullSig='';lastCullMoveSig='';
-  renderCullStep(photos);
+  if(cullFilter==='pending')loadCullPage(true);
+  else renderCullStep(photos);
   updateCullMoveButton();
   if(document.getElementById('lightbox').classList.contains('open')&&currentStep==='cull')showLb();
 }
@@ -7437,8 +7588,11 @@ function setAllBlurryMoveSelection(selected){
     body:JSON.stringify({all:selected})})
     .then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;})
     .then(d=>{
+      if(Number.isFinite(Number(d.selected))&&Number.isFinite(Number(d.total)))
+        cullGlobalStats={move_selected:Number(d.selected),markable:Number(d.total)};
       photos.forEach(p=>{if(p.tier==='blurry')p.move_selected=selected;});
-      lastCullSig='';lastCullMoveSig='';renderCullStep(photos);updateCullMoveButton();
+      if(cullFilter==='pending'){loadCullPage(true);}
+      else{lastCullSig='';lastCullMoveSig='';renderCullStep(photos);updateCullMoveButton();}
       toast(selected?'已选择全部模糊照片':'已取消全部模糊照片的移动选择','good');
     }).catch(err=>toast('批量选择失败：'+(err.message||'未知错误'),'bad'));
 }
@@ -7450,7 +7604,10 @@ function cullSetTier(path,tier){
       document.getElementById('sSharp').textContent=d.sharp;document.getElementById('sSoft').textContent=d.soft;document.getElementById('sBlurry').textContent=d.blurry;
       const pp=photos.find(x=>x.path===path||x.path===d.path);
       if(pp){pp.tier=d.tier;pp.badge=d.badge;pp.badgeType=d.badgeType;pp.kept=d.kept;pp.rejected=!d.kept;pp.move_selected=!!d.move_selected;if(d.path)pp.path=d.path;if(d.thumb)pp.thumb=d.thumb;}
-      lastCullSig='';lastCullMoveSig='';renderCullStep(photos);updateCullMoveButton();
+      if(Number.isFinite(Number(d.move_selected_count))&&Number.isFinite(Number(d.move_total)))
+        cullGlobalStats={move_selected:Number(d.move_selected_count),markable:Number(d.move_total)};
+      if(cullFilter!=='all')loadCullPage(true);
+      else{lastCullSig='';lastCullMoveSig='';renderCullStep(photos);updateCullMoveButton();}
     }).catch(err=>toast('分类修改失败：'+(err.message||'未知错误'),'bad'));
 }
 
@@ -8532,10 +8689,8 @@ def api_progress(step):
                         'result_total': len(all_photos),
                         'stats': {'images': len(all_photos), 'sharp': s['sharp'],
                                   'soft': s['soft'], 'blurry': s['blurry'],
-                                  'move_selected': sum(
-                                      1 for p in all_photos
-                                      if p.get('move_selected', False)
-                                  ),
+                                  'move_selected': _blurry_move_counts()[0],
+                                  'markable': _blurry_move_counts()[1],
                                   'cache_hits': s.get('cache_hits',0),
                                   'folder_status': s.get('folder_status',{})}})
     if step == 'dedup':
@@ -8572,19 +8727,77 @@ def api_progress(step):
     abort(404)
 
 
+_CULL_NON_REVIEWABLE_STATES = frozenset((
+    'pending_trash', 'pending_permanent_delete', 'trashed',
+    'permanently_deleted', 'pending_restore',
+))
+
+
+def _cull_filter_matches(photo, review_filter='all', ftype='all'):
+    """Use identical review/type semantics for every page, not just the first 200.
+
+    The server owns ALL current Cull results. Filtering only already-loaded
+    browser cards falsely reports zero matches on a large library.
+    """
+    if str(photo.get('lifecycle') or 'normal') in _CULL_NON_REVIEWABLE_STATES:
+        return False
+    if review_filter == 'pending':
+        if photo.get('move_selected') is not True:
+            return False
+    elif review_filter != 'all' and photo.get('tier') != review_filter:
+        return False
+    if ftype == 'raw':
+        return bool(photo.get('raw'))
+    if ftype == 'heic':
+        return bool(photo.get('heic'))
+    if ftype == 'standard':
+        return not photo.get('raw') and not photo.get('heic')
+    if ftype.startswith('ext:'):
+        want = ftype[4:]
+        return str(photo.get('fmt') or '').lower() == want
+    return True
+
+
 @app.route('/api/results/cull')
 def api_cull_results_chunk():
-    """Chunked Cull result transport: no visible pagination, bounded payloads."""
+    """Bounded, server-filtered review result pages for large offline libraries."""
     s = state['cull']
     try:
-        offset = max(0, int(request.args.get('offset', 0)))
-        limit = min(UI_RESULT_CHUNK, max(1, int(request.args.get('limit', UI_RESULT_CHUNK))))
+        offset = int(request.args.get('offset', 0))
+        limit = int(request.args.get('limit', UI_RESULT_CHUNK))
+        if offset < 0 or not 1 <= limit <= UI_RESULT_CHUNK:
+            raise ValueError('invalid slice')
     except (TypeError, ValueError):
         return jsonify({'error': '结果范围无效'}), 400
-    all_photos = s.get('photos', [])
-    rows = all_photos[offset:offset + limit]
-    return jsonify({'photos': rows, 'offset': offset, 'next_offset': offset + len(rows),
-                    'total': len(all_photos), 'done': offset + len(rows) >= len(all_photos)})
+    review_filter = str(request.args.get('filter') or 'all').lower()
+    ftype = str(request.args.get('ftype') or 'all').lower()
+    if review_filter not in ('all', 'sharp', 'soft', 'blurry', 'pending'):
+        return jsonify({'error': '无效的照片复核筛选条件'}), 400
+    if (ftype not in ('all', 'raw', 'heic', 'standard')
+            and not (ftype.startswith('ext:') and re.fullmatch(r'ext:[a-z0-9]{1,12}', ftype))):
+        return jsonify({'error': '无效的照片格式筛选条件'}), 400
+    all_photos = s.get('photos') or []
+    filtered = [
+        photo for photo in all_photos
+        if _cull_filter_matches(photo, review_filter, ftype)
+    ]
+    rows = filtered[offset:offset + limit]
+    selected, markable = _blurry_move_counts()
+    # Global format choices stay stable across windows and filtered subsets,
+    # so rare RAW and HEIF extensions are selectable before they scroll in.
+    formats = sorted({
+        (str(p.get('fmt') or 'JPG').upper(), bool(p.get('raw')), bool(p.get('heic')))
+        for p in all_photos
+        if str(p.get('lifecycle') or 'normal') not in _CULL_NON_REVIEWABLE_STATES
+    })
+    return jsonify({
+        'photos': rows, 'offset': offset, 'next_offset': offset + len(rows),
+        'total': len(filtered), 'all_total': len(all_photos),
+        'done': offset + len(rows) >= len(filtered),
+        'formats': [{'fmt': fmt, 'raw': raw, 'heic': heic}
+                    for fmt, raw, heic in formats],
+        'stats': {'move_selected': selected, 'markable': markable},
+    })
 
 
 @app.route('/api/results/dedup')
