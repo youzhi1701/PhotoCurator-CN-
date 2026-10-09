@@ -1,8 +1,8 @@
 {
   "product": "PhotoCurator",
   "channel": "candidate",
-  "version": "1.7.15",
-  "installer": "PhotoCurator-Setup-v1.7.15.exe",
+  "version": "1.7.16",
+  "installer": "PhotoCurator-Setup-v1.7.16.exe",
   "upgrade_mode": "in_place",
   "same_app_id": true,
   "data_root": "%LOCALAPPDATA%/PhotoCurator/data",
@@ -24,7 +24,7 @@
   "replace": [
     "app"
   ],
-  "notes": "v1.7.15 Candidate：软件回收站清单导入和展示严格校验图库/回收站路径、符号链接和可疑元数据；清单写入采用独立临时文件、fsync 及原子替换；禁止图库外原片进入回收站。新增 Windows/Source 安全回归。真实硬盘、RAW/HEIF样本、断电与签名验收尚未完成。",
+  "notes": "v1.7.16 Candidate：统一 RAW/JPEG 单一配对规则，多个 RAW 或 JPEG 文件不再被误折叠，POSIX 区分大小写；扫描改为使用 DirEntry 流式遍历，不再将符号链接文件/目录或 Windows junction 外部文件索引为原图库，保留扫描错误必须记录的 fail-closed 规则。Source/Windows 自动化及真实设备/文件操作验收分别按流水线与发布门禁检查。",
   "release_date": "2026-10-09",
   "published_version": "1.5.0",
   "published_installer": "PhotoCurator-Setup-v1.5.0.exe"

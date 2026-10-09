@@ -761,7 +761,7 @@ def _prune_index_db():
 threading.Thread(target=_prune_index_db, daemon=True,
                  name='photocurator-index-prune').start()
 
-APP_VERSION = "1.7.15"
+APP_VERSION = "1.7.16"
 IS_CODESPACES = os.environ.get('CODESPACES', '').strip().lower() == 'true'
 CODESPACE_NAME = os.environ.get('CODESPACE_NAME', '').strip()
 _CODESPACES_DOMAIN_RAW = os.environ.get(
@@ -1109,30 +1109,42 @@ state = {
 #  Helpers
 # --------------------------------------------------------------------------- #
 def collapse_raw_jpg_pairs(paths, prefer):
-    """Collapse RAW+JPG pairs of the SAME frame (same folder + same filename
-    stem, e.g. IMG_0001.CR2 + IMG_0001.JPG) down to one file.
-    prefer: 'raw' keeps the RAW, 'jpg' keeps the JPG; anything else = no-op.
-    Returns (paths, pairs_collapsed); original order is preserved."""
+    """Conservatively hide one *unambiguous* RAW/JPEG filename companion.
+
+    A shared basename is a useful review shortcut, not proof that different
+    files are actually the same exposure. Do not combine multiple RAW types,
+    multiple JPEGs, or case-distinct POSIX captures. Never mutate/delete a
+    source: the caller merely chooses which photos participate in analysis.
+    All non-JPEG formats remain visible and original order is retained.
+    """
     if prefer not in ('raw', 'jpg'):
         return paths, 0
     from collections import defaultdict
     groups = defaultdict(list)
-    for p in paths:
-        pp = Path(p)
-        groups[(os.path.normcase(str(pp.parent)), pp.stem.lower())].append(p)
-    keep, collapsed = set(), 0
-    for g in groups.values():
-        raws = [p for p in g if is_raw(p)]
-        # A RAW + PNG / TIFF / HEIF with the same stem is not a verified
-        # RAW+JPG pair. Never hide non-JPEG formats from the review list.
-        jpegs = [p for p in g if Path(p).suffix.lower() in ('.jpg', '.jpeg')]
-        if raws and jpegs:
-            hide = jpegs if prefer == 'raw' else raws
-            keep.update(str(p) for p in g if p not in hide)
-            collapsed += 1
-        else:
-            keep.update(map(str, g))
-    return [p for p in paths if str(p) in keep], collapsed
+    for path in paths:
+        p = Path(path)
+        # Windows filenames compare case-insensitively; POSIX does not.
+        # Older .lower() here hid A.CR2/a.jpg on case-sensitive disks,
+        # contradicting the Catalog's separate-media lifecycle identity.
+        groups[(os.path.normcase(str(p.parent)),
+                os.path.normcase(p.stem))].append(path)
+
+    hidden = set()
+    pairs = 0
+    for members in groups.values():
+        # A path repeated in the input is still only one physical candidate.
+        distinct = list(dict.fromkeys(map(str, members)))
+        raws = [p for p in distinct if is_raw(p)]
+        jpegs = [p for p in distinct
+                 if Path(p).suffix.lower() in ('.jpg', '.jpeg')]
+        if len(raws) != 1 or len(jpegs) != 1:
+            # IMG.RAW+IMG.DNG+IMG.JPG (or IMG.JPG+IMG.JPEG) is
+            # ambiguous. Dropping an entire format silently is unsafe.
+            continue
+        chosen_to_hide = jpegs[0] if prefer == 'raw' else raws[0]
+        hidden.add(chosen_to_hide)
+        pairs += 1
+    return [path for path in paths if str(path) not in hidden], pairs
 
 
 def fmt_of(path):
@@ -1194,19 +1206,24 @@ def _is_output_dir_name(name):
 
 
 def iter_images(folder, recursive=False, on_error=None):
-    """Yield supported image paths without preloading the whole library.
+    """Stream source images without following symlinks/junctions.
 
-    Recoverable traversal errors are reported to on_error so a catalog scan can
-    avoid treating unreadable entries as deleted files.
+    DirEntry exposes the directory enumeration metadata already available on
+    the OS. This avoids an extra file-level stat on every USB HDD photo and
+    stops symbolic links to external collections from being indexed as if they
+    belonged to the selected physical library.
+
+    Any directory I/O failure is reported to the scan-session journal; a
+    caller unable to record that failure must abort rather than conclude old
+    media disappeared.
     """
     root = Path(folder)
     if not root.is_dir():
         return
 
     def supported_name(name):
-        if not name or name.startswith('.') or name.startswith('._'):
-            return False
-        return Path(name).suffix.lower() in IMG_EXTS
+        return (bool(name) and not name.startswith(('.', '._'))
+                and Path(name).suffix.lower() in IMG_EXTS)
 
     def report_error(exc):
         if on_error is None:
@@ -1214,53 +1231,71 @@ def iter_images(folder, recursive=False, on_error=None):
         try:
             on_error(exc)
         except Exception:
-            # A failed catalog error recorder must STOP enumeration. If this
-            # callback were swallowed, a partial directory walk could later
-            # be finalized as successful and mark real offline photos missing.
             logger.exception("scan error callback failed; aborting full scan")
             raise
 
-    if not recursive:
+    custom_cmp = None
+    if recursive:
         try:
-            for p in root.iterdir():
-                if not supported_name(p.name):
-                    continue
-                try:
-                    if p.is_file():
-                        yield p
-                except OSError as exc:
-                    report_error(exc)
+            scan = state.get('scan') or {}
+            custom = (scan.get('custom_output')
+                      if scan.get('output_mode') == 'custom' else '')
+            if custom:
+                custom_cmp = os.path.normcase(
+                    os.path.realpath(os.path.expanduser(custom)))
+        except Exception:
+            custom_cmp = None
+
+    # Use DFS with an explicit stack; no recursive Python calls or materialized
+    # global photo list. Reverse children to preserve scandir discovery order.
+    pending = [os.fspath(root)]
+    while pending:
+        current = pending.pop()
+        try:
+            stream = os.scandir(current)
         except OSError as exc:
             report_error(exc)
-        return
-
-    custom_cmp = None
-    try:
-        scan = state.get('scan') or {}
-        custom = scan.get('custom_output') if scan.get('output_mode') == 'custom' else ''
-        if custom:
-            custom_cmp = os.path.normcase(os.path.realpath(os.path.expanduser(custom)))
-    except Exception:
-        custom_cmp = None
-
-    for cur, dirs, files in os.walk(root, onerror=report_error):
-        base = Path(cur)
-        kept_dirs = []
-        for d in dirs:
-            if d.startswith('.') or _is_output_dir_name(d):
-                continue
-            if custom_cmp:
-                try:
-                    child_cmp = os.path.normcase(os.path.realpath(base / d))
-                    if child_cmp == custom_cmp:
-                        continue
-                except Exception:
-                    pass
-            kept_dirs.append(d)
-        dirs[:] = kept_dirs
-        for name in files:
-            if supported_name(name):
-                yield base / name
+            continue
+        subdirs = []
+        try:
+            with stream:
+                while True:
+                    try:
+                        entry = next(stream)
+                    except StopIteration:
+                        break
+                    except OSError as exc:
+                        report_error(exc)
+                        break
+                    try:
+                        if entry.is_symlink():
+                            continue
+                        if recursive and entry.is_dir(follow_symlinks=False):
+                            if entry.name.startswith('.') or _is_output_dir_name(entry.name):
+                                continue
+                            # Windows directory junctions are not always
+                            # reported as ordinary symlinks. Never cross
+                            # reparse-point directories during source scans.
+                            if os.name == 'nt':
+                                info = entry.stat(follow_symlinks=False)
+                                if getattr(info, 'st_file_attributes', 0) & 0x400:
+                                    continue
+                            if custom_cmp:
+                                child_cmp = os.path.normcase(os.path.realpath(entry.path))
+                                if child_cmp == custom_cmp:
+                                    continue
+                            subdirs.append(entry.path)
+                        elif supported_name(entry.name) and entry.is_file(
+                                follow_symlinks=False):
+                            yield Path(entry.path)
+                    except OSError as exc:
+                        report_error(exc)
+        finally:
+            # scandir's context manager already closes the handle, including
+            # when a caller stops iteration early.
+            pass
+        if recursive:
+            pending.extend(reversed(subdirs))
 
 
 def list_images(folder, recursive=False):
@@ -3475,7 +3510,7 @@ def run_dedup(folder, threshold, ftype='all', pair='both',
 
         paths, npairs = collapse_raw_jpg_pairs(paths, pair)
         if npairs:
-            s['status'] = f"已合并 {npairs} 组 RAW+JPG 同帧照片 · 保留 {pair.upper()}"
+            s['status'] = f"已按文件名折叠 {npairs} 组 RAW+JPG 单一候选 · 保留 {pair.upper()}"
         if not paths:
             s['complete'] = True
             s['progress'] = 100
@@ -3799,7 +3834,7 @@ def run_rank(folder, ftype='all', pair='both', recursive=True):
         # Collapse RAW+JPG pairs too (covers ranking straight from Cull/folder).
         paths, npairs = collapse_raw_jpg_pairs(paths, pair)
         if npairs:
-            chain += f' · {npairs} 组 RAW+JPG → {pair.upper()}'
+            chain += f' · {npairs} 组同名 RAW+JPG 候选 → {pair.upper()}'
             logger.info(f"Rank: {npairs} RAW+JPG pairs collapsed (kept {pair.upper()})")
         if not paths:
             s['progress'] = 100

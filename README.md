@@ -5,27 +5,31 @@
 
 | 版本 | 用途 | 下载 |
 | --- | --- | --- |
-| **v1.7.15 Candidate（最新测试候选）** | Source/Windows 测试已通过，但实盘和签名门禁未完成 | [Windows 候选构件（需 GitHub 登录）](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37879822456) |
-| **v1.5.0 Stable（最后正式发布版）** | 已发布的旧版正式安装程序 | [PhotoCurator-Setup-v1.5.0.exe](https://github.com/youzhi1701/PhotoCurator-CN-/releases/download/v1.5.0/PhotoCurator-Setup-v1.5.0.exe) |
+| **v1.7.16 Candidate（本次待验收）** | RAW/JPG 候选安全、物理目录安全扫描；Source/Windows CI 待验证 | [v1.7.16 候选构建工作流](https://github.com/youzhi1701/PhotoCurator-CN-/actions/workflows/candidate-windows.yml) |
+| **v1.7.15 Candidate（已通过 CI）** | 上轮候选安装程序 | [Windows v1.7.15 下载页面](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37879822456) |
+| **v1.5.0 Stable（上次正式发布版）** | 已发布的正式安装程序 | [PhotoCurator-Setup-v1.5.0.exe](https://github.com/youzhi1701/PhotoCurator-CN-/releases/download/v1.5.0/PhotoCurator-Setup-v1.5.0.exe) |
 
-v1.7.15 Windows 测试构件名称：`PhotoCurator-v1.7.15-test-installer`，解压文件：`PhotoCurator-Setup-v1.7.15.exe` 和 `.exe.sha256`。自动化构件到期日：**2026-10-23**。**此版本不是 V2.0 Stable，不应直接处理唯一原片。**
+v1.7.16 候选构建计划输出 `PhotoCurator-v1.7.16-test-installer`（包含 `PhotoCurator-Setup-v1.7.16.exe`），构建完成并通过回归后才能更新安装包的 SHA-256。**不是 V2.0 Stable，不建议直接处理唯一原片。**
 
-- 候选安装器 SHA-256：`e5ce68661babf904f93ad76831d431caba253b21b5b693e0419d36b25242454d`
-- [Source syntax check / Windows smoke](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37879822374)：成功。
-- [Windows 原生安装包、v1.5.0 → v1.7.15 覆盖升级/卸载、保留配置/离线预览/原片检查](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37879822456)：成功。
-- 本轮新增验证外接盘回收站清单数据隔离、目录边界、防符号链接、离线记录留存、并发安全写入与文件操作保护。
+v1.7.16 本轮重点：同名 RAW/JPG 仅当同一文件夹内恰有一 RAW、一 JPEG 时才折叠；Linux/Unix 文件名大小写保持独立；磁盘流式扫描拒绝符号链接和 Windows Junction 绕出图库，减少无意义元数据查询。任何无法记录的扫描 I/O 错误仍须安全中止。
 
-> 正式 V2.0 发布前仍须完成真实 4TB 外接 HDD、19,000+ 实拍图库、RAW/HEIF 多品牌样本、真实拔盘/突然断电、高 DPI Windows 10/11 多机交互、内容识别误判评测、有效代码签名与 QA 认可。自动化候选构件不能替代这些验收。
+> 正式 V2.0 仍需 4TB 外接 HDD、19,000+ 实拍图库、RAW/HEIF 多机型、真实拔插与断电、Win10/11 高 DPI、多场景质量误判集、代码签名与最终用户 QA。
 <!-- LATEST_RELEASE_END -->
 
-> 面向大图库的 Windows 照片清理工具。v1.7.15 Candidate 在稳定桌面运行层基础上继续收口持久 Catalog、扫描会话与缺失判定、离线图库与设备识别、文件生命周期、数据库升级保护和 Windows 发布门禁；当前仍处于 Candidate 验证阶段，不等同于已发布 Stable。
+> 面向大图库的 Windows 照片清理工具。v1.7.16 Candidate 在稳定桌面运行层基础上继续收口持久 Catalog、扫描会话与缺失判定、离线图库与设备识别、文件生命周期、数据库升级保护和 Windows 发布门禁；当前仍处于 Candidate 验证阶段，不等同于已发布 Stable。
 
 | 项目 | 信息 |
 | --- | --- |
-| 当前源码版本 | **v1.7.15 Candidate（Source / Windows CI 已通过）** |
+| 当前源码版本 | **v1.7.16 Candidate（Source / Windows CI 待验证）** |
 | 项目类型 | Windows 照片筛选桌面应用 |
 | 上游基线 | Photo Curator v7.0 |
-| 当前状态 | **v1.7.15 Candidate · Source/Windows CI 已通过 · 真实设备及数字签名验收未完成** |
+| 当前状态 | **v1.7.16 Candidate · Source/Windows CI 待验证 · 真实设备及数字签名验收未完成** |
+
+## v1.7.16 候选升级（待 CI 验收）
+
+- RAW/JPEG 同名配对仅在明确一对一时折叠；保留 PNG/HEIF、多个同名 RAW、多个 JPEG；POSIX 文件名大小写严格独立。
+- 来源扫描使用 DirEntry 流式枚举并拒绝符号链接、Windows junction，防止索引越界和误读取另一磁盘；I/O 失败无法落库时中止扫描。
+- 安全及原片保护测试扩充后再构建 Windows Candidate；真实硬件测试和数字签名仍需完成。
 
 ## v1.7.15 候选代码改进（已通过 CI，未通过真实设备 QA）
 
@@ -49,7 +53,7 @@ v1.7.15 Windows 测试构件名称：`PhotoCurator-v1.7.15-test-installer`，解
 - Windows 原位升级与卸载不得递归清除运行数据，增加真实静默卸载留存校验；
 - 修正用户文件夹 Top_Family、PhoneBG_Trip 等被误认为导出目录而跳过的问题。
 
-此前 v1.7.12 属历史候选；当前新候选是 v1.7.15，已完成 Windows 构建及 CI 验证，仍未通过真实设备验收。
+此前 v1.7.12 属历史候选；当前上一轮候选是 v1.7.15，已完成 Windows 构建及 CI 验证，仍未通过真实设备验收。
 
 ## v1.7.12 本轮关键完善
 
@@ -236,15 +240,15 @@ GitHub Actions：
 
 普通 `main` 推送只运行源码/结构门禁，不会反复消耗 Windows 正式安装包构建；Windows Candidate 通过 Pull Request 或手动触发完成真实 EXE、窗口存活和测试安装包验证。正式 Release 仅由显式发布请求或匹配版本标签触发。
 
-发布目标由 `packaging/release_manifest.json` 驱动。当前目标为 **1.7.15 Candidate**；只有全部 Release Gate 通过后，才允许创建正式标签：
+发布目标由 `packaging/release_manifest.json` 驱动。当前目标为 **1.7.16 Candidate**；只有全部 Release Gate 通过后，才允许创建正式标签：
 
- `v1.7.15`
+ `v1.7.16`
 
 发布工作流接受 `v*` 标签，但会在构建开始时强制检查：**Git 标签必须与 manifest 中的版本完全一致**。标签不一致会直接失败，避免误把旧代码发布成新版本或把新代码挂到旧标签。
 
 当前 Candidate 安装包目标名称（自动化构件，尚非 Stable）：
 
- `PhotoCurator-Setup-v1.7.15.exe`
+ `PhotoCurator-Setup-v1.7.16.exe`
 
 当前已经公开可下载的 Stable 安装包仍为 **v1.5.0**。
 
@@ -345,7 +349,7 @@ PhotoCurator-CN-/
 
 许可证保持原项目 **MIT License**。
 
-## v1.7.15 从 Candidate 晋级 Stable 的发布门槛
+## v1.7.16 从 Candidate 晋级 Stable 的发布门槛
 
 正式发布前必须同时满足：
 - Python / 嵌入式 JavaScript / HTML / CSS 自动检查通过
@@ -367,4 +371,4 @@ PhotoCurator-CN-/
 - 覆盖升级不破坏用户数据库、索引、设置、日志、任务状态和用户照片
 - GitHub Release 中真实存在与版本一致、非空且校验通过的 Windows 安装包
 
-在上述门槛没有全部满足前，v1.7.15 只能保持 **Candidate**，不能标记为 Stable。
+在上述门槛没有全部满足前，v1.7.16 只能保持 **Candidate**，不能标记为 Stable。

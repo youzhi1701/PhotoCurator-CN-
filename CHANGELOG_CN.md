@@ -1,3 +1,11 @@
+## v1.7.16 Candidate（2026-10-09，待 CI）
+
+- RAW+JPEG 同名候选只有一对一时才折叠；多 RAW / 多 JPEG 不再隐藏未核实的原片。
+- POSIX 大小写敏感的照片目录和文件名保持独立，避免不同拍摄文件被误归为同一配对。
+- 流式扫描基于 `os.scandir` / `DirEntry`，禁用链接照片/目录和 Windows Junction 的越界递归，减少机械硬盘元数据往返。
+- 新增目录链接安全、扫描错误 journal fail-closed、多候选 RAW/JPEG 回归。
+- **仍属 Candidate；实盘、模型评测、多分辨率桌面交互和正式 Authenticode 签名未完成。**
+
 ## v1.7.15 Candidate（2026-10-09，Source/Windows 自动化验证成功）
 
 - 外接硬盘的回收站清单属于不可信输入：修复路径逃逸、符号链接及伪造清单混入回收站的问题。
