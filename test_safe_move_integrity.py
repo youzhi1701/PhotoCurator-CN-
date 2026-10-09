@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Cross-volume file moves must verify data and preserve unrelated staging."""
+"""Cross-volume moves must verify bytes, reject source swaps and preserve staging."""
 import errno
 import tempfile
 import unittest
@@ -51,6 +51,63 @@ class SafeMoveTests(unittest.TestCase):
             self.assertFalse(dst.exists())
             self.assertEqual(list(dst.parent.glob('*.photocurator-part')), [])
 
+
+    def test_cross_volume_source_replaced_during_copy_is_never_deleted(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            src, dst = root / 'original.jpg', root / 'output' / 'original.jpg'
+            src.write_bytes(b'original-data')
+            dst.parent.mkdir()
+            real_copy = photo_curator.shutil.copy2
+            real_rename = photo_curator._rename_no_replace
+
+            def replace_after_copy(a, b):
+                result = real_copy(a, b)
+                src.rename(root / 'moved-original.jpg')
+                src.write_bytes(b'original-data')
+                return result
+
+            def cross_volume_only(a, b):
+                if Path(a) == src:
+                    raise OSError(errno.EXDEV, 'simulate different volume')
+                return real_rename(a, b)
+
+            with (patch.object(photo_curator, '_rename_no_replace',
+                              side_effect=cross_volume_only),
+                 patch.object(photo_curator.shutil, 'copy2',
+                              side_effect=replace_after_copy)):
+                with self.assertRaisesRegex(RuntimeError, '原照片发生变化'):
+                    photo_curator._safe_move_file(src, dst)
+            self.assertEqual(src.read_bytes(), b'original-data')
+            self.assertFalse(dst.exists())
+            self.assertEqual((root / 'moved-original.jpg').read_bytes(),
+                             b'original-data')
+
+    def test_cross_volume_source_replaced_after_target_commit_stays_safe(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            src, dst = root / 'original.jpg', root / 'output' / 'original.jpg'
+            src.write_bytes(b'original-data')
+            dst.parent.mkdir()
+            real_rename = photo_curator._rename_no_replace
+
+            def replace_after_claim(a, b):
+                if Path(a) == src:
+                    raise OSError(errno.EXDEV, 'simulate different volume')
+                result = real_rename(a, b)
+                if Path(b) == dst:
+                    src.rename(root / 'original-preserved.jpg')
+                    src.write_bytes(b'stranger-content')
+                return result
+
+            with patch.object(photo_curator, '_rename_no_replace',
+                              side_effect=replace_after_claim):
+                with self.assertRaisesRegex(RuntimeError, '禁止删除新原片'):
+                    photo_curator._safe_move_file(src, dst)
+            self.assertEqual(src.read_bytes(), b'stranger-content')
+            self.assertEqual(dst.read_bytes(), b'original-data')
+            self.assertEqual((root / 'original-preserved.jpg').read_bytes(),
+                             b'original-data')
 
     def test_same_volume_racing_destination_is_not_overwritten(self):
         with tempfile.TemporaryDirectory() as folder:

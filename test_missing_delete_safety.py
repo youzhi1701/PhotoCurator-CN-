@@ -530,6 +530,8 @@ class MissingFileDeleteSafetyTests(unittest.TestCase):
                      "path": str(Path(tmp) / ("trash" + str(i) + ".jpg")),
                      "original_path": str(path), "source_step": "cull"}
                     for i, path in enumerate(originals)]
+            for row in rows:
+                Path(row["path"]).write_bytes(b"saved-in-software-trash")
             with patch.dict(photo_curator.state, {"folder": tmp}), \
                  patch.object(photo_curator, "_trash_rows", return_value=rows), \
                  patch.object(photo_curator, "_active_restore_reservations",
