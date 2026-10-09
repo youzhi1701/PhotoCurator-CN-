@@ -109,6 +109,7 @@ jobs:
           python -c "import runpy; runpy.run_path('\u57fa\u7840\u5192\u70df\u6d4b\u8bd5.py', run_name='__main__')"
           if ($LASTEXITCODE -ne 0) { throw "base smoke test failed" }
           python -m unittest -v test_runtime_migration_wal quality_annotations_input_test
+          python -m unittest -v test_background_process_crash
           python -m unittest -v test_windows_uninstall_retention
           python -m unittest -v test_db_runtime_wal
           python -m unittest -v test_exact_duplicates
