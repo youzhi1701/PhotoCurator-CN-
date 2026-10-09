@@ -1109,30 +1109,42 @@ state = {
 #  Helpers
 # --------------------------------------------------------------------------- #
 def collapse_raw_jpg_pairs(paths, prefer):
-    """Collapse RAW+JPG pairs of the SAME frame (same folder + same filename
-    stem, e.g. IMG_0001.CR2 + IMG_0001.JPG) down to one file.
-    prefer: 'raw' keeps the RAW, 'jpg' keeps the JPG; anything else = no-op.
-    Returns (paths, pairs_collapsed); original order is preserved."""
+    """Conservatively hide one *unambiguous* RAW/JPEG filename companion.
+
+    A shared basename is a useful review shortcut, not proof that different
+    files are actually the same exposure. Do not combine multiple RAW types,
+    multiple JPEGs, or case-distinct POSIX captures. Never mutate/delete a
+    source: the caller merely chooses which photos participate in analysis.
+    All non-JPEG formats remain visible and original order is retained.
+    """
     if prefer not in ('raw', 'jpg'):
         return paths, 0
     from collections import defaultdict
     groups = defaultdict(list)
-    for p in paths:
-        pp = Path(p)
-        groups[(os.path.normcase(str(pp.parent)), pp.stem.lower())].append(p)
-    keep, collapsed = set(), 0
-    for g in groups.values():
-        raws = [p for p in g if is_raw(p)]
-        # A RAW + PNG / TIFF / HEIF with the same stem is not a verified
-        # RAW+JPG pair. Never hide non-JPEG formats from the review list.
-        jpegs = [p for p in g if Path(p).suffix.lower() in ('.jpg', '.jpeg')]
-        if raws and jpegs:
-            hide = jpegs if prefer == 'raw' else raws
-            keep.update(str(p) for p in g if p not in hide)
-            collapsed += 1
-        else:
-            keep.update(map(str, g))
-    return [p for p in paths if str(p) in keep], collapsed
+    for path in paths:
+        p = Path(path)
+        # Windows filenames compare case-insensitively; POSIX does not.
+        # Older .lower() here hid A.CR2/a.jpg on case-sensitive disks,
+        # contradicting the Catalog's separate-media lifecycle identity.
+        groups[(os.path.normcase(str(p.parent)),
+                os.path.normcase(p.stem))].append(path)
+
+    hidden = set()
+    pairs = 0
+    for members in groups.values():
+        # A path repeated in the input is still only one physical candidate.
+        distinct = list(dict.fromkeys(map(str, members)))
+        raws = [p for p in distinct if is_raw(p)]
+        jpegs = [p for p in distinct
+                 if Path(p).suffix.lower() in ('.jpg', '.jpeg')]
+        if len(raws) != 1 or len(jpegs) != 1:
+            # IMG.RAW+IMG.DNG+IMG.JPG (or IMG.JPG+IMG.JPEG) is
+            # ambiguous. Dropping an entire format silently is unsafe.
+            continue
+        chosen_to_hide = jpegs[0] if prefer == 'raw' else raws[0]
+        hidden.add(chosen_to_hide)
+        pairs += 1
+    return [path for path in paths if str(path) not in hidden], pairs
 
 
 def fmt_of(path):
@@ -3475,7 +3487,7 @@ def run_dedup(folder, threshold, ftype='all', pair='both',
 
         paths, npairs = collapse_raw_jpg_pairs(paths, pair)
         if npairs:
-            s['status'] = f"已合并 {npairs} 组 RAW+JPG 同帧照片 · 保留 {pair.upper()}"
+            s['status'] = f"已按文件名折叠 {npairs} 组 RAW+JPG 单一候选 · 保留 {pair.upper()}"
         if not paths:
             s['complete'] = True
             s['progress'] = 100
@@ -3799,7 +3811,7 @@ def run_rank(folder, ftype='all', pair='both', recursive=True):
         # Collapse RAW+JPG pairs too (covers ranking straight from Cull/folder).
         paths, npairs = collapse_raw_jpg_pairs(paths, pair)
         if npairs:
-            chain += f' · {npairs} 组 RAW+JPG → {pair.upper()}'
+            chain += f' · {npairs} 组同名 RAW+JPG 候选 → {pair.upper()}'
             logger.info(f"Rank: {npairs} RAW+JPG pairs collapsed (kept {pair.upper()})")
         if not paths:
             s['progress'] = 100
