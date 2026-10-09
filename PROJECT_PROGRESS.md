@@ -4,6 +4,13 @@
 >
 > 最初历史开发基线为 main `81dbb510deb58f191448ed13d791094f9a1f9d7e`（PR #50）；截至本检查点，V2.0 候选已合并 [PR #87](https://github.com/youzhi1701/PhotoCurator-CN-/pull/87)，合并提交 `c6bd12a9a445ab7a8c445c2fcf244b78189dbe07`，源码版本 v1.7.17。Source 与已发布的 v1.7.17 Windows Candidate 构建通过；真实实盘、语义模型评测、正式签名仍未完成。本文件不是实时 API，下轮先核对 GitHub HEAD/CI/构件。
 
+## 2026-10-09 V2.0 v1.7.18 候选：精确去重缓存二次校验（待 CI）
+
+- 精确重复复用缓存的候选组重新计算真实 SHA-256，验证打开的文件身份和扫描前后元数据，避免可写缓存被篡改导致不同原片误报字节精确重复；直接 symlink 不参与。
+- 回归覆盖缓存伪造、可信重复组、无重复组低 I/O 路径、符号链接。源数据只读，任何文件删除仍需人工复核令牌。
+- TOP-N/PhoneBG 导出防止 symlink/Junction 目标目录劫持与旧文件覆盖；每轮独占创建输出相册，暂存+no-replace 写入原图副本与壁纸。对比物理盘与照片身份，遇源变更取消发布。新增 7 项文件安全回归并纳入双平台 CI。
+- Windows 候选目标 v1.7.18（待 Actions 成功），前版 v1.7.17 完整 CI 和 EXE 可下载；硬盘/RAW/AI 模型实测、签名和人工审核仍待验收。
+
 ## 2026-10-09 V2.0 候选 v1.7.16 → v1.7.17（已合并，非 Stable）
 
 - [PR #86](https://github.com/youzhi1701/PhotoCurator-CN-/pull/86) 已合并，v1.7.16：RAW/JPEG 多对一歧义不自动合并、区分 POSIX 大小写、DirEntry 流式源扫描跳过 symlink/junction；[Source](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37881401116) 和 [Windows Candidate](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37881401130) 通过。
