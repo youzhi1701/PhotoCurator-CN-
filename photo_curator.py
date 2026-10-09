@@ -865,12 +865,11 @@ def _security_headers(resp):
         "worker-src 'self' blob:; child-src 'self' blob:")
     return resp
 
-# Image discovery is capability-driven rather than a hand-maintained short
-# whitelist.  Pillow registers every format its current build can actually
-# decode (JPEG/PNG/TIFF/WebP/GIF/ICO/JPEG2000/QOI/etc. when available), then
-# PhotoCurator adds RAW + HEIF families only when their optional decoders are
-# installed.  This keeps scanning broad without claiming formats the runtime
-# cannot open.
+# Discovery must be broader than decode availability. Previously an optional
+# RAW/HEIF decoder going missing caused those source files to disappear from a
+# full scan, and the catalog could mark previously indexed originals "missing".
+# Continue indexing known camera formats even without the decoder, while
+# exposing a separate honest list of formats that can actually be analyzed.
 try:
     Image.init()
     PILLOW_IMG_EXTS = {
@@ -884,7 +883,9 @@ except Exception:
 CORE_IMG_EXTS = {
     '.jpg', '.jpeg', '.png', '.tif', '.tiff', '.bmp', '.webp',
 }
-IMG_EXTS = set(CORE_IMG_EXTS) | PILLOW_IMG_EXTS
+DECODABLE_IMG_EXTS = (set(CORE_IMG_EXTS) | PILLOW_IMG_EXTS) - RAW_EXTS - HEIF_EXTS
+# Scans preserve durable references to originals even when a codec is absent.
+IMG_EXTS = set(CORE_IMG_EXTS) | PILLOW_IMG_EXTS | RAW_EXTS | HEIF_EXTS
 
 RESULT_ROOT_DIR = 'PhotoCurator_Result（照片筛选结果）'
 SOFTWARE_TRASH_DIR = 'PhotoCurator_RecycleBin（软件回收站）'
@@ -902,20 +903,20 @@ LEGACY_RESULT_DIRS = {
 
 # RAW formats (CR2/CR3, NEF, ARW, DNG, ...) — decoded via rawpy if installed.
 if HAS_RAWPY:
-    IMG_EXTS |= RAW_EXTS
+    DECODABLE_IMG_EXTS |= RAW_EXTS
 else:
     logger.warning("=" * 64)
-    logger.warning("未安装 rawpy：RAW 文件（CR2/CR3/NEF/ARW/DNG 等）将被跳过。")
+    logger.warning("未安装 rawpy：RAW 文件会保留在图库索引中，当前无法分析，绝不会因此误判为缺失。")
     logger.warning("如需 RAW 支持，请安装：")
     logger.warning("    pip install rawpy")
     logger.warning("安装后请重新启动“照片筛选”。")
     logger.warning("=" * 64)
 # HEIC/HEIF (iPhone photos) — decoded via pillow-heif if installed.
 if HAS_HEIF:
-    IMG_EXTS |= HEIF_EXTS
+    DECODABLE_IMG_EXTS |= HEIF_EXTS
 else:
     logger.warning("=" * 64)
-    logger.warning("未安装 pillow-heif：HEIC/HEIF 文件（包括 iPhone 照片）将被跳过。")
+    logger.warning("未安装 pillow-heif：HEIC/HEIF 原片保留在图库索引，当前无法解码分析。")
     logger.warning("如需 HEIC/HEIF 支持，请安装：")
     logger.warning("    pip install pillow-heif")
     logger.warning("安装后请重新启动“照片筛选”。")
@@ -7795,7 +7796,9 @@ def api_diagnostics_export():
             'database_quick_check': sqlite_quick_check(INDEX_DB),
             'rawpy': HAS_RAWPY,
             'heif': HAS_HEIF,
-            'supported_extensions': sorted(IMG_EXTS),
+            'supported_extensions': sorted(DECODABLE_IMG_EXTS),
+            'indexed_extensions': sorted(IMG_EXTS),
+            'decoder_unavailable_extensions': sorted(IMG_EXTS - DECODABLE_IMG_EXTS),
             'sources': catalog_list_sources(INDEX_DB, refresh=False),
             'scan_sessions': catalog_recent_scan_sessions(INDEX_DB, limit=20),
             'tasks': TASK_MANAGER.summary(),
