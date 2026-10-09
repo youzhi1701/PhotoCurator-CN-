@@ -101,6 +101,12 @@ jobs:
           pip install -r requirements-optional.txt
           pip install pyinstaller "selenium>=4.25,<5" "pip-audit>=2.7,<3"
 
+      - name: Audit repository structure
+        shell: powershell
+        run: |
+          python tools/repository_audit.py
+          if ($LASTEXITCODE -ne 0) { throw "Repository structure audit failed" }
+
       - name: Release-gate source tests
         shell: powershell
         run: |
