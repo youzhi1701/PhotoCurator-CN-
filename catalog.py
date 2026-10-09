@@ -290,6 +290,18 @@ def _verified_windows_mount(identity, mounted):
     return observed
 
 
+
+def _verified_posix_mount(identity, mount_path):
+    """A live directory is not enough: verify the original volume identity."""
+    if not mount_path or not Path(mount_path).is_dir():
+        return False
+    try:
+        observed = volume_info_for_path(mount_path)
+    except (OSError, ValueError):
+        return False
+    return str(observed.get("identity_key") or "") == str(identity or "")
+
+
 def _relative_to_mount(folder, mount_path):
     try:
         rel = os.path.relpath(os.path.realpath(folder), os.path.realpath(mount_path))
@@ -571,13 +583,7 @@ def refresh_connections(db_path):
                 # An empty original mountpoint can remain on the system disk
                 # after USB removal. A matching path alone is NOT proof that
                 # the original medium is back, especially after a disk swap.
-                connected = False
-                if mount_path and Path(mount_path).is_dir():
-                    try:
-                        observed = volume_info_for_path(mount_path)
-                        connected = str(observed.get("identity_key") or "") == identity
-                    except (OSError, ValueError):
-                        connected = False
+                connected = _verified_posix_mount(identity, mount_path)
 
             if connected:
                 db.execute(
