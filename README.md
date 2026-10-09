@@ -5,16 +5,16 @@
 
 | 版本 | 用途 | 下载 |
 | --- | --- | --- |
-| **v1.7.12 Candidate（最新测试版）** | 测试最新功能与安全修复，**尚未经用户实盘验收，非正式版** | [下载 Windows 测试安装包（GitHub Actions）](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37869003552) |
-| **v1.5.0 Stable（最后已正式发布版）** | 需要已发布安装器的用户 | [下载 PhotoCurator-Setup-v1.5.0.exe](https://github.com/youzhi1701/PhotoCurator-CN-/releases/download/v1.5.0/PhotoCurator-Setup-v1.5.0.exe) |
+| **v1.7.13 Candidate（最新代码测试版）** | 完整执行 GitHub Windows 测试，但尚未经真实硬盘及正式签名验收 | [Windows Candidate 构建与测试记录](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37874982341) |
+| **v1.5.0 Stable（最后已正式发布版）** | 需要已经正式发布的安装器 | [下载 PhotoCurator-Setup-v1.5.0.exe](https://github.com/youzhi1701/PhotoCurator-CN-/releases/download/v1.5.0/PhotoCurator-Setup-v1.5.0.exe) |
 
-**测试版下载步骤：** 打开上述 Actions 页面，在 **Artifacts** 中选择 `PhotoCurator-v1.7.12-test-installer`，下载 ZIP，解压后运行 `PhotoCurator-Setup-v1.7.12.exe`。压缩包同时包含 `.exe.sha256`，用于校验文件完整性。
+Windows Candidate 的 Actions 构件名为 `PhotoCurator-v1.7.13-test-installer`；其中包含 `PhotoCurator-Setup-v1.7.13.exe` 与单独的 `.exe.sha256`。**这只是自动化测试构件，不等于 V2.0 最终发布版。**
 
-**Windows 安装包 SHA-256：** `6710c8a00df0b3e81b69ce8162a1562ba402576fcd1e1c11ae91f25506fbb8eb`
+**安装器 SHA-256：** `e8a40a73c5bac1ee8f111d19ef888a01403bb46b9d99ae4f4aa0bd682323e23e`
 
-此构件由 [Source syntax check](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37869003613) 与 [Build Windows Candidate](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37869003552) 双流程验证成功，且已通过 Windows CI 的 v1.5.0 → v1.7.12 安装升级数据保留测试。GitHub Actions 测试构件通常有有效期，本次至 **2026-10-23**；过期后以构建页面或后续候选版为准。
+[Source syntax check](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37874982398) 和 [Build Windows Candidate](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37874982341) 均为 SUCCESS；构建通过实际 Windows EXE/原生窗口响应性、v1.5.0→v1.7.13 原位覆盖升级数据留存、真实静默卸载后原片及配置保留验证。Actions 构件有效期至 **2026-10-23**。
 
-> **重要：** 候选版尚未完成真实 4TB 外接硬盘、19,000+ 张真实图库、各品牌 RAW/HEIF 样本、突然断电、完整高 DPI 交互和代码签名验收。正式投入珍贵照片前，请先备份原片并使用测试文件夹。文件分析与自动建议绝不替代人工删除确认；候选包不能标记为 V2.0 Stable。
+> **重要：** 候选版尚未完成真实 4TB 外接机械硬盘、19,000+ 张真实图库、各品牌 RAW/HEIF 样本、突然断电、完整高 DPI 交互和代码签名验收。正式投入珍贵照片前应先备份原片。自动分析只提供建议，任何删除都需要人工复核；不得将 Candidate 标为 V2.0 Stable。
 <!-- LATEST_RELEASE_END -->
 
 > 面向大图库的 Windows 照片清理工具。v1.7.13 Candidate 在稳定桌面运行层基础上继续收口持久 Catalog、扫描会话与缺失判定、离线图库与设备识别、文件生命周期、数据库升级保护和 Windows 发布门禁；当前仍处于 Candidate 验证阶段，不等同于已发布 Stable。
@@ -24,7 +24,7 @@
 | 当前源码版本 | **v1.7.13 Candidate** |
 | 项目类型 | Windows 照片筛选桌面应用 |
 | 上游基线 | Photo Curator v7.0 |
-| 当前状态 | **v1.7.13 候选源码 · 发布验证中 · 真实设备验收尚未完成** |
+| 当前状态 | **v1.7.13 Candidate · Source/Windows CI 成功 · 真实设备及数字签名验收未完成** |
 
 ## v1.7.13 新增修复（尚非 V2.0 正式版）
 
