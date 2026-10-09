@@ -6816,7 +6816,10 @@ async function loadDedupPage(reset=false,prepend=false){
   if(!limit)return;
   dedupPageBusy=true;
   try{
-    const d=await fetch('/api/results/dedup?offset='+offset+'&limit='+limit+'&status='+encodeURIComponent(requestFilter))
+    const url='/api/results/dedup?offset='+offset
+      +(prepend?'&limit='+limit:'&limit='+DEDUP_UI_PAGE_SIZE)
+      +'&status='+encodeURIComponent(requestFilter);
+    const d=await fetch(url)
       .then(async r=>{const x=await r.json();if(!r.ok)throw new Error(x.error||('HTTP '+r.status));return x;});
     if(requestSerial!==dedupRequestSerial||currentStep!=='dedup'||
        requestFilter!==dedupStatusFilter||!sameFolder(requestFolder,folder))return;
