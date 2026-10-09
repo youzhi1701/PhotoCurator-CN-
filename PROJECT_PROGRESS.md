@@ -2,7 +2,20 @@
 
 > 此文件记录已经提交并验证的代码工作，以及尚未满足正式发布标准的工作。**不得把候选安装包、自动化测试或 GitHub 合并等同于用户实机验收与正式发布。**
 >
-> 最初历史开发基线为 main `81dbb510deb58f191448ed13d791094f9a1f9d7e`（PR #50）；最新 V2.0 合并提交为 main `cd589ccee7b2a653a61de61a06a9147da5697f80`（PR #80）；v1.7.13 Candidate 的 Source/Windows 自动化均成功，但实盘及正式签名仍未完成。每次恢复时必须重新读取 GitHub main 最新 SHA、未合并 PR、CI 和构件；本文件不是实时 API。
+> 最初历史开发基线为 main `81dbb510deb58f191448ed13d791094f9a1f9d7e`（PR #50）；最新 V2.0 候选源码已合并至 main `bf62baf9e8d3268330723549122d2ccf8c419594`（PR #84），版本为 v1.7.14；Source/Windows 自动化均成功，实盘、语义模型评测与正式签名仍未完成。每次恢复时必须重新读取 GitHub main 最新 SHA、未合并 PR、CI 和构件；本文件不是实时 API。
+
+## 2026-10-09 第三批实际完成的 V2.0 代码与 CI 回归（非 Stable）
+
+| PR | 完成内容 | 双平台自动化验证 |
+| --- | --- | --- |
+| [#81](https://github.com/youzhi1701/PhotoCurator-CN-/pull/81) | Linux 区分 A.jpg / a.jpg 独立生命周期，重叠图库根不再错误折叠大小写不同的原片 | [Source](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37876533611) ✅ / [Windows](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37876533580) ✅ |
+| [#82](https://github.com/youzhi1701/PhotoCurator-CN-/pull/82) | 修复历史图库实时缩略图可读取异盘照片、普通缩略图可写入旧盘持久 media_id 的漏洞；只准已验证物理设备与文件身份的后台任务发布持久离线预览；模拟图片解码期间换盘 | [Source](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37877488431) ✅ / [Windows](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37877488413) ✅ |
+| [#83](https://github.com/youzhi1701/PhotoCurator-CN-/pull/83) | 实际子进程在任务执行期间 `os._exit(47)` 后立即退出，重启新任务管理器验证队列恢复、审计和只重执行一次 | [Source](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37877384715) ✅ / [Windows](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37877384702) ✅ |
+| [#84](https://github.com/youzhi1701/PhotoCurator-CN-/pull/84) | 源码、桌面、Installer、VersionInfo、manifest、Candidate CI 全部升级至 v1.7.14，统一验证整合状态 | [Source](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37878225849) ✅ / [Windows](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37878225848) ✅ |
+
+- 当前 Windows 候选 CI 构件：`PhotoCurator-v1.7.14-test-installer`，解压后文件 `PhotoCurator-Setup-v1.7.14.exe`；原生安装器 SHA-256：`bf72867e2a94506d4200cd927f41cd9c33ace6a80238fab2fb97832a8cbd255f`（2026-10-23 到期）。
+- 已验证：源文件不触碰的模拟换盘、后台进程级崩溃、Windows 旧版 v1.5.0 安装原位升级、正常卸载后用户数据留存。
+- **未验证/不可声明完成：** 真实 4TB/19K+ 用户照片、真实 USB 热拔插与断电、完整 RAW/HEIF 多品牌样本、语义分类及误判集、最终 UI 多分辨率真实机器体验、实际签名证书与用户 QA 批准。当前 v1.7.14 仅是 Candidate，不满足 V2.0 Stable。
 
 ## 2026-10-09 最新完成的第二批代码修复（非 V2 Stable）
 
@@ -71,7 +84,7 @@
 | 5. 人工筛选与集中复核 | #41–#46、#50 已加强批量复核、一次性授权、状态及源文件身份保护 | 相似/精选全部交互边界、历史选择恢复、跨设备重连的人工复核与撤销一致性实测 |
 | 6. UI 布局与性能 | 相似组 64 组分批显示、屏外渲染跳过，Top-N 有界排序；19,000 条合成数据回归已通过 | 统一工作台密度/缩放/弹窗/完整虚拟化、空闲 CPU/GPU、19,000+ 张图库响应及 Windows 高 DPI、多分辨率实测 |
 | 7. 回收站与文件生命周期 | 二次复核、原子入队、离线历史、文件及 XMP/AAE 身份绑定、跨盘 SHA-256/no-replace 与中断恢复已加固 | 真实断电/崩溃窗口、跨卷与 sidecar、同名竞态实机确认、掉盘后恢复、持久状态原子同步全链路验证 |
-| 8. Windows 安装/升级/正式发布 | v1.7.13 Candidate 已完成 Source+Windows 两项 CI、Windows v1.5.0 覆盖升级及实际静默卸载数据留存、EXE 检查与 SHA-256；正式稳定版仍为 v1.5.0 | 真实设备与真实资料迁移/数据库备份恢复测试、实际数字签名证书与正式 Release 签核 |
+| 8. Windows 安装/升级/正式发布 | v1.7.14 Candidate 已完成 Source+Windows 两项 CI、Windows v1.5.0 覆盖升级及实际静默卸载数据留存、EXE 检查与 SHA-256；正式稳定版仍为 v1.5.0 | 真实设备与真实资料迁移/数据库备份恢复测试、实际数字签名证书与正式 Release 签核 |
 
 ## 发布原则与下次继续规则
 
@@ -89,7 +102,7 @@
 
 ## 最新交接说明（2026-10-09）
 
-- 当前正式可下载 Stable 仍为 **v1.5.0**。v1.7.13 为**候选测试版**，Source 与 Windows CI 已通过，但实盘/代码签名尚未完成。严禁将候选安装器当作完成 V2.0 正式发布。
+- 当前正式可下载 Stable 仍为 **v1.5.0**。v1.7.14 为**候选测试版**，Source 与 Windows CI 已通过，但实盘/代码签名尚未完成。严禁将候选安装器当作完成 V2.0 正式发布。
 - GitHub 无真实 4TB 外接机械硬盘与用户 Windows 测试机连接；正式签名所需 PFX/密码不能由模型凭空生成。
 - 发布级实机测试、签名设置、评估数据和发布前签核统一按 [RELEASE_ACCEPTANCE.md](RELEASE_ACCEPTANCE.md)。
 - 后续迭代必须重新从 GitHub main 的真实 SHA、PR 状态和 Actions 构件核对，不依赖本文件猜测进度。
@@ -106,3 +119,10 @@
 - Windows EXE 安装器 SHA-256：`e8a40a73c5bac1ee8f111d19ef888a01403bb46b9d99ae4f4aa0bd682323e23e`。
 - GitHub 仓库代码已合并：`cd589ccee7b2a653a61de61a06a9147da5697f80`；后续文档提交不应改变此代码快照对应的 CI 证据。
 - 仍需高风险场景真实设备/实盘和交互验收、完整场景模型评测、实际 Authenticode 签名与逐版本 QA 签核后才能标记 V2.0 Stable。
+
+## v1.7.14 当前代码快照（2026-10-09）
+
+- [Source 验证](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37878225849)：success。
+- [Windows 原生 EXE 和 Installer 构建、真实 v1.5.0 升级/卸载回归](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37878225848)：success。
+- [第三批完整集成 PR #84](https://github.com/youzhi1701/PhotoCurator-CN-/pull/84)，源代码合并 SHA `bf62baf9e8d3268330723549122d2ccf8c419594`，文档更新不改动其候选程序构建证据。
+- 数字签名与真实硬盘 QA 尚缺，**不可创建声称正式完成的 v2.0 tag/Stable release**。
