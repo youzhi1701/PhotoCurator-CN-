@@ -1160,6 +1160,13 @@ def _safe_storage_target(data_root, *parts):
         raise ValueError("storage directory lies outside runtime data") from exc
     if common != os.path.normcase(str(base)):
         raise ValueError("storage directory lies outside runtime data")
+    # On older Windows Python versions junctions may not expose
+    # Path.is_junction(). Detect redirected directories even when the
+    # junction points to another folder *inside* the data root.
+    expected = base.joinpath(*parts)
+    if os.path.normcase(os.path.normpath(str(expected))) != (
+            os.path.normcase(os.path.normpath(str(real)))):
+        raise ValueError("refusing cleanup through a redirected storage directory")
     return target
 
 
