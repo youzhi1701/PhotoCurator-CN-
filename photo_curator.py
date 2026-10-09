@@ -8532,10 +8532,8 @@ def api_progress(step):
                         'result_total': len(all_photos),
                         'stats': {'images': len(all_photos), 'sharp': s['sharp'],
                                   'soft': s['soft'], 'blurry': s['blurry'],
-                                  'move_selected': sum(
-                                      1 for p in all_photos
-                                      if p.get('move_selected', False)
-                                  ),
+                                  'move_selected': _blurry_move_counts()[0],
+                                  'markable': _blurry_move_counts()[1],
                                   'cache_hits': s.get('cache_hits',0),
                                   'folder_status': s.get('folder_status',{})}})
     if step == 'dedup':
@@ -8572,19 +8570,68 @@ def api_progress(step):
     abort(404)
 
 
+_CULL_NON_REVIEWABLE_STATES = frozenset((
+    'pending_trash', 'pending_permanent_delete', 'trashed',
+    'permanently_deleted', 'pending_restore',
+))
+
+
+def _cull_filter_matches(photo, review_filter='all', ftype='all'):
+    """Use identical review/type semantics for every page, not just the first 200.
+
+    The server owns ALL current Cull results. Filtering only already-loaded
+    browser cards falsely reports zero matches on a large library.
+    """
+    if str(photo.get('lifecycle') or 'normal') in _CULL_NON_REVIEWABLE_STATES:
+        return False
+    if review_filter == 'pending':
+        if photo.get('move_selected') is not True:
+            return False
+    elif review_filter != 'all' and photo.get('tier') != review_filter:
+        return False
+    if ftype == 'raw':
+        return bool(photo.get('raw'))
+    if ftype == 'heic':
+        return bool(photo.get('heic'))
+    if ftype == 'standard':
+        return not photo.get('raw') and not photo.get('heic')
+    if ftype.startswith('ext:'):
+        want = ftype[4:]
+        return str(photo.get('fmt') or '').lower() == want
+    return True
+
+
 @app.route('/api/results/cull')
 def api_cull_results_chunk():
-    """Chunked Cull result transport: no visible pagination, bounded payloads."""
+    """Bounded, server-filtered review result pages for large offline libraries."""
     s = state['cull']
     try:
-        offset = max(0, int(request.args.get('offset', 0)))
-        limit = min(UI_RESULT_CHUNK, max(1, int(request.args.get('limit', UI_RESULT_CHUNK))))
+        offset = int(request.args.get('offset', 0))
+        limit = int(request.args.get('limit', UI_RESULT_CHUNK))
+        if offset < 0 or not 1 <= limit <= UI_RESULT_CHUNK:
+            raise ValueError('invalid slice')
     except (TypeError, ValueError):
         return jsonify({'error': '结果范围无效'}), 400
-    all_photos = s.get('photos', [])
-    rows = all_photos[offset:offset + limit]
-    return jsonify({'photos': rows, 'offset': offset, 'next_offset': offset + len(rows),
-                    'total': len(all_photos), 'done': offset + len(rows) >= len(all_photos)})
+    review_filter = str(request.args.get('filter') or 'all').lower()
+    ftype = str(request.args.get('ftype') or 'all').lower()
+    if review_filter not in ('all', 'sharp', 'soft', 'blurry', 'pending'):
+        return jsonify({'error': '无效的照片复核筛选条件'}), 400
+    if (ftype not in ('all', 'raw', 'heic', 'standard')
+            and not (ftype.startswith('ext:') and re.fullmatch(r'ext:[a-z0-9]{1,12}', ftype))):
+        return jsonify({'error': '无效的照片格式筛选条件'}), 400
+    all_photos = s.get('photos') or []
+    filtered = [
+        photo for photo in all_photos
+        if _cull_filter_matches(photo, review_filter, ftype)
+    ]
+    rows = filtered[offset:offset + limit]
+    selected, markable = _blurry_move_counts()
+    return jsonify({
+        'photos': rows, 'offset': offset, 'next_offset': offset + len(rows),
+        'total': len(filtered), 'all_total': len(all_photos),
+        'done': offset + len(rows) >= len(filtered),
+        'stats': {'move_selected': selected, 'markable': markable},
+    })
 
 
 @app.route('/api/results/dedup')
