@@ -6687,29 +6687,93 @@ function cullRowsForPayload(d){
   return Array.from(cullLiveStore.values());
 }
 
-async function loadCullPage(reset=false){
-  if(currentStep!=='cull')return;
-  const token=++cullChunkToken;
-  const offset=reset?0:cullLiveStore.size;
+function captureGalleryAnchor(selector,attr){
+  const scroll=document.querySelector('main.main'), gallery=document.getElementById('gallery');
+  if(!scroll||!gallery)return null;
+  const edge=scroll.getBoundingClientRect().top+64;
+  const nodes=gallery.querySelectorAll(selector);
+  for(const node of nodes){
+    const rect=node.getBoundingClientRect();
+    if(rect.bottom>edge && node.getAttribute(attr)!==null){
+      return {key:node.getAttribute(attr),top:rect.top,attr,selector};
+    }
+  }
+  return null;
+}
+function restoreGalleryAnchor(anchor){
+  if(!anchor)return;
+  const scroll=document.querySelector('main.main'),gallery=document.getElementById('gallery');
+  if(!scroll||!gallery)return;
+  // Dataset paths may contain punctuation; compare attributes rather than
+  // interpolating user filenames into a CSS selector.
+  const node=Array.from(gallery.querySelectorAll(anchor.selector))
+    .find(el=>el.getAttribute(anchor.attr)===anchor.key);
+  if(node)scroll.scrollTop+=node.getBoundingClientRect().top-anchor.top;
+}
+async function loadCullPage(reset=false,prepend=false){
+  if(currentStep!=='cull'||(cullPageBusy&&!reset))return;
+  const token=++cullChunkToken,requestFolder=folder;
+  const requestedFilter=cullFilter,requestedType=cullType;
+  const offset=reset?0:(prepend?Math.max(0,cullWindowStart-CULL_FETCH_SIZE):cullNextOffset);
+  const limit=prepend?Math.max(0,cullWindowStart-offset):CULL_FETCH_SIZE;
+  if(!limit)return;
+  cullPageBusy=true;
   try{
-    const d=await fetch('/api/results/cull?offset='+offset+'&limit=200')
-      .then(async r=>{const x=await r.json();if(!r.ok)throw new Error(x.error||('HTTP '+r.status));return x;});
-    if(token!==cullChunkToken||currentStep!=='cull')return;
-    if(reset)cullLiveStore.clear();
-    (d.photos||[]).forEach(p=>{if(p&&p.path)cullLiveStore.set(p.path,p);});
+    const url='/api/results/cull?offset='+offset+'&limit='+limit
+      +'&filter='+encodeURIComponent(requestedFilter)+'&ftype='+encodeURIComponent(requestedType);
+    const d=await fetch(url).then(async r=>{
+      const x=await r.json();
+      if(!r.ok)throw new Error(x.error||('HTTP '+r.status));
+      return x;
+    });
+    if(token!==cullChunkToken||currentStep!=='cull'||
+       !sameFolder(requestFolder,folder)||requestedFilter!==cullFilter||
+       requestedType!==cullType)return;
+    const anchor=reset?null:captureGalleryAnchor('.photo-card','data-path');
+    const incoming=(d.photos||[]).filter(p=>p&&p.path);
+    if(reset){cullLiveStore.clear();cullWindowStart=0;cullNextOffset=0;}
+    if(prepend){
+      const combined=[...incoming,...cullLiveStore.values()];
+      cullLiveStore.clear();
+      combined.slice(0,CULL_WINDOW_CAP).forEach(p=>cullLiveStore.set(p.path,p));
+      cullWindowStart=offset;
+      cullNextOffset=cullWindowStart+cullLiveStore.size;
+    }else{
+      incoming.forEach(p=>cullLiveStore.set(p.path,p));
+      cullNextOffset=Number(d.next_offset||offset+incoming.length);
+      while(cullLiveStore.size>CULL_WINDOW_CAP){
+        const first=cullLiveStore.keys().next().value;
+        cullLiveStore.delete(first);
+        cullWindowStart++;
+      }
+    }
     cullVisibleTotal=Number(d.total||0);
+    if(d.stats)cullGlobalStats=d.stats;
     photos=Array.from(cullLiveStore.values());
-    renderCullStep(photos);
-    setupFilterBar();
-    updateCullLoadMore();
-  }catch(err){toast('载入清晰度结果失败：'+(err.message||'未知错误'),'bad');}
+    lastCullSig='';renderCullStep(photos);
+    setupFilterBar();updateCullLoadMore();
+    if(!reset)requestAnimationFrame(()=>restoreGalleryAnchor(anchor));
+    else if(requestedFilter!=='all'||requestedType!=='all'){
+      const main=document.querySelector('main.main');if(main)main.scrollTop=0;
+    }
+  }catch(err){
+    if(token===cullChunkToken)toast('载入清晰度结果失败：'+(err.message||'未知错误'),'bad');
+  }finally{if(token===cullChunkToken)cullPageBusy=false;}
 }
 function updateCullLoadMore(){
-  const btn=document.getElementById('cullLoadMore');
-  if(!btn)return;
-  const left=Math.max(0,cullVisibleTotal-cullLiveStore.size);
-  btn.style.display=left?'inline-flex':'none';
-  btn.textContent=left?'加载更多（剩余 '+left+'）':'';
+  const next=document.getElementById('cullLoadMore');
+  const prev=document.getElementById('cullLoadEarlier');
+  const shown=cullLiveStore.size,first=shown?cullWindowStart+1:0;
+  const last=cullWindowStart+shown;
+  if(next){
+    const left=Math.max(0,cullVisibleTotal-cullNextOffset);
+    next.style.display=left?'inline-flex':'none';
+    next.textContent=left?'继续加载 · '+first+'–'+last+' / '+cullVisibleTotal:'';
+  }
+  if(prev){
+    prev.style.display=cullWindowStart>0?'inline-flex':'none';
+    prev.textContent=cullWindowStart>0?'加载上一批 · '+first+'–'+last+' / '+cullVisibleTotal:'';
+  }
 }
 async function loadRemainingCull(total,offset){return loadCullPage(false);}
 function maybeLoadAllCull(d){
