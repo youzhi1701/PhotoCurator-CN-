@@ -55,6 +55,7 @@ jobs:
             test_scan_error_fail_closed.py \
             test_device_connection_identity.py \
             test_storage_cleanup_containment.py \
+            test_trash_manifest_containment.py \
             scene_labels.py \
             test_scene_labels.py \
             test_raw_pair_protection.py \
