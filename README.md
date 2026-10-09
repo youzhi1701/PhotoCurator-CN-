@@ -5,13 +5,13 @@
 
 | 版本 | 用途 | 下载 |
 | --- | --- | --- |
-| **v1.7.19 Candidate（源码开发分支）** | 永久删除人工复核与队列绑定实体磁盘身份；CI 待执行 | [Windows Candidate 工作流](https://github.com/youzhi1701/PhotoCurator-CN-/actions/workflows/candidate-windows.yml) |
+| **v1.7.19 Candidate（已通过自动化）** | 永久删除人工复核/后台队列绑定实体磁盘，防止 USB 旧盘符误删 | [v1.7.19 Windows 安装包 ZIP](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37887762327) |
 | **v1.7.18 Candidate（自动化已验证）** | 精确去重缓存校验 + TOP-N/壁纸导出防覆盖；Source/Windows CI 通过 | [Windows v1.7.18 安装包 ZIP](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37886666032) |
 | **v1.7.17 Candidate（已通过自动化）** | 外接硬盘回收站身份保护；Source/Windows CI 通过 | [Windows v1.7.17 安装包 ZIP](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37884600438) |
 | **v1.7.16 Candidate（已通过自动化）** | RAW/JPG 歧义保护、安全流式扫描 | [Windows v1.7.16 安装包构件](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37881401130) |
 | **v1.5.0 Stable（上次正式发布）** | 已发布正式版 | [PhotoCurator-Setup-v1.5.0.exe](https://github.com/youzhi1701/PhotoCurator-CN-/releases/download/v1.5.0/PhotoCurator-Setup-v1.5.0.exe) |
 
-v1.7.19 Windows 安装器需待本轮 CI 生成 `PhotoCurator-v1.7.19-test-installer` 后核对 SHA-256，尚未完成的构件不应标记为已发布。上一版 v1.7.18 已构建并自动验证：在 [Windows Candidate 成功工作流](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37886666032) 页面底部下载 `PhotoCurator-v1.7.18-test-installer` ZIP，解压可得 `PhotoCurator-Setup-v1.7.18.exe` 和 SHA-256 文件。EXE SHA-256：`0224c9d6d3024f944660642c1042971d5bd2629caafc055a790d1bdd3fb6137a`，构件保留至 2026-10-23。 [源码/Windows smoke](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37886666065) 成功，旧版 v1.5.0 原位升级、卸载留存及原生窗口响应性均成功。
+v1.7.19 Windows Candidate 已实际构建并通过自动化：在 [成功工作流](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37887762327) 底部下载 `PhotoCurator-v1.7.19-test-installer` ZIP，解压 `PhotoCurator-Setup-v1.7.19.exe`。EXE SHA-256：`63d172d7344bad9c45b4d2a8bbde97ab1b1f633e3cb86d63066cf15264ba5015`；Artifact 有效期至 2026-10-23。[Source + Windows smoke](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37887762397) 成功；已验证打包后的实际 Windows 窗口响应、v1.5.0→v1.7.19 原位升级和静默卸载原片/配置保留。上一版 v1.7.18 已构建并自动验证：在 [Windows Candidate 成功工作流](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37886666032) 页面底部下载 `PhotoCurator-v1.7.18-test-installer` ZIP，解压可得 `PhotoCurator-Setup-v1.7.18.exe` 和 SHA-256 文件。EXE SHA-256：`0224c9d6d3024f944660642c1042971d5bd2629caafc055a790d1bdd3fb6137a`，构件保留至 2026-10-23。 [源码/Windows smoke](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37886666065) 成功，旧版 v1.5.0 原位升级、卸载留存及原生窗口响应性均成功。
 
 上一版 v1.7.17 Windows 已验证的 Candidate 构件：`PhotoCurator-v1.7.17-test-installer`，下载 ZIP 并解压得到 `PhotoCurator-Setup-v1.7.17.exe`；该构件安装器 SHA-256：`56b85abe23f69aca7cf30817458fdfb34e893c0917349be787e57f0f80ca5978`，Actions 构件保留至 2026-10-23。完整流水线： [Windows](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37884600438) 成功；[最新 Source/Windows smoke](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37884600508) 成功。v1.7.16 旧版构件 SHA-256：`38151f706585e4c7b9414ac4c8725efa0b5c2e579c664d60ef66b11aad879a4a`。
 
@@ -28,12 +28,12 @@ v1.7.17 重点：回收站只在已登记的原始实体硬盘身份与当前挂
 
 | 项目 | 信息 |
 | --- | --- |
-| 当前源码版本 | **v1.7.19 Candidate（Source / Windows CI 待执行）** |
+| 当前源码版本 | **v1.7.19 Candidate（Source / Windows CI 已验证）** |
 | 项目类型 | Windows 照片筛选桌面应用 |
 | 上游基线 | Photo Curator v7.0 |
-| 当前状态 | **v1.7.19 Candidate · Source/Windows CI 待执行 · 真实设备及数字签名验收未完成** |
+| 当前状态 | **v1.7.19 Candidate · Source/Windows CI 已通过 · 真实设备及数字签名验收未完成** |
 
-## v1.7.19 直接永久删除的物理磁盘身份保护（待 CI）
+## v1.7.19 直接永久删除的物理磁盘身份保护（已通过 CI；仍待真实硬件验收）
 
 - 复核与后台执行时两次获取实时物理设备稳定身份；只有所选图库的原硬盘匹配才能处理永久删除。
 - 后台旧持久化任务缺失设备身份视为必须重新复核，不自动继承之前用户点击的操作权限；失败保留原片。
