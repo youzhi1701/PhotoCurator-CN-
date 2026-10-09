@@ -395,8 +395,8 @@ class MissingFileDeleteSafetyTests(unittest.TestCase):
             b_root = Path(tmp) / "device_B"
             a_root.mkdir()
             b_root.mkdir()
-            a_missing = a_root / ".PhotoCuratorTrash" / "missing.jpg"
-            b_online = b_root / ".PhotoCuratorTrash" / "present.jpg"
+            a_missing = a_root / photo_curator.SOFTWARE_TRASH_DIR / "missing.jpg"
+            b_online = b_root / photo_curator.SOFTWARE_TRASH_DIR / "present.jpg"
             b_online.parent.mkdir()
             b_online.write_bytes(b"test")
             db_path = Path(tmp) / "trash.sqlite"
