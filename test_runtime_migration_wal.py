@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 """Protect user decisions and source files during a legacy SQLite WAL migration."""
 import sqlite3
+from contextlib import closing
 import tempfile
 import unittest
 from pathlib import Path
@@ -38,7 +39,7 @@ class WalMigrationSafetyTests(unittest.TestCase):
                 self.assertTrue(Path(str(source) + "-wal").is_file())
                 result = _merge_sqlite_catalog(source, target)
                 self.assertEqual(result["tables"]["whole_db"], "copied")
-                with sqlite3.connect(target) as copied:
+                with closing(sqlite3.connect(target)) as copied:
                     rows = copied.execute(
                         "SELECT path, decision FROM review_override"
                     ).fetchall()
@@ -65,7 +66,7 @@ class WalMigrationSafetyTests(unittest.TestCase):
                 )
                 new.commit()
                 self.assertTrue(migrate_legacy_config(root / "old", root / "new"))
-                with sqlite3.connect(current) as db:
+                with closing(sqlite3.connect(current)) as db:
                     records = dict(db.execute(
                         "SELECT path, decision FROM review_override"
                     ).fetchall())
@@ -74,7 +75,7 @@ class WalMigrationSafetyTests(unittest.TestCase):
                     "library_index-before-migration-*.sqlite3"
                 ))
                 self.assertEqual(len(backups), 1)
-                with sqlite3.connect(backups[0]) as snapshot:
+                with closing(sqlite3.connect(backups[0])) as snapshot:
                     rows = snapshot.execute(
                         "SELECT path, decision FROM review_override"
                     ).fetchall()
