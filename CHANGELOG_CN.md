@@ -1,9 +1,9 @@
-## v1.7.19 Candidate（2026-10-09，待自动化验收）
+## v1.7.19 Candidate（2026-10-09，Windows/Source 自动化已通过，仍待实盘/签名 QA）
 
 - 直接永久删除的人工复核令牌同时冻结物理硬盘身份，不再只使用文件路径/设备 ID/inode/时间戳。防止用户点击复核后另一可移动盘复用 F: 且同名照片被误删。
 - 入队时保存 `source_volume_key`，后台任务在真正 unlink 前校验同一图库内的路径和实时物理卷身份、文件身份、已复核的 XMP/AAE 快照。老版本排队任务缺少物理磁盘证明时拒绝执行，必须重新复核。
 - 新增断开磁盘、换盘、未绑定旧任务、用户切换图库、人工令牌变化与保持源文件不变的回归；纳入 Windows 原生 CI。
-- 统一桌面源码/Windows EXE/安装器/CI v1.7.19，未完成实盘/签名不能宣称 V2.0 Stable。
+- 统一桌面源码/Windows EXE/安装器/CI v1.7.19；[Source/Windows smoke](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37887762397) 与 [Windows EXE/升级/卸载构建](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37887762327) 均已成功；安装器 SHA-256 为 `63d172d7344bad9c45b4d2a8bbde97ab1b1f633e3cb86d63066cf15264ba5015`。实盘/签名未完成，不能宣称 V2.0 Stable。
 
 ## v1.7.18 Candidate（2026-10-09，Source/Windows CI 已通过；待真实硬件及签名 QA）
 
