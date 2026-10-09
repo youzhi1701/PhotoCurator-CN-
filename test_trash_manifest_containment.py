@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 """Untrusted USB trash metadata must never import or expose outside files."""
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -32,7 +33,7 @@ class TrashManifestContainmentTests(unittest.TestCase):
         with connect_db(self.db_path) as db:
             db.execute('''CREATE TABLE software_trash (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                original_path TEXT, trash_path TEXT,
+                original_path TEXT, trash_path TEXT UNIQUE,
                 source_step TEXT, deleted_at REAL)''')
             db.commit()
 
@@ -127,7 +128,12 @@ class TrashManifestContainmentTests(unittest.TestCase):
             )
         self.assertEqual(self.outside.read_bytes(), b'never delete this')
 
-    def _register_catalog_device(self, key='physical-disk-A', suffix='a'):
+    def _device_key(self, suffix):
+        return ('win-guid:' if os.name == 'nt' else 'physical-disk-') + suffix
+
+    def _register_catalog_device(self, key=None, suffix='a'):
+        if key is None:
+            key = self._device_key('A')
         photo_curator.init_catalog_schema(self.db_path)
         with connect_db(self.db_path) as db:
             db.execute(
@@ -141,7 +147,7 @@ class TrashManifestContainmentTests(unittest.TestCase):
                 '(root_id,source_id,relative_root,original_root,current_root,'
                 'display_name,created_at) VALUES(?,?,?,?,?,?,?)',
                 ('library-' + suffix, 'source-' + suffix, '',
-                 str(self.root), str(self.root), 'Pictures', 1.0),
+                 os.path.realpath(self.root), os.path.realpath(self.root), 'Pictures', 1.0),
             )
             db.commit()
 
@@ -155,7 +161,7 @@ class TrashManifestContainmentTests(unittest.TestCase):
             )
             db.commit()
         with (patch.object(photo_curator, 'catalog_volume_info_for_path',
-                           return_value={'identity_key':'physical-disk-B'}),
+                           return_value={'identity_key':self._device_key('B')}),
               patch.object(photo_curator, '_import_trash_manifest') as importing):
             rows = photo_curator._trash_rows(self.root)
         self.assertEqual(len(rows), 1)
@@ -175,7 +181,7 @@ class TrashManifestContainmentTests(unittest.TestCase):
             db.commit()
         sig = photo_curator._file_action_signature(self.trashed)
         with patch.object(photo_curator, 'catalog_volume_info_for_path',
-                          return_value={'identity_key':'physical-disk-B'}):
+                          return_value={'identity_key':self._device_key('B')}):
             with self.assertRaisesRegex(RuntimeError, '磁盘.*身份'):
                 photo_curator._purge_trash_item(1)
             with self.assertRaisesRegex(RuntimeError, '磁盘.*身份'):
@@ -207,7 +213,7 @@ class TrashManifestContainmentTests(unittest.TestCase):
             )
             db.commit()
         with (patch.object(photo_curator, 'catalog_volume_info_for_path',
-                           return_value={'identity_key':'physical-disk-A'}),
+                           return_value={'identity_key':self._device_key('A')}),
               patch.object(photo_curator, 'thumb_url', return_value='/thumb')):
             rows = photo_curator._trash_rows(self.root)
         self.assertEqual(len(rows), 1)
@@ -216,9 +222,9 @@ class TrashManifestContainmentTests(unittest.TestCase):
 
     def test_ambiguous_reused_library_path_remains_offline(self):
         self._register_catalog_device(suffix='a')
-        self._register_catalog_device(key='physical-disk-B',suffix='b')
+        self._register_catalog_device(key=self._device_key('B'),suffix='b')
         with patch.object(photo_curator, 'catalog_volume_info_for_path',
-                          return_value={'identity_key':'physical-disk-B'}):
+                          return_value={'identity_key':self._device_key('B')}):
             self.assertFalse(photo_curator._verified_trash_library_volume(self.root))
 
 
