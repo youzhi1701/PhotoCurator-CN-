@@ -2,11 +2,13 @@
 # -*- coding: utf-8 -*-
 """Ported v1.8 WAL optimization must preserve concurrent SQLite behavior."""
 import tempfile
+import sqlite3
+import time
 import threading
 import unittest
 from pathlib import Path
 
-from db_runtime import connect_db, quick_check
+from db_runtime import connect_db, quick_check, backup_database
 
 
 class WalOnceRegression(unittest.TestCase):
@@ -35,6 +37,49 @@ class WalOnceRegression(unittest.TestCase):
                 self.assertFalse(thread.is_alive())
             self.assertEqual(errors, [])
             self.assertEqual(quick_check(db_path), ["ok"])
+
+    def test_verified_backup_contains_live_wal_and_preserves_manual_history(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db_path = root / "shared.sqlite3"
+            backup_dir = root / "backups"
+            backup_dir.mkdir()
+            old_snapshot = backup_dir / "shared-before-migration-historical.sqlite3"
+            old_snapshot.write_bytes(b"previous manually managed backup")
+            live = sqlite3.connect(db_path)
+            try:
+                live.execute("PRAGMA journal_mode=WAL")
+                live.execute("PRAGMA wal_autocheckpoint=0")
+                live.execute("CREATE TABLE decisions (path TEXT PRIMARY KEY, choice TEXT)")
+                live.execute("INSERT INTO decisions VALUES (?, ?)", ("p1", "keep"))
+                live.commit()
+                self.assertTrue(Path(str(db_path) + "-wal").exists())
+
+                first = backup_database(db_path, backup_dir, "schema-upgrade", keep=1)
+                with sqlite3.connect(first) as snapshot:
+                    self.assertEqual(snapshot.execute(
+                        "SELECT choice FROM decisions WHERE path='p1'"
+                    ).fetchone()[0], "keep")
+
+                live.execute("INSERT INTO decisions VALUES (?, ?)", ("p2", "delete"))
+                live.commit()
+                time.sleep(0.03)
+                second = backup_database(db_path, backup_dir, "schema-upgrade", keep=1)
+                self.assertNotEqual(first, second)
+                self.assertTrue(second.exists())
+                self.assertFalse(first.exists())
+                self.assertEqual(old_snapshot.read_bytes(), b"previous manually managed backup")
+                with sqlite3.connect(second) as snapshot:
+                    self.assertEqual(snapshot.execute("PRAGMA quick_check").fetchone()[0], "ok")
+                    self.assertEqual(snapshot.execute(
+                        "SELECT COUNT(*) FROM decisions"
+                    ).fetchone()[0], 2)
+
+                safe = backup_database(db_path, backup_dir, "../outside", keep=1)
+                self.assertEqual(safe.parent, backup_dir)
+                self.assertTrue(safe.name.startswith("shared-before-auto-"))
+            finally:
+                live.close()
 
     def test_separate_database_is_initialized(self):
         with tempfile.TemporaryDirectory() as folder:

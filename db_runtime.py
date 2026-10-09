@@ -10,6 +10,8 @@ locking/foreign-key policy than the others.
 from __future__ import annotations
 
 import sqlite3
+import os
+import re
 import threading
 import time
 from pathlib import Path
@@ -95,26 +97,51 @@ def read_schema_version(db_path, key):
 
 
 def backup_database(db_path, backup_dir, label, *, keep=5):
-    """Create a consistent SQLite backup and retain only the newest copies."""
+    """Publish a verified WAL-consistent backup without touching unrelated ones.
+
+    Never expose a partial .sqlite3 file as a usable backup. Automatic backup
+    retention is isolated from manual/pre-migration recovery snapshots.
+    """
     src_path = Path(db_path)
     if not src_path.is_file() or src_path.stat().st_size <= 0:
         return None
     backup_dir = Path(backup_dir)
+    if backup_dir.is_symlink():
+        raise ValueError("refusing database backup through a linked directory")
     backup_dir.mkdir(parents=True, exist_ok=True)
+    safe_label = re.sub(r"[^a-zA-Z0-9_-]", "-", str(label))[:48] or "manual"
+    stem = f"{src_path.stem}-before-auto-{safe_label}-"
     stamp = time.strftime("%Y%m%d-%H%M%S")
-    target = backup_dir / f"{src_path.stem}-before-{label}-{stamp}.sqlite3"
-    source = sqlite3.connect(str(src_path), timeout=30)
-    dest = sqlite3.connect(str(target), timeout=30)
+    target = backup_dir / f"{stem}{stamp}-{time.time_ns()}.sqlite3"
+    temporary = backup_dir / f".{target.name}.partial"
+    source = destination = None
     try:
-        source.backup(dest)
-        dest.commit()
-    finally:
-        dest.close()
+        source = sqlite3.connect(str(src_path), timeout=30)
+        destination = sqlite3.connect(str(temporary), timeout=30)
+        source.backup(destination)
+        verdict = destination.execute("PRAGMA quick_check").fetchone()
+        if not verdict or verdict[0] != "ok":
+            raise sqlite3.DatabaseError("database backup integrity check failed")
+        destination.close()
+        destination = None
         source.close()
+        source = None
+        # Hard-link publishing is atomic on the same volume and refuses to
+        # overwrite another backup. Only finished snapshots are discoverable.
+        os.link(temporary, target)
+    finally:
+        if destination is not None:
+            destination.close()
+        if source is not None:
+            source.close()
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
 
     candidates = sorted(
-        backup_dir.glob(f"{src_path.stem}-before-*.sqlite3"),
-        key=lambda p: p.stat().st_mtime,
+        backup_dir.glob(f"{stem}*.sqlite3"),
+        key=lambda p: p.stat().st_mtime_ns,
         reverse=True,
     )
     for old in candidates[max(1, int(keep)):]:
