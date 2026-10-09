@@ -17,7 +17,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request'
     runs-on: windows-latest
     env:
-      CANDIDATE_VERSION: "1.7.10"
+      CANDIDATE_VERSION: "1.7.11"
       PYTHONUTF8: "1"
       PYTHONIOENCODING: "utf-8"
 
@@ -109,9 +109,13 @@ jobs:
           python -c "import runpy; runpy.run_path('\u57fa\u7840\u5192\u70df\u6d4b\u8bd5.py', run_name='__main__')"
           if ($LASTEXITCODE -ne 0) { throw "base smoke test failed" }
           python -m unittest -v test_exact_duplicates
+          if ($LASTEXITCODE -ne 0) { throw "exact duplicate regression failed" }
           python -m unittest -v test_rank_topn_selection
           if ($LASTEXITCODE -ne 0) { throw "rank topn regression failed" }
-          if ($LASTEXITCODE -ne 0) { throw "exact duplicate regression failed" }
+          # Previously the Windows candidate did not execute the catalog,
+          # source-identity, RAW/JPEG pairing or sidecar safety regressions.
+          python -m unittest -v test_catalog_unique_count test_missing_delete_safety test_safe_move_integrity test_raw_pair_protection test_scene_labels test_quality_annotations
+          if ($LASTEXITCODE -ne 0) { throw "Windows native catalog/file/scene regression failed" }
           python release_gate_test.py
           if ($LASTEXITCODE -ne 0) { throw "release_gate_test failed" }
           python performance_gate_test.py
@@ -139,6 +143,7 @@ jobs:
           --collect-all webview
           --collect-all rawpy
           --collect-all pillow_heif
+          --collect-data cv2
           desktop_app.py
 
       - name: Verify packaged candidate
@@ -273,10 +278,23 @@ jobs:
           # it is not set when invoking a .ps1 with PowerShell's call operator.
           & "packaging\\test_candidate_upgrade.ps1" -Version "$env:CANDIDATE_VERSION"
 
-      - name: Upload v1.7.10 test installer
+      - name: Generate test installer SHA-256
+        shell: powershell
+        run: |
+          $exe = "release\\PhotoCurator-Setup-v$env:CANDIDATE_VERSION.exe"
+          if (!(Test-Path -LiteralPath $exe)) { throw "Candidate installer missing" }
+          $hash = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          $name = [IO.Path]::GetFileName($exe)
+          $sha = "$hash *$name"
+          Set-Content -Path "$exe.sha256" -Value $sha -Encoding ascii
+          Write-Host "Verified candidate file integrity hash: $hash"
+
+      - name: Upload v1.7.11 test installer
         uses: actions/upload-artifact@v7
         with:
-          name: PhotoCurator-v1.7.10-test-installer
-          path: release/PhotoCurator-Setup-v1.7.10.exe
+          name: PhotoCurator-v1.7.11-test-installer
+          path: |
+            release/PhotoCurator-Setup-v1.7.11.exe
+            release/PhotoCurator-Setup-v1.7.11.exe.sha256
           if-no-files-found: error
           retention-days: 14

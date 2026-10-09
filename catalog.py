@@ -778,6 +778,18 @@ def catalog_scan_batch(db_path, session, paths):
 
     if not rows and not errors:
         return 0
+    # A removable drive may disappear or be replaced while this batch stats
+    # its files. Re-check *after* traversing the batch and before the SQLite
+    # transaction so foreign-device entries cannot enter the offline library.
+    try:
+        observed = volume_info_for_path(root)
+        if (not root_path.is_dir() or
+                str(observed.get("identity_key") or "") !=
+                str(session.get("identity_key") or "")):
+            raise RuntimeError("source replaced during catalog batch")
+    except Exception as exc:
+        abort_catalog_scan(db_path, session, f"source changed before write: {exc}")
+        raise RuntimeError("扫描期间原始硬盘发生变化，未写入当前批次") from exc
     with _connect(db_path) as db:
         # Scan cancellation/replacement and batch persistence must be
         # serialized. Never let a stale worker overwrite a newer generation.
