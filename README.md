@@ -30,7 +30,7 @@ PhotoCurator 的两个核心任务：
 
 图片扫描不再只依赖固定短名单：运行时会自动纳入当前 Pillow 实际可解码的全部扩展格式，并在可用时加入 HEIC/HEIF/HIF 与 RAW（CR2/CR3/NEF/ARW/DNG/RAF/ORF/RW2/PEF 等）支持。
 
-## v1.7.12 运行与界面架构
+## 运行与界面架构
 
 ### 前台优先
 
@@ -192,17 +192,17 @@ GitHub Actions：
 - `.github/workflows/syntax-check.yml`
 - `.github/workflows/build-release.yml`
 
-普通 `main` 推送只运行源码/结构门禁，不会反复消耗 Windows 正式安装包构建；Windows Candidate 通过 Pull Request 或手动触发完成真实 EXE、窗口存活和测试安装包验证。正式 Release 仅由显式发布请求或匹配版本标签触发。
+普通 `main` 推送不会自动消耗 Windows 正式安装包构建资源；源码门禁在 Pull Request、手动触发或符合发布条件的提交上运行。Windows Candidate 在 Pull Request 或手动触发时进行源码、EXE 和安装包验证。正式 Release 需要发布批准与数字签名。
 
-发布目标由 `packaging/release_manifest.json` 驱动。当前目标为 **1.7.19 Candidate**；只有全部 Release Gate 通过后，才允许创建正式标签：
+发布目标由 `packaging/release_manifest.json` 驱动。当前目标为 **2.0.0 Candidate**；只有全部 Release Gate 通过后，才允许创建正式标签：
 
- `v1.7.19`
+ `v2.0.0`
 
 发布工作流接受 `v*` 标签，但会在构建开始时强制检查：**Git 标签必须与 manifest 中的版本完全一致**。标签不一致会直接失败，避免误把旧代码发布成新版本或把新代码挂到旧标签。
 
 当前 Candidate 安装包目标名称（自动化构件，尚非 Stable）：
 
- `PhotoCurator-Setup-v1.7.19.exe`
+ `PhotoCurator-Setup-v2.0.0.exe`
 
 当前已经公开可下载的 Stable 安装包仍为 **v1.5.0**。
 
