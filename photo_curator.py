@@ -1195,7 +1195,11 @@ def iter_images(folder, recursive=False, on_error=None):
         try:
             on_error(exc)
         except Exception:
-            logger.debug("scan error callback failed", exc_info=True)
+            # A failed catalog error recorder must STOP enumeration. If this
+            # callback were swallowed, a partial directory walk could later
+            # be finalized as successful and mark real offline photos missing.
+            logger.exception("scan error callback failed; aborting full scan")
+            raise
 
     if not recursive:
         try:
@@ -2905,8 +2909,11 @@ def _shared_list_images(folder, recursive=True, max_age=2.0):
                         exc,
                         getattr(exc, "filename", "") or "",
                     )
-                except Exception:
-                    logger.warning("catalog scan error recording failed", exc_info=True)
+                except Exception as record_error:
+                    logger.exception("cannot record catalog scan I/O error")
+                    raise RuntimeError(
+                        "扫描发现读取错误，但图库无法保存错误状态；已安全终止，保留历史照片"
+                    ) from record_error
 
         for p in iter_images(
             folder, recursive=recursive, on_error=_scan_walk_error
