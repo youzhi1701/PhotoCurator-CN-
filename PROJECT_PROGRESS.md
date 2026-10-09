@@ -2,16 +2,16 @@
 
 > 此文件记录已经提交并验证的代码工作，以及尚未满足正式发布标准的工作。**不得把候选安装包、自动化测试或 GitHub 合并等同于用户实机验收与正式发布。**
 >
-> 最初历史开发基线为 main `81dbb510deb58f191448ed13d791094f9a1f9d7e`（PR #50）；截至本检查点，[PR #89](https://github.com/youzhi1701/PhotoCurator-CN-/pull/89) 已合并至 main `0276e5ca956bbc9b5b4dd9535442338c11330e52`，最新源码与 Windows Candidate 为 **v1.7.19**。Source、Windows 冒烟、原生安装器构建与 v1.5.0→v1.7.19 升级均通过自动化；真实实盘、语义模型评测、正式签名仍未完成。本文件不是实时 API，下轮须核对 GitHub HEAD/CI/构件。
+> 最初历史开发基线为 main `81dbb510deb58f191448ed13d791094f9a1f9d7e`（PR #50）；截至本检查点，[PR #90](https://github.com/youzhi1701/PhotoCurator-CN-/pull/90) 已合并至 main `604400728c757b6300a1c58c8038aa4e9e6ed369`，最新源码与 Windows Candidate 为 **v2.0.0**。Source、Windows 冒烟、原生 Windows EXE/安装器构建、v1.5.0→v2.0.0 升级均通过自动化；真实实盘、语义模型评测、正式签名仍未完成。本文件不是实时 API，下轮须核对 GitHub HEAD/CI/构件。
 
-## 2026-10-09 V2.0.0 Candidate：整合大图库全量筛选、虚拟窗口与离线图库导航（待 CI）
+## 2026-10-09 V2.0.0 Candidate：整合大图库筛选与虚拟窗口（CI 全通过；待用户实机验收）
 
 - 直接解决 UI 大图库只过滤已加载前 200 张的核心缺陷：后端接受等级/格式/待删除多条件过滤，返回全库真实合计；支持第 19,000 张照片深处的人工筛选，无需一次渲染全图库。
 - 前端 Cull 限制最多 600 卡、相似组最多 192 组，以滚动加载与前后批次回溯实现有界交互；修复 Core 并行分析后 Cull 完成状态和全库待删除统计错位。
 - 全库 RAW/HEIF 格式筛选项不受首屏样本限制；离线 Catalog 根切换时忽略老请求，避免异步网络返回把新图库覆盖成旧图库。
 - 新增 `test_cull_paged_review.py` 5 组 Python 回归（含 19000 条结果合成），扩充前端异步守卫测试；集成 Source、Windows smoke 和 Windows Candidate 流水线。
 - 本轮人为验收需用户 Windows 安装器执行后确认：19k+ 真图库、过滤和滚动触底、回看前批次、双盘切换、人工标记、非覆盖升级。GitHub CI 与真实机器运行质量必须分开记录。
-- 当前状态：开发候选已提交分支，CI 与真实硬件验收未完成；严禁标记 v2.0 Stable。
+- 当前状态：[PR #90](https://github.com/youzhi1701/PhotoCurator-CN-/pull/90) 已合并 main `604400728c757b6300a1c58c8038aa4e9e6ed369`。Source/Windows smoke 运行 [37890904679](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37890904679) 成功；真实 Windows Candidate EXE/安装器、v1.5.0 正式版→v2.0.0 覆盖升级与卸载留存运行 [37890904657](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37890904657) 成功。测试 ZIP `PhotoCurator-v2.0.0-test-installer`，内含 `PhotoCurator-Setup-v2.0.0.exe`，EXE SHA-256 `5102a263d6f811428462818f6b3c2e284a1360fdb3c77bcbf520cda0b672aac5`，构件 2026-10-23 到期。仍待用户大盘、硬盘/格式/语义真实评测与正式签名，不能标记 v2.0 Stable。
 
 ## 2026-10-09 V2.0 v1.7.19 Candidate：永久删除硬盘绑定（代码和 CI 通过，非 Stable）
 
