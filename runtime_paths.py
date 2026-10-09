@@ -117,14 +117,60 @@ def _table_columns(db, schema, table):
     return cols, pk
 
 
+def _snapshot_sqlite(source_path, destination_path):
+    """Create a verified, no-clobber SQLite snapshot, including committed WAL.
+
+    Copying only the .sqlite3 file while a writer has uncheckpointed WAL pages
+    can silently lose the latest catalog decisions. SQLite's online backup
+    API reads a consistent committed snapshot across the database and WAL.
+    Keep the temporary file beside the destination for atomic hard-link
+    installation without overwriting a concurrent backup or database.
+    """
+    source_path, destination_path = Path(source_path), Path(destination_path)
+    destination_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination_path.with_name(
+        f".{destination_path.name}.{os.getpid()}.{time.time_ns()}.snapshot"
+    )
+    source = destination = None
+    try:
+        source = sqlite3.connect(str(source_path), timeout=30)
+        destination = sqlite3.connect(str(temporary), timeout=30)
+        source.backup(destination)
+        verdict = destination.execute("PRAGMA quick_check").fetchone()
+        if not verdict or verdict[0] != "ok":
+            raise sqlite3.DatabaseError("SQLite snapshot integrity check failed")
+        destination.close()
+        destination = None
+        source.close()
+        source = None
+        # Both files reside on the same filesystem. A hard link publishes
+        # the complete snapshot atomically and fails if the name exists.
+        try:
+            os.link(temporary, destination_path)
+        except FileExistsError:
+            return False
+        return True
+    finally:
+        if destination is not None:
+            destination.close()
+        if source is not None:
+            source.close()
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
 def _merge_sqlite_catalog(legacy_db, target_db):
     """Merge durable catalog rows without replacing newer target decisions."""
     if not legacy_db.is_file():
         return {"tables": {}, "rows": 0}
     target_db.parent.mkdir(parents=True, exist_ok=True)
     if not target_db.exists():
-        shutil.copy2(legacy_db, target_db)
-        return {"tables": {"whole_db": "copied"}, "rows": -1}
+        if _snapshot_sqlite(legacy_db, target_db):
+            return {"tables": {"whole_db": "copied"}, "rows": -1}
+        # Another startup created the destination concurrently: merge into
+        # it rather than replacing its newer state.
 
     durable_tables = (
         "cull_cache",
@@ -240,9 +286,11 @@ def migrate_legacy_config(legacy_root, target_root):
         backup_dir = target_root / "backups"
         backup_dir.mkdir(parents=True, exist_ok=True)
         stamp = time.strftime("%Y%m%d-%H%M%S")
-        backup = backup_dir / f"library_index-before-migration-{stamp}.sqlite3"
-        if not backup.exists():
-            shutil.copy2(target_db, backup)
+        backup = backup_dir / (
+            f"library_index-before-migration-{stamp}-{time.time_ns()}.sqlite3"
+        )
+        if not _snapshot_sqlite(target_db, backup):
+            raise RuntimeError("migration snapshot destination already exists")
 
     if legacy_db.is_file():
         report["sqlite"] = _merge_sqlite_catalog(legacy_db, target_db)
