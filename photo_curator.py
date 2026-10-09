@@ -5086,10 +5086,12 @@ let lastRankSig='', lastCullSig='', lastDedupSig='', lastStep=null, weightTimer=
 // Result paging/filter state must exist before the first UI bootstrap call.
 // Keep boot-critical state together here so setupFilterBar() cannot touch
 // a later lexical declaration and abort the rest of the interaction bindings.
-let cullChunkToken=0, cullVisibleTotal=0, cullNextOffset=0, cullWindowStart=0;
+let cullChunkToken=0, cullVisibleTotal=0;
+let cullNextOffset=0, cullWindowStart=0;
 let cullPageBusy=false, cullGlobalStats=null, cullAvailableFormats=[];
 const CULL_WINDOW_CAP=600, CULL_FETCH_SIZE=200;
-let dedupChunkToken=0, dedupNextOffset=0, dedupWindowStart=0, dedupPageBusy=false;
+let dedupChunkToken=0;
+let dedupNextOffset=0, dedupWindowStart=0, dedupPageBusy=false;
 const DEDUP_WINDOW_CAP=192;
 let dedupStatusFilter='pending', dedupVisibleTotal=0;
 let dedupStatusCounts={pending:0,reviewed:0,updated:0};
