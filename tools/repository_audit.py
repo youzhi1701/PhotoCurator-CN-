@@ -73,13 +73,16 @@ def audit():
     # Include root-level test and utility files in the syntax inventory. This
     # catches files omitted from hard-coded CI compile lists without importing
     # modules, accessing personal data or executing application code.
-    python_files = sorted(ROOT.glob("*.py"))
+    python_files = sorted(ROOT.glob("*.py")) + sorted((ROOT / "tests").glob("*.py"))
     for path in python_files:
         try:
             source = path.read_text(encoding="utf-8-sig")
             compile(source, str(path), "exec")
         except (SyntaxError, UnicodeError) as exc:
             errors.append(f"Python source cannot compile: {path.name}: {exc}")
+
+    if not (ROOT / "tests" / "__init__.py").exists():
+        errors.append("tests package initializer missing")
 
     for alias, target in LAUNCHERS.items():
         path = ROOT / alias

@@ -36,31 +36,31 @@ jobs:
             background_tasks.py \
             photo_dedup_batch.py \
             exact_duplicates.py \
-            test_exact_duplicates.py \
+            tests/test_exact_duplicates.py \
             photo_ranking_v3.py \
             quality_annotations.py \
-            test_quality_annotations.py \
-            quality_annotations_input_test.py \
-            test_runtime_migration_wal.py \
-            test_background_process_crash.py \
-            test_offline_preview_guard.py \
-            test_catalog_thumb_disk_swap.py \
-            test_unavailable_decoder_catalog.py \
-            test_generated_album_filters.py \
-            test_export_containment.py \
-            test_cull_paged_review.py \
-            test_permanent_volume_guard.py \
-            test_catalog_path_indexes.py \
-            test_catalog_case_identity.py \
-            test_windows_uninstall_retention.py \
-            test_scan_error_fail_closed.py \
-            test_device_connection_identity.py \
-            test_storage_cleanup_containment.py \
-            test_trash_manifest_containment.py \
+            tests/test_quality_annotations.py \
+            tests/quality_annotations_input_test.py \
+            tests/test_runtime_migration_wal.py \
+            tests/test_background_process_crash.py \
+            tests/test_offline_preview_guard.py \
+            tests/test_catalog_thumb_disk_swap.py \
+            tests/test_unavailable_decoder_catalog.py \
+            tests/test_generated_album_filters.py \
+            tests/test_export_containment.py \
+            tests/test_cull_paged_review.py \
+            tests/test_permanent_volume_guard.py \
+            tests/test_catalog_path_indexes.py \
+            tests/test_catalog_case_identity.py \
+            tests/test_windows_uninstall_retention.py \
+            tests/test_scan_error_fail_closed.py \
+            tests/test_device_connection_identity.py \
+            tests/test_storage_cleanup_containment.py \
+            tests/test_trash_manifest_containment.py \
             scene_labels.py \
-            test_scene_labels.py \
-            test_raw_pair_protection.py \
-            test_rank_topn_selection.py \
+            tests/test_scene_labels.py \
+            tests/test_raw_pair_protection.py \
+            tests/test_rank_topn_selection.py \
             raw_loader.py \
             "基础冒烟测试.py" \
             "Codespaces冒烟测试.py" \
@@ -846,7 +846,7 @@ jobs:
 
       - name: Compile Python sources
         run: |
-          python -m py_compile db_runtime.py desktop_app.py runtime_paths.py catalog.py photo_curator.py background_tasks.py photo_dedup_batch.py exact_duplicates.py test_exact_duplicates.py photo_ranking_v3.py raw_loader.py test_export_containment.py test_permanent_volume_guard.py test_cull_paged_review.py "基础冒烟测试.py" "Codespaces冒烟测试.py" windows_smoke_test.py ui_smoke_test.py
+          python -m py_compile db_runtime.py desktop_app.py runtime_paths.py catalog.py photo_curator.py background_tasks.py photo_dedup_batch.py exact_duplicates.py tests/test_exact_duplicates.py photo_ranking_v3.py raw_loader.py tests/test_export_containment.py tests/test_permanent_volume_guard.py tests/test_cull_paged_review.py "基础冒烟测试.py" "Codespaces冒烟测试.py" windows_smoke_test.py ui_smoke_test.py
 
       - name: Runtime data path and migration smoke test
         shell: powershell
@@ -956,36 +956,36 @@ jobs:
       - name: Background task history regression
         shell: bash
         run: |
-          python -m unittest -v test_background_task_history
-          python -m unittest -v test_background_process_crash
-          python -m unittest -v test_catalog_unique_count
-          python -m unittest -v test_catalog_path_indexes
-          python -m unittest -v test_catalog_case_identity
-          python -m unittest -v test_device_connection_identity
-          python -m unittest -v test_missing_delete_safety test_permanent_volume_guard
-          python -m unittest -v test_scan_error_fail_closed
-          python -m unittest -v test_exact_duplicates
-          python -m unittest -v test_quality_annotations quality_annotations_input_test
-          python -m unittest -v test_runtime_migration_wal
-          python -m unittest -v test_offline_preview_guard
-          python -m unittest -v test_catalog_thumb_disk_swap
-          python -m unittest -v test_windows_uninstall_retention
-          python -m unittest -v test_storage_cleanup_containment
-          python -m unittest -v test_trash_manifest_containment
-          python -m unittest -v test_scene_labels
-          python -m unittest -v test_raw_pair_protection
-          python -m unittest -v test_unavailable_decoder_catalog
-          python -m unittest -v test_generated_album_filters test_export_containment test_cull_paged_review
-          python -m unittest -v test_rank_topn_selection
-          python -m unittest -v test_db_runtime_wal
-          python -m unittest -v test_safe_move_integrity
+          python -m unittest -v tests.test_background_task_history
+          python -m unittest -v tests.test_background_process_crash
+          python -m unittest -v tests.test_catalog_unique_count
+          python -m unittest -v tests.test_catalog_path_indexes
+          python -m unittest -v tests.test_catalog_case_identity
+          python -m unittest -v tests.test_device_connection_identity
+          python -m unittest -v tests.test_missing_delete_safety tests.test_permanent_volume_guard
+          python -m unittest -v tests.test_scan_error_fail_closed
+          python -m unittest -v tests.test_exact_duplicates
+          python -m unittest -v tests.test_quality_annotations tests.quality_annotations_input_test
+          python -m unittest -v tests.test_runtime_migration_wal
+          python -m unittest -v tests.test_offline_preview_guard
+          python -m unittest -v tests.test_catalog_thumb_disk_swap
+          python -m unittest -v tests.test_windows_uninstall_retention
+          python -m unittest -v tests.test_storage_cleanup_containment
+          python -m unittest -v tests.test_trash_manifest_containment
+          python -m unittest -v tests.test_scene_labels
+          python -m unittest -v tests.test_raw_pair_protection
+          python -m unittest -v tests.test_unavailable_decoder_catalog
+          python -m unittest -v tests.test_generated_album_filters tests.test_export_containment tests.test_cull_paged_review
+          python -m unittest -v tests.test_rank_topn_selection
+          python -m unittest -v tests.test_db_runtime_wal
+          python -m unittest -v tests.test_safe_move_integrity
 
       - name: Performance architecture regression gate
         shell: bash
         run: |
           python performance_gate_test.py
-          python test_desktop_instance_guard.py
-          python test_frontend_stale_request.py
+          python -m tests.test_desktop_instance_guard
+          python -m tests.test_frontend_stale_request
 
       - name: Real desktop UI interaction smoke test
         shell: bash
