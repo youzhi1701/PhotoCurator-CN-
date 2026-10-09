@@ -26,7 +26,7 @@ assert "token!==catalogRootRequestSerial" in catalog
 assert "if(token===catalogRootRequestSerial)catalogRootLoading=false" in catalog
 assert "catalogRootRequestSerial++" in source.split("function resetWorkspaceForFolder()",1)[1].split("function updateStartAvailability()",1)[0]
 cull_loader=source.split("async function loadCullPage(",1)[1].split("function updateCullLoadMore()",1)[0]
-assert "requestFilter!==cullFilter" in cull_loader
+assert "requestedFilter!==cullFilter" in cull_loader
 assert "requestedType!==cullType" in cull_loader
 assert "token!==cullChunkToken" in cull_loader
 assert "CULL_WINDOW_CAP" in cull_loader
