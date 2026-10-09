@@ -45,6 +45,7 @@ jobs:
             quality_annotations_input_test.py \
             test_runtime_migration_wal.py \
             test_offline_preview_guard.py \
+            test_catalog_thumb_disk_swap.py \
             test_unavailable_decoder_catalog.py \
             test_generated_album_filters.py \
             test_catalog_path_indexes.py \
@@ -444,7 +445,7 @@ jobs:
               "cullLiveStore",
               "dedupLiveStore",
               "st_mtime_ns",
-              ":v3",
+              ":v4",
               "collapsedFolders",
               "data-view=\"list\"",
               "data-view=\"small\"",
@@ -958,6 +959,7 @@ jobs:
           python -m unittest -v test_quality_annotations quality_annotations_input_test
           python -m unittest -v test_runtime_migration_wal
           python -m unittest -v test_offline_preview_guard
+          python -m unittest -v test_catalog_thumb_disk_swap
           python -m unittest -v test_windows_uninstall_retention
           python -m unittest -v test_storage_cleanup_containment
           python -m unittest -v test_scene_labels
