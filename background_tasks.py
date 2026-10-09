@@ -21,6 +21,8 @@ class BackgroundTaskManager:
         self.workers = max(1, int(workers))
         self.handlers: Dict[str, Callable[[dict], object]] = {}
         self._heap, self._seq, self._stop = [], 0, False
+        # Keep tasks without a registered handler parked, not in a 5Hz retry loop.
+        self._deferred = {}
         self._cv = threading.Condition()
         self._foreground_pressure = threading.Event()
         self._threads = []
@@ -94,7 +96,13 @@ class BackgroundTaskManager:
                 self._foreground_pressure.set()
 
     def register(self, kind, handler):
-        self.handlers[str(kind)] = handler
+        kind = str(kind)
+        with self._cv:
+            self.handlers[kind] = handler
+            for priority, task_id in self._deferred.pop(kind, ()):
+                self._seq += 1
+                heapq.heappush(self._heap, (priority, self._seq, task_id))
+            self._cv.notify_all()
 
     def enqueue(self, kind, payload, priority=50, idempotency_key=None):
         now = time.time()
@@ -206,12 +214,16 @@ class BackgroundTaskManager:
                     # Unregistered handlers must not briefly claim filesystem
                     # work and interfere with a second, ready task manager.
                     if row[0] not in self.handlers:
+                        # Synchronize with register(): registration cannot slip
+                        # between the handler check and parking this task.
+                        # Its persisted state remains queued for crash recovery.
                         with self._cv:
-                            self._seq += 1
-                            heapq.heappush(self._heap, (int(row[3]), self._seq, task_id))
-                        db.rollback()
-                        time.sleep(0.2)
-                        continue
+                            if row[0] not in self.handlers:
+                                self._deferred.setdefault(row[0], []).append(
+                                    (int(row[3]), task_id)
+                                )
+                                db.rollback()
+                                continue
                     claimed = db.execute(
                         "UPDATE background_task SET state='running',updated_at=? WHERE id=? AND state='queued'",
                         (time.time(), task_id),
