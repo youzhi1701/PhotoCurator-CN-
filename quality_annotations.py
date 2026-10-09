@@ -20,8 +20,14 @@ def annotate_quality(score, weighted_score=None):
     exposure = _metric(score, 'exposure')
     noise = _metric(score, 'noise')
     dynamic = _metric(score, 'dynamic_range')
-    overall = (_metric(score, 'overall_score') if weighted_score is None
-               else max(0.0, min(100.0, float(weighted_score))))
+    overall = _metric(score, 'overall_score')
+    if weighted_score is not None:
+        try:
+            candidate = float(weighted_score)
+            if math.isfinite(candidate):
+                overall = max(0.0, min(100.0, candidate))
+        except (TypeError, ValueError, OverflowError):
+            pass
     flags = []
     if focus < 28:
         flags.append('疑似失焦')
@@ -42,8 +48,8 @@ def annotate_quality(score, weighted_score=None):
         tier = '优质候选'
     else:
         tier = '一般候选'
-    meta = getattr(score, 'meta', None) or {}
-    hint = meta.get('scene_hint') or {}
+    meta = getattr(score, 'meta', None)
+    hint = (meta.get('scene_hint') or {}) if isinstance(meta, dict) else {}
     scene = hint.get('label') if isinstance(hint, dict) else '未识别'
     if scene != '人像候选':
         scene = '未识别'
