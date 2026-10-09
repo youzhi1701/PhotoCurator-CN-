@@ -4,6 +4,12 @@
 >
 > 最初历史开发基线为 main `81dbb510deb58f191448ed13d791094f9a1f9d7e`（PR #50）；截至本检查点，[PR #88](https://github.com/youzhi1701/PhotoCurator-CN-/pull/88) 已合并至 main `45ab33f6a5e423610b3a2f604da6c107bf83b6de`，最新源码与 Windows Candidate 为 **v1.7.18**。源码、Windows 冒烟、正式 Windows 原生安装器及真实 v1.5.0→v1.7.18 升级均通过自动化，真实实盘、语义模型评测、正式签名仍未完成。本文件不是实时 API，下轮须核对 GitHub HEAD/CI/构件。
 
+## 2026-10-09 V2.0 v1.7.19 Candidate：永久删除硬盘绑定（待 CI）
+
+- 基于 v1.7.18 已合并安全基线，新增直接永久删除的磁盘身份快照：复核令牌 → 单次提交 → 持久后台任务 → unlink 前双重身份核验。换盘、旧版未绑定硬盘任务、跨图库路径或断盘时，失败封闭，不删除原片。
+- 测试文件 `test_permanent_volume_guard.py` 覆盖 6 类物理身份、人工令牌和旧任务回归，加入 Source 和 Windows Candidate 流水线。
+- 当前为 v1.7.19 代码候选，安装器须等 Actions 实际通过；Stable 仍要求真实 4TB HDD/19k+、RAW/HEIF 机型、拔插/掉电、多机 DPI、语义模型准确性、用户 QA 与 Authenticode 数字签名。
+
 ## 2026-10-09 V2.0 v1.7.18 候选：精确去重与导出数据安全（代码与自动化已通过，非 Stable）
 
 - 精确重复复用缓存的候选组重新计算真实 SHA-256，验证打开的文件身份和扫描前后元数据，避免可写缓存被篡改导致不同原片误报字节精确重复；直接 symlink 不参与。

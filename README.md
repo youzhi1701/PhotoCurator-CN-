@@ -5,14 +5,17 @@
 
 | 版本 | 用途 | 下载 |
 | --- | --- | --- |
+| **v1.7.19 Candidate（源码开发分支）** | 永久删除人工复核与队列绑定实体磁盘身份；CI 待执行 | [Windows Candidate 工作流](https://github.com/youzhi1701/PhotoCurator-CN-/actions/workflows/candidate-windows.yml) |
 | **v1.7.18 Candidate（自动化已验证）** | 精确去重缓存校验 + TOP-N/壁纸导出防覆盖；Source/Windows CI 通过 | [Windows v1.7.18 安装包 ZIP](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37886666032) |
 | **v1.7.17 Candidate（已通过自动化）** | 外接硬盘回收站身份保护；Source/Windows CI 通过 | [Windows v1.7.17 安装包 ZIP](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37884600438) |
 | **v1.7.16 Candidate（已通过自动化）** | RAW/JPG 歧义保护、安全流式扫描 | [Windows v1.7.16 安装包构件](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37881401130) |
 | **v1.5.0 Stable（上次正式发布）** | 已发布正式版 | [PhotoCurator-Setup-v1.5.0.exe](https://github.com/youzhi1701/PhotoCurator-CN-/releases/download/v1.5.0/PhotoCurator-Setup-v1.5.0.exe) |
 
-v1.7.18 已构建并自动验证：在 [Windows Candidate 成功工作流](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37886666032) 页面底部下载 `PhotoCurator-v1.7.18-test-installer` ZIP，解压可得 `PhotoCurator-Setup-v1.7.18.exe` 和 SHA-256 文件。EXE SHA-256：`0224c9d6d3024f944660642c1042971d5bd2629caafc055a790d1bdd3fb6137a`，构件保留至 2026-10-23。 [源码/Windows smoke](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37886666065) 成功，旧版 v1.5.0 原位升级、卸载留存及原生窗口响应性均成功。
+v1.7.19 Windows 安装器需待本轮 CI 生成 `PhotoCurator-v1.7.19-test-installer` 后核对 SHA-256，尚未完成的构件不应标记为已发布。上一版 v1.7.18 已构建并自动验证：在 [Windows Candidate 成功工作流](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37886666032) 页面底部下载 `PhotoCurator-v1.7.18-test-installer` ZIP，解压可得 `PhotoCurator-Setup-v1.7.18.exe` 和 SHA-256 文件。EXE SHA-256：`0224c9d6d3024f944660642c1042971d5bd2629caafc055a790d1bdd3fb6137a`，构件保留至 2026-10-23。 [源码/Windows smoke](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37886666065) 成功，旧版 v1.5.0 原位升级、卸载留存及原生窗口响应性均成功。
 
 上一版 v1.7.17 Windows 已验证的 Candidate 构件：`PhotoCurator-v1.7.17-test-installer`，下载 ZIP 并解压得到 `PhotoCurator-Setup-v1.7.17.exe`；该构件安装器 SHA-256：`56b85abe23f69aca7cf30817458fdfb34e893c0917349be787e57f0f80ca5978`，Actions 构件保留至 2026-10-23。完整流水线： [Windows](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37884600438) 成功；[最新 Source/Windows smoke](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37884600508) 成功。v1.7.16 旧版构件 SHA-256：`38151f706585e4c7b9414ac4c8725efa0b5c2e579c664d60ef66b11aad879a4a`。
+
+v1.7.19 新增：人工永久删除的确认令牌不仅绑定照片路径/元数据，而且绑定原始物理磁盘身份；用户复核、点击确认、后台等待及 unlink 前多次比对。旧任务缺少实体设备快照直接拒绝，防止另一 U 盘复用旧盘符造成不可逆误删。新增错盘、旧任务、外部路径、断连和错误复核令牌测试。
 
 v1.7.18 新增：TOP-N / 手机壁纸导出必须原子预留全新目录，拒绝已有文件夹/符号链接重定向，输出文件采用无覆盖发布，导出前后核对源盘身份和文件指纹；避免旧文件或外部图片被覆写。字节精确重复缓存仅用于加速；任何复用缓存形成的重复组，必须重新读取文件并校验 SHA-256 和打开句柄身份；伪造/损坏缓存不能把不同照片误判为“字节精确重复”。拒绝符号链接照片直接参与精确索引，新增安全与缓存性能回归。
 
@@ -21,14 +24,20 @@ v1.7.17 重点：回收站只在已登记的原始实体硬盘身份与当前挂
 > 当前各版本仍不是 V2.0 Stable；真实 4TB HDD、19,000+ 图片、RAW/HEIF 多机型、真实拔插/突然断电、Win10/11 高 DPI、场景语义误判集、代码签名及用户 QA 尚需验收。
 <!-- LATEST_RELEASE_END -->
 
-> 面向大图库的 Windows 照片清理工具。v1.7.18 Candidate 在稳定桌面运行层基础上继续收口持久 Catalog、扫描会话与缺失判定、离线图库与设备识别、文件生命周期、数据库升级保护和 Windows 发布门禁；当前仍处于 Candidate 验证阶段，不等同于已发布 Stable。
+> 面向大图库的 Windows 照片清理工具。v1.7.19 Candidate 在稳定桌面运行层基础上继续收口持久 Catalog、扫描会话与缺失判定、离线图库与设备识别、文件生命周期、数据库升级保护和 Windows 发布门禁；当前仍处于 Candidate 验证阶段，不等同于已发布 Stable。
 
 | 项目 | 信息 |
 | --- | --- |
-| 当前源码版本 | **v1.7.18 Candidate（Source / Windows CI 已验证）** |
+| 当前源码版本 | **v1.7.19 Candidate（Source / Windows CI 待执行）** |
 | 项目类型 | Windows 照片筛选桌面应用 |
 | 上游基线 | Photo Curator v7.0 |
-| 当前状态 | **v1.7.18 Candidate · Source/Windows CI 已通过 · 真实设备及数字签名验收未完成** |
+| 当前状态 | **v1.7.19 Candidate · Source/Windows CI 待执行 · 真实设备及数字签名验收未完成** |
+
+## v1.7.19 直接永久删除的物理磁盘身份保护（待 CI）
+
+- 复核与后台执行时两次获取实时物理设备稳定身份；只有所选图库的原硬盘匹配才能处理永久删除。
+- 后台旧持久化任务缺失设备身份视为必须重新复核，不自动继承之前用户点击的操作权限；失败保留原片。
+- 永久删除前再次核验源文件身份、XMP/AAE 辅件及实体设备，并扩充专属安全回归。
 
 ## v1.7.18 精确重复缓存及导出可信校验（自动化通过，仍待实机 QA）
 
@@ -257,15 +266,15 @@ GitHub Actions：
 
 普通 `main` 推送只运行源码/结构门禁，不会反复消耗 Windows 正式安装包构建；Windows Candidate 通过 Pull Request 或手动触发完成真实 EXE、窗口存活和测试安装包验证。正式 Release 仅由显式发布请求或匹配版本标签触发。
 
-发布目标由 `packaging/release_manifest.json` 驱动。当前目标为 **1.7.18 Candidate**；只有全部 Release Gate 通过后，才允许创建正式标签：
+发布目标由 `packaging/release_manifest.json` 驱动。当前目标为 **1.7.19 Candidate**；只有全部 Release Gate 通过后，才允许创建正式标签：
 
- `v1.7.18`
+ `v1.7.19`
 
 发布工作流接受 `v*` 标签，但会在构建开始时强制检查：**Git 标签必须与 manifest 中的版本完全一致**。标签不一致会直接失败，避免误把旧代码发布成新版本或把新代码挂到旧标签。
 
 当前 Candidate 安装包目标名称（自动化构件，尚非 Stable）：
 
- `PhotoCurator-Setup-v1.7.18.exe`
+ `PhotoCurator-Setup-v1.7.19.exe`
 
 当前已经公开可下载的 Stable 安装包仍为 **v1.5.0**。
 
@@ -366,7 +375,7 @@ PhotoCurator-CN-/
 
 许可证保持原项目 **MIT License**。
 
-## v1.7.18 从 Candidate 晋级 Stable 的发布门槛
+## v1.7.19 从 Candidate 晋级 Stable 的发布门槛
 
 正式发布前必须同时满足：
 - Python / 嵌入式 JavaScript / HTML / CSS 自动检查通过
@@ -388,4 +397,4 @@ PhotoCurator-CN-/
 - 覆盖升级不破坏用户数据库、索引、设置、日志、任务状态和用户照片
 - GitHub Release 中真实存在与版本一致、非空且校验通过的 Windows 安装包
 
-在上述门槛没有全部满足前，v1.7.18 只能保持 **Candidate**，不能标记为 Stable。
+在上述门槛没有全部满足前，v1.7.19 只能保持 **Candidate**，不能标记为 Stable。
