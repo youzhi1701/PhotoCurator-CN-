@@ -38,3 +38,21 @@ PhoneBG/
 .codespaces_demo/
 
 .codespaces_preview.pid
+
+# Local build / packaging byproducts (never source-controlled)
+build/
+dist/
+release/
+*.spec
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+packaging/PhotoCurator.ico
+packaging/MicrosoftEdgeWebview2Setup.exe
+
+# Diagnostics and preview artifacts
+startup-error.log
+.codespaces_preview.log
+*.sqlite3-wal
+*.sqlite3-shm
