@@ -45,6 +45,11 @@ jobs:
             quality_annotations_input_test.py \
             test_runtime_migration_wal.py \
             test_offline_preview_guard.py \
+            test_unavailable_decoder_catalog.py \
+            test_generated_album_filters.py \
+            test_catalog_path_indexes.py \
+            test_windows_uninstall_retention.py \
+            test_scan_error_fail_closed.py \
             test_device_connection_identity.py \
             test_storage_cleanup_containment.py \
             scene_labels.py \
@@ -943,15 +948,20 @@ jobs:
         run: |
           python -m unittest -v test_background_task_history
           python -m unittest -v test_catalog_unique_count
+          python -m unittest -v test_catalog_path_indexes
           python -m unittest -v test_device_connection_identity
           python -m unittest -v test_missing_delete_safety
+          python -m unittest -v test_scan_error_fail_closed
           python -m unittest -v test_exact_duplicates
           python -m unittest -v test_quality_annotations quality_annotations_input_test
           python -m unittest -v test_runtime_migration_wal
           python -m unittest -v test_offline_preview_guard
+          python -m unittest -v test_windows_uninstall_retention
           python -m unittest -v test_storage_cleanup_containment
           python -m unittest -v test_scene_labels
           python -m unittest -v test_raw_pair_protection
+          python -m unittest -v test_unavailable_decoder_catalog
+          python -m unittest -v test_generated_album_filters
           python -m unittest -v test_rank_topn_selection
           python -m unittest -v test_db_runtime_wal
           python -m unittest -v test_safe_move_integrity

@@ -1,8 +1,8 @@
 {
   "product": "PhotoCurator",
   "channel": "candidate",
-  "version": "1.7.12",
-  "installer": "PhotoCurator-Setup-v1.7.12.exe",
+  "version": "1.7.13",
+  "installer": "PhotoCurator-Setup-v1.7.13.exe",
   "upgrade_mode": "in_place",
   "same_app_id": true,
   "data_root": "%LOCALAPPDATA%/PhotoCurator/data",
@@ -24,7 +24,7 @@
   "replace": [
     "app"
   ],
-  "notes": "v1.7.12 Candidate：进一步防止原硬盘离线后另一硬盘占用同盘符导致旧图库离线预览受到错误照片污染：绑定数据源物理身份、照片大小/mtime、解码前后同文件身份；原有精确去重、人工复核、侧车文件保护、v1.5.0 升级回归与 Windows 原生测试继续保留。实机 4TB/19,000+ 图库、RAW/HEIF 全样本、断电与正式签名未验收。",
+  "notes": "v1.7.13 Candidate：进一步防止原硬盘离线后另一硬盘占用同盘符导致旧图库离线预览受到错误照片污染：绑定数据源物理身份、照片大小/mtime、解码前后同文件身份；原有精确去重、人工复核、侧车文件保护、v1.5.0 升级回归与 Windows 原生测试继续保留。实机 4TB/19,000+ 图库、RAW/HEIF 全样本、断电与正式签名未验收。",
   "release_date": "2026-10-09",
   "published_version": "1.5.0",
   "published_installer": "PhotoCurator-Setup-v1.5.0.exe"
