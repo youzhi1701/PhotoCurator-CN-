@@ -1206,19 +1206,24 @@ def _is_output_dir_name(name):
 
 
 def iter_images(folder, recursive=False, on_error=None):
-    """Yield supported image paths without preloading the whole library.
+    """Stream source images without following symlinks/junctions.
 
-    Recoverable traversal errors are reported to on_error so a catalog scan can
-    avoid treating unreadable entries as deleted files.
+    DirEntry exposes the directory enumeration metadata already available on
+    the OS. This avoids an extra file-level stat on every USB HDD photo and
+    stops symbolic links to external collections from being indexed as if they
+    belonged to the selected physical library.
+
+    Any directory I/O failure is reported to the scan-session journal; a
+    caller unable to record that failure must abort rather than conclude old
+    media disappeared.
     """
     root = Path(folder)
     if not root.is_dir():
         return
 
     def supported_name(name):
-        if not name or name.startswith('.') or name.startswith('._'):
-            return False
-        return Path(name).suffix.lower() in IMG_EXTS
+        return (bool(name) and not name.startswith(('.', '._'))
+                and Path(name).suffix.lower() in IMG_EXTS)
 
     def report_error(exc):
         if on_error is None:
@@ -1226,53 +1231,71 @@ def iter_images(folder, recursive=False, on_error=None):
         try:
             on_error(exc)
         except Exception:
-            # A failed catalog error recorder must STOP enumeration. If this
-            # callback were swallowed, a partial directory walk could later
-            # be finalized as successful and mark real offline photos missing.
             logger.exception("scan error callback failed; aborting full scan")
             raise
 
-    if not recursive:
+    custom_cmp = None
+    if recursive:
         try:
-            for p in root.iterdir():
-                if not supported_name(p.name):
-                    continue
-                try:
-                    if p.is_file():
-                        yield p
-                except OSError as exc:
-                    report_error(exc)
+            scan = state.get('scan') or {}
+            custom = (scan.get('custom_output')
+                      if scan.get('output_mode') == 'custom' else '')
+            if custom:
+                custom_cmp = os.path.normcase(
+                    os.path.realpath(os.path.expanduser(custom)))
+        except Exception:
+            custom_cmp = None
+
+    # Use DFS with an explicit stack; no recursive Python calls or materialized
+    # global photo list. Reverse children to preserve scandir discovery order.
+    pending = [os.fspath(root)]
+    while pending:
+        current = pending.pop()
+        try:
+            stream = os.scandir(current)
         except OSError as exc:
             report_error(exc)
-        return
-
-    custom_cmp = None
-    try:
-        scan = state.get('scan') or {}
-        custom = scan.get('custom_output') if scan.get('output_mode') == 'custom' else ''
-        if custom:
-            custom_cmp = os.path.normcase(os.path.realpath(os.path.expanduser(custom)))
-    except Exception:
-        custom_cmp = None
-
-    for cur, dirs, files in os.walk(root, onerror=report_error):
-        base = Path(cur)
-        kept_dirs = []
-        for d in dirs:
-            if d.startswith('.') or _is_output_dir_name(d):
-                continue
-            if custom_cmp:
-                try:
-                    child_cmp = os.path.normcase(os.path.realpath(base / d))
-                    if child_cmp == custom_cmp:
-                        continue
-                except Exception:
-                    pass
-            kept_dirs.append(d)
-        dirs[:] = kept_dirs
-        for name in files:
-            if supported_name(name):
-                yield base / name
+            continue
+        subdirs = []
+        try:
+            with stream:
+                while True:
+                    try:
+                        entry = next(stream)
+                    except StopIteration:
+                        break
+                    except OSError as exc:
+                        report_error(exc)
+                        break
+                    try:
+                        if entry.is_symlink():
+                            continue
+                        if recursive and entry.is_dir(follow_symlinks=False):
+                            if entry.name.startswith('.') or _is_output_dir_name(entry.name):
+                                continue
+                            # Windows directory junctions are not always
+                            # reported as ordinary symlinks. Never cross
+                            # reparse-point directories during source scans.
+                            if os.name == 'nt':
+                                info = entry.stat(follow_symlinks=False)
+                                if getattr(info, 'st_file_attributes', 0) & 0x400:
+                                    continue
+                            if custom_cmp:
+                                child_cmp = os.path.normcase(os.path.realpath(entry.path))
+                                if child_cmp == custom_cmp:
+                                    continue
+                            subdirs.append(entry.path)
+                        elif supported_name(entry.name) and entry.is_file(
+                                follow_symlinks=False):
+                            yield Path(entry.path)
+                    except OSError as exc:
+                        report_error(exc)
+        finally:
+            # scandir's context manager already closes the handle, including
+            # when a caller stops iteration early.
+            pass
+        if recursive:
+            pending.extend(reversed(subdirs))
 
 
 def list_images(folder, recursive=False):
