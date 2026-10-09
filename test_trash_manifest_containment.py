@@ -127,6 +127,100 @@ class TrashManifestContainmentTests(unittest.TestCase):
             )
         self.assertEqual(self.outside.read_bytes(), b'never delete this')
 
+    def _register_catalog_device(self, key='physical-disk-A', suffix='a'):
+        photo_curator.init_catalog_schema(self.db_path)
+        with connect_db(self.db_path) as db:
+            db.execute(
+                'INSERT INTO data_source '
+                '(source_id,identity_key,kind,display_name,created_at) '
+                'VALUES(?,?,?,?,?)',
+                ('source-' + suffix, key, 'removable', 'External HDD', 1.0),
+            )
+            db.execute(
+                'INSERT INTO library_root '
+                '(root_id,source_id,relative_root,original_root,current_root,'
+                'display_name,created_at) VALUES(?,?,?,?,?,?,?)',
+                ('library-' + suffix, 'source-' + suffix, '',
+                 str(self.root), str(self.root), 'Pictures', 1.0),
+            )
+            db.commit()
+
+    def test_swapped_usb_disk_displays_old_trash_as_offline_not_available(self):
+        self._register_catalog_device()
+        with connect_db(self.db_path) as db:
+            db.execute(
+                'INSERT INTO software_trash '
+                '(original_path,trash_path,source_step,deleted_at) VALUES(?,?,?,?)',
+                (str(self.photo), str(self.trashed), 'cull', 1.0),
+            )
+            db.commit()
+        with (patch.object(photo_curator, 'catalog_volume_info_for_path',
+                           return_value={'identity_key':'physical-disk-B'}),
+              patch.object(photo_curator, '_import_trash_manifest') as importing):
+            rows = photo_curator._trash_rows(self.root)
+        self.assertEqual(len(rows), 1)
+        self.assertFalse(rows[0]['available'])
+        self.assertEqual(rows[0]['thumb'], '')
+        importing.assert_not_called()
+        self.assertEqual(self.trashed.read_bytes(), b'valid photo')
+
+    def test_swapped_disk_cannot_delete_or_restore_even_after_queue(self):
+        self._register_catalog_device()
+        with connect_db(self.db_path) as db:
+            db.execute(
+                'INSERT INTO software_trash '
+                '(original_path,trash_path,source_step,deleted_at) VALUES(?,?,?,?)',
+                (str(self.photo), str(self.trashed), 'cull', 1.0),
+            )
+            db.commit()
+        sig = photo_curator._file_action_signature(self.trashed)
+        with patch.object(photo_curator, 'catalog_volume_info_for_path',
+                          return_value={'identity_key':'physical-disk-B'}):
+            with self.assertRaisesRegex(RuntimeError, '磁盘.*身份'):
+                photo_curator._purge_trash_item(1)
+            with self.assertRaisesRegex(RuntimeError, '磁盘.*身份'):
+                photo_curator._background_purge_trash(
+                    {'trash_id':1,'source_identity':sig,'sidecar_records':[]}
+                )
+            with self.assertRaisesRegex(RuntimeError, '磁盘.*身份'):
+                photo_curator._background_restore_trash(
+                    {'trash_id':1,'source_identity':sig,'sidecar_records':[],
+                     'restore_path':str(self.photo)}
+                )
+            self.photo.write_bytes(b'source should stay here')
+            with self.assertRaisesRegex(RuntimeError, '设备.*身份'):
+                photo_curator._move_to_software_trash(
+                    self.photo, self.root, 'cull',
+                    planned_trash_path=self.bin / 'another.jpg',
+                )
+        self.assertEqual(self.trashed.read_bytes(), b'valid photo')
+        self.assertEqual(self.photo.read_bytes(), b'source should stay here')
+        self.assertEqual(len(self._rows()), 1)
+
+    def test_correct_registered_disk_allows_trash_listing(self):
+        self._register_catalog_device()
+        with connect_db(self.db_path) as db:
+            db.execute(
+                'INSERT INTO software_trash '
+                '(original_path,trash_path,source_step,deleted_at) VALUES(?,?,?,?)',
+                (str(self.photo), str(self.trashed), 'cull', 1.0),
+            )
+            db.commit()
+        with (patch.object(photo_curator, 'catalog_volume_info_for_path',
+                           return_value={'identity_key':'physical-disk-A'}),
+              patch.object(photo_curator, 'thumb_url', return_value='/thumb')):
+            rows = photo_curator._trash_rows(self.root)
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(rows[0]['available'])
+        self.assertEqual(rows[0]['thumb'], '/thumb')
+
+    def test_ambiguous_reused_library_path_remains_offline(self):
+        self._register_catalog_device(suffix='a')
+        self._register_catalog_device(key='physical-disk-B',suffix='b')
+        with patch.object(photo_curator, 'catalog_volume_info_for_path',
+                          return_value={'identity_key':'physical-disk-B'}):
+            self.assertFalse(photo_curator._verified_trash_library_volume(self.root))
+
 
 if __name__ == '__main__':
     unittest.main()
