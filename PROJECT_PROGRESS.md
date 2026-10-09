@@ -2,7 +2,14 @@
 
 > 此文件记录已经提交并验证的代码工作，以及尚未满足正式发布标准的工作。**不得把候选安装包、自动化测试或 GitHub 合并等同于用户实机验收与正式发布。**
 >
-> 最初历史开发基线为 main `81dbb510deb58f191448ed13d791094f9a1f9d7e`（PR #50）；最新安全修复已经合并至 main `f6d9f05674dd2c3e0f13a2f52a7bf55e815ff320`（PR #74）；**现有公开下载的 v1.7.12 测试构件构建于本轮修改之前，并不包含下列修复**。每次恢复时必须重新读取 GitHub main 最新 SHA、未合并 PR、CI 和构件；本文件不是实时 API。
+> 最初历史开发基线为 main `81dbb510deb58f191448ed13d791094f9a1f9d7e`（PR #50）；最新 V2.0 合并提交为 main `cd589ccee7b2a653a61de61a06a9147da5697f80`（PR #80）；v1.7.13 Candidate 的 Source/Windows 自动化均成功，但实盘及正式签名仍未完成。每次恢复时必须重新读取 GitHub main 最新 SHA、未合并 PR、CI 和构件；本文件不是实时 API。
+
+## 2026-10-09 最新完成的第二批代码修复（非 V2 Stable）
+
+- [PR #75](https://github.com/youzhi1701/PhotoCurator-CN-/pull/75)：设备重连必须校验真实 Windows Volume GUID；拒绝仅凭 F: 等旧盘符把另一块盘识别为原库。Linux 使用实际 mount 设备身份，不再默认将全部来源归属根文件系统。源码与 Windows CI 通过。
+- [PR #80](https://github.com/youzhi1701/PhotoCurator-CN-/pull/80)：统一集成 PR #76–#79，完成扫描错误落库失败时中止、RAW/HEIF 可发现和可解码分离、路径索引提升、大小写文件身份纠错、安全 Windows 卸载、用户文件夹前缀误过滤修复，全部纳入跨平台 CI。旧 #76–#79 因已由 #80 集成而关闭，不重复合并。
+- **统一版本：v1.7.13 Candidate**；[Source checks](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37874982398) 成功，[Windows build/upgrade/uninstall](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37874982341) 成功。Windows 实际旧版安装→原位升级→无提示静默卸载后，程序外原片、运行数据、离线预览仍保留。
+- CI Windows 安装包 `PhotoCurator-Setup-v1.7.13.exe`，SHA-256 `e8a40a73c5bac1ee8f111d19ef888a01403bb46b9d99ae4f4aa0bd682323e23e`；Actions ZIP 构件 `PhotoCurator-v1.7.13-test-installer`，有效期至 2026-10-23。此为 Candidate，**绝不冒称完成真实 4TB 设备、19,000+ 真实图库、全相机格式、断电和代码签名的最终版本**。
 
 ## 2026-10-09 最新完成的代码修复（非 Stable 发布）
 
@@ -64,7 +71,7 @@
 | 5. 人工筛选与集中复核 | #41–#46、#50 已加强批量复核、一次性授权、状态及源文件身份保护 | 相似/精选全部交互边界、历史选择恢复、跨设备重连的人工复核与撤销一致性实测 |
 | 6. UI 布局与性能 | 相似组 64 组分批显示、屏外渲染跳过，Top-N 有界排序；19,000 条合成数据回归已通过 | 统一工作台密度/缩放/弹窗/完整虚拟化、空闲 CPU/GPU、19,000+ 张图库响应及 Windows 高 DPI、多分辨率实测 |
 | 7. 回收站与文件生命周期 | 二次复核、原子入队、离线历史、文件及 XMP/AAE 身份绑定、跨盘 SHA-256/no-replace 与中断恢复已加固 | 真实断电/崩溃窗口、跨卷与 sidecar、同名竞态实机确认、掉盘后恢复、持久状态原子同步全链路验证 |
-| 8. Windows 安装/升级/正式发布 | v1.7.12 Candidate 已完成 Source+Windows 两项 CI、Windows v1.5.0 覆盖升级、EXE 启动检查与 SHA-256；发布版本与正式 v1.5.0 仍分离 | 真实设备与真实资料迁移/数据库备份恢复测试、实际数字签名证书与正式 Release 签核 |
+| 8. Windows 安装/升级/正式发布 | v1.7.13 Candidate 已完成 Source+Windows 两项 CI、Windows v1.5.0 覆盖升级及实际静默卸载数据留存、EXE 检查与 SHA-256；正式稳定版仍为 v1.5.0 | 真实设备与真实资料迁移/数据库备份恢复测试、实际数字签名证书与正式 Release 签核 |
 
 ## 发布原则与下次继续规则
 
@@ -82,13 +89,20 @@
 
 ## 最新交接说明（2026-10-09）
 
-- 当前正式可下载 Stable 仍为 **v1.5.0**。v1.7.12 为**候选测试版**（此版本更新后以 Windows CI 结果为准），严禁将 Windows 候选安装器当作完成实机验收的 V2.0 Stable。
+- 当前正式可下载 Stable 仍为 **v1.5.0**。v1.7.13 为**候选测试版**，Source 与 Windows CI 已通过，但实盘/代码签名尚未完成。严禁将候选安装器当作完成 V2.0 正式发布。
 - GitHub 无真实 4TB 外接机械硬盘与用户 Windows 测试机连接；正式签名所需 PFX/密码不能由模型凭空生成。
 - 发布级实机测试、签名设置、评估数据和发布前签核统一按 [RELEASE_ACCEPTANCE.md](RELEASE_ACCEPTANCE.md)。
 - 后续迭代必须重新从 GitHub main 的真实 SHA、PR 状态和 Actions 构件核对，不依赖本文件猜测进度。
 
-## v1.7.12 最新测试包（2026-10-09）
+## v1.7.12 历史测试包（2026-10-09）
 
 - [Windows CI 构建及下载入口](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37869003552) — Artifact 名为 **PhotoCurator-v1.7.12-test-installer**，下载的是含 EXE 与 .sha256 的 ZIP；构件有效期至 **2026-10-23 01:23 UTC**。
 - 文件名称：`PhotoCurator-Setup-v1.7.12.exe`；SHA-256：`6710c8a00df0b3e81b69ce8162a1562ba402576fcd1e1c11ae91f25506fbb8eb`；验证合格。
 - **真实外接 4TB HDD 长时、19,000+ 张真实照片、完整 RAW/HEIF 样本、突然断电、Windows 高 DPI 多版本验收与正式签名**依然是人工/硬件门槛，不能宣布 V2 Stable。
+
+## v1.7.13 最新候选构件（2026-10-09）
+
+- [Windows CI 构建与下载入口](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37874982341)，Artifact 名称 `PhotoCurator-v1.7.13-test-installer`，ZIP 内包含 `PhotoCurator-Setup-v1.7.13.exe` 及其 `.sha256`，2026-10-23 到期。
+- Windows EXE 安装器 SHA-256：`e8a40a73c5bac1ee8f111d19ef888a01403bb46b9d99ae4f4aa0bd682323e23e`。
+- GitHub 仓库代码已合并：`cd589ccee7b2a653a61de61a06a9147da5697f80`；后续文档提交不应改变此代码快照对应的 CI 证据。
+- 仍需高风险场景真实设备/实盘和交互验收、完整场景模型评测、实际 Authenticode 签名与逐版本 QA 签核后才能标记 V2.0 Stable。
