@@ -71,6 +71,9 @@ jobs:
             release_gate_test.py \
             performance_gate_test.py
 
+      - name: Audit repository structure
+        run: python tools/repository_audit.py
+
       - name: Parse GitHub Actions YAML
         run: |
           python -m pip install "PyYAML>=6,<7"
