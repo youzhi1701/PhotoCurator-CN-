@@ -5801,6 +5801,7 @@ function normalizedFolder(p){
 }
 function sameFolder(a,b){return normalizedFolder(a)===normalizedFolder(b);}
 function resetWorkspaceForFolder(){
+  catalogRootRequestSerial++;catalogRootLoading=false;
   cullChunkToken++;dedupRequestSerial++;
   cullLiveStore.clear();dedupLiveStore.clear();
   cullWindowStart=0;cullNextOffset=0;cullVisibleTotal=0;cullGlobalStats=null;cullPageBusy=false;cullAvailableFormats=[];
@@ -6120,7 +6121,7 @@ function renderSources(){
   });
 }
 
-let catalogRootLoading=false;
+let catalogRootLoading=false, catalogRootRequestSerial=0;
 function catalogCardHtml(item){
   const missing=item.state==='missing';
   const life=String(item.lifecycle||'normal');
@@ -6139,8 +6140,12 @@ function catalogCardHtml(item){
 }
 const CATALOG_PAGE_SIZE=400,CATALOG_DOM_WINDOW=800;
 async function loadCatalogRoot(rootId,{append=false,prepend=false}={}){
-  if(catalogRootLoading)return;
+  // A different root is a new navigation request, not "busy" work to drop.
+  // Ignore late responses from the previous root or an unselected folder.
+  if(catalogRootLoading&&(append||prepend))return;
+  const token=++catalogRootRequestSerial;
   catalogRootLoading=true;
+  const requestFolder=folder;
   showPhotoView();
   try{
     const sameView=catalogRootView&&catalogRootView.root_id===rootId;
@@ -6155,6 +6160,7 @@ async function loadCatalogRoot(rootId,{append=false,prepend=false}={}){
       :CATALOG_PAGE_SIZE;
     const r=await fetch('/api/catalog-root/'+encodeURIComponent(rootId)+'?limit='+limit+'&offset='+offset);
     const d=await r.json();
+    if(token!==catalogRootRequestSerial||!sameFolder(requestFolder,folder))return;
     if(!r.ok||d.error)throw new Error(d.error||('HTTP '+r.status));
     const incoming=d.items||[];
     const g=document.getElementById('gallery');
@@ -6238,9 +6244,9 @@ async function loadCatalogRoot(rootId,{append=false,prepend=false}={}){
       document.getElementById('photoView').appendChild(more);
     }
   }catch(err){
-    toast('读取离线图库失败：'+(err.message||'未知错误'),'bad');
+    if(token===catalogRootRequestSerial)toast('读取离线图库失败：'+(err.message||'未知错误'),'bad');
   }finally{
-    catalogRootLoading=false;
+    if(token===catalogRootRequestSerial)catalogRootLoading=false;
   }
 }
 
@@ -6802,7 +6808,7 @@ const DEDUP_UI_PAGE_SIZE=64;
 let dedupRequestSerial=0;
 async function loadDedupPage(reset=false,prepend=false){
   if(currentStep!=='dedup'||(dedupPageBusy&&!reset))return;
-  const serial=++dedupRequestSerial,requestFolder=folder,requestFilter=dedupStatusFilter;
+  const requestSerial=++dedupRequestSerial,requestFolder=folder,requestFilter=dedupStatusFilter;
   const offset=reset?0:(prepend?Math.max(0,dedupWindowStart-DEDUP_UI_PAGE_SIZE):dedupNextOffset);
   const limit=prepend?Math.max(0,dedupWindowStart-offset):DEDUP_UI_PAGE_SIZE;
   if(!limit)return;
@@ -6810,11 +6816,12 @@ async function loadDedupPage(reset=false,prepend=false){
   try{
     const d=await fetch('/api/results/dedup?offset='+offset+'&limit='+limit+'&status='+encodeURIComponent(requestFilter))
       .then(async r=>{const x=await r.json();if(!r.ok)throw new Error(x.error||('HTTP '+r.status));return x;});
-    if(serial!==dedupRequestSerial||currentStep!=='dedup'||
+    if(requestSerial!==dedupRequestSerial||currentStep!=='dedup'||
        requestFilter!==dedupStatusFilter||!sameFolder(requestFolder,folder))return;
     const anchor=reset?null:captureGalleryAnchor('.dedup-group','data-group');
     const incoming=(d.photos||[]).filter(g=>g&&g.group_id!=null);
-    if(reset){dedupLiveStore.clear();dedupWindowStart=0;dedupNextOffset=0;}
+    if(reset)dedupLiveStore.clear();
+    if(reset){dedupWindowStart=0;dedupNextOffset=0;}
     if(prepend){
       const combined=[...incoming,...dedupLiveStore.values()];
       dedupLiveStore.clear();
@@ -6835,15 +6842,15 @@ async function loadDedupPage(reset=false,prepend=false){
     setupFilterBar();updateDedupLoadMore();
     if(!reset)requestAnimationFrame(()=>restoreGalleryAnchor(anchor));
     else requestAnimationFrame(()=>{
-      if(serial!==dedupRequestSerial||currentStep!=='dedup'||
+      if(requestSerial!==dedupRequestSerial||currentStep!=='dedup'||
          !sameFolder(requestFolder,folder))return;
       const scroll=document.querySelector('main.main');
       const position=workspaceScrollByStep.get(workspaceViewKey('dedup',requestFolder));
       if(scroll&&Number.isFinite(position))scroll.scrollTop=position;
     });
   }catch(err){
-    if(serial===dedupRequestSerial)toast('载入相似组失败：'+(err.message||'未知错误'),'bad');
-  }finally{if(serial===dedupRequestSerial)dedupPageBusy=false;}
+    if(requestSerial===dedupRequestSerial)toast('载入相似组失败：'+(err.message||'未知错误'),'bad');
+  }finally{if(requestSerial===dedupRequestSerial)dedupPageBusy=false;}
 }
 function updateDedupLoadMore(){
   const next=document.getElementById('dedupLoadMore'),prev=document.getElementById('dedupLoadEarlier');
