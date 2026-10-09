@@ -95,11 +95,17 @@ end;
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if CurUninstallStep = usUninstall then
-    ClearRecents := MsgBox(
+  begin
+    { An unattended upgrade/uninstall must never block on a custom dialog.
+      Silent uninstall always retains all user data and recent folders. }
+    ClearRecents := False;
+    if not UninstallSilent then
+      ClearRecents := MsgBox(
       '是否清除 PhotoCurator 最近打开的文件夹记录？' + #13#10 +
       '图库索引、人工筛选决策、离线预览、日志和软件回收站将全部保留。' + #13#10 +
       '卸载程序不会递归删除任何照片目录或运行数据。',
       mbConfirmation, MB_YESNO) = IDYES;
+  end;
 
   if (CurUninstallStep = usPostUninstall) and ClearRecents then
   begin
