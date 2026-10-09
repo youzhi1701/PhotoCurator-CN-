@@ -723,17 +723,22 @@ def list_sources(db_path, *, refresh=True):
             multiple_roots.append(item["source_id"])
     if multiple_roots:
         placeholders = ",".join("?" for _ in multiple_roots)
+        # A.jpg and a.jpg are distinct real files on case-sensitive POSIX
+        # volumes. LOWER() and unconditional backslash conversion silently
+        # merge them into one library count (and can hide a photo from UI).
+        identity_expr = (
+            "LOWER(TRIM(REPLACE(r.relative_root || '/' || m.relative_path, CHAR(92), '/'), '/'))"
+            if os.name == "nt"
+            else "TRIM(r.relative_root || '/' || m.relative_path, '/')"
+        )
         with _connect(db_path) as db:
             unique_rows = db.execute(
-                """SELECT m.source_id,
-                          COUNT(DISTINCT LOWER(TRIM(REPLACE(
-                            r.relative_root || '/' || m.relative_path,
-                            CHAR(92), '/'), '/')))
-                   FROM media_catalog m
-                   JOIN library_root r ON r.root_id=m.root_id
-                                       AND r.source_id=m.source_id
-                   WHERE m.state='present' AND m.source_id IN (""" + placeholders + """)
-                   GROUP BY m.source_id""",
+                f"""SELECT m.source_id, COUNT(DISTINCT {identity_expr})
+                    FROM media_catalog m
+                    JOIN library_root r ON r.root_id=m.root_id
+                                        AND r.source_id=m.source_id
+                    WHERE m.state='present' AND m.source_id IN (""" + placeholders + """)
+                    GROUP BY m.source_id""",
                 multiple_roots,
             ).fetchall()
         for sid, count in unique_rows:
@@ -1033,12 +1038,13 @@ def update_media_lifecycle(db_path, original_path, current_path, lifecycle):
     """Keep Media Catalog path/lifecycle aligned with accepted file operations."""
     original = _canonical_path(original_path)
     current = _canonical_path(current_path or original_path)
+    path_collation = "NOCASE" if os.name == "nt" else "BINARY"
     with _connect(db_path) as db:
         db.execute(
-            """UPDATE media_catalog
-               SET current_path=?,lifecycle=?,last_seen_at=?
-               WHERE original_path COLLATE NOCASE = ?
-                  OR current_path COLLATE NOCASE = ?""",
+            f"""UPDATE media_catalog
+                SET current_path=?,lifecycle=?,last_seen_at=?
+                WHERE original_path COLLATE {path_collation} = ?
+                   OR current_path COLLATE {path_collation} = ?""",
             (current, str(lifecycle), time.time(), original, original),
         )
         db.commit()
