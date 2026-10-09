@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 """Byte-exact duplicate indexing: no visual false positives and no file actions."""
 import os
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -101,6 +102,66 @@ class ExactDuplicateIndexTests(unittest.TestCase):
                 self.assertEqual(exact_duplicate_groups([actual, other]), [])
             self.assertEqual(actual.read_bytes(), b"AAAA")
             self.assertEqual(other.read_bytes(), b"BBBB")
+
+    def test_untrusted_cache_cannot_forge_byte_identical_group(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            a, b = root / "a.jpg", root / "b.jpg"
+            a.write_bytes(b"ABCD")
+            b.write_bytes(b"DCBA")
+            cache = root / "exact.json"
+            self.assertEqual(exact_duplicate_groups([a, b], cache_path=cache), [])
+            record = json.loads(cache.read_text(encoding="utf-8"))
+            self.assertEqual(len(record["entries"]), 2)
+            # Compromise the user-writable cache: both *different* photos now
+            # claim the same SHA-256, while all file metadata stays the same.
+            for key in record["entries"]:
+                record["entries"][key] = "0" * 64
+            cache.write_text(json.dumps(record), encoding="utf-8")
+            self.assertEqual(exact_duplicate_groups([a, b], cache_path=cache), [])
+            repaired = json.loads(cache.read_text(encoding="utf-8"))
+            self.assertEqual(len(set(repaired["entries"].values())), 2)
+            self.assertEqual((a.read_bytes(), b.read_bytes()), (b"ABCD", b"DCBA"))
+
+    def test_matching_cached_group_still_requires_fresh_byte_proof(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            a, b = Path(tmp) / "a.jpg", Path(tmp) / "b.jpg"
+            a.write_bytes(b"same" * 1024)
+            b.write_bytes(a.read_bytes())
+            cache = Path(tmp) / "exact.json"
+            self.assertEqual(exact_duplicate_groups([a, b], cache_path=cache),
+                             [[str(a), str(b)]])
+            from exact_duplicates import _sha256_guarded
+            with patch("exact_duplicates._sha256_guarded",
+                       wraps=_sha256_guarded) as verified:
+                self.assertEqual(exact_duplicate_groups([a, b], cache_path=cache),
+                                 [[str(a), str(b)]])
+                self.assertEqual(verified.call_count, 2)
+
+    def test_cache_remains_fast_for_distinct_same_size_photos(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            a, b = Path(tmp) / "a.jpg", Path(tmp) / "b.jpg"
+            a.write_bytes(b"ABCD")
+            b.write_bytes(b"WXYZ")
+            cache = Path(tmp) / "exact.json"
+            self.assertEqual(exact_duplicate_groups([a, b], cache_path=cache), [])
+            with patch("exact_duplicates._sha256_guarded",
+                       side_effect=AssertionError("unnecessary rehash")):
+                self.assertEqual(exact_duplicate_groups([a, b], cache_path=cache), [])
+
+    def test_direct_symlink_not_treated_as_independent_photo(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            a, b = root / "a.jpg", root / "b.jpg"
+            link = root / "link.jpg"
+            a.write_bytes(b"same")
+            b.write_bytes(b"same")
+            try:
+                link.symlink_to(b)
+            except (OSError, NotImplementedError):
+                self.skipTest("file symlinks unavailable on this runner")
+            self.assertEqual(exact_duplicate_groups([link, a]), [])
+            self.assertEqual(exact_duplicate_groups([a, b]), [[str(a), str(b)]])
 
     def test_byte_identical_alias_is_grouped_even_when_image_decode_fails(self):
         dd = FastBatchDeduplicator(use_orb_confirm=False)
