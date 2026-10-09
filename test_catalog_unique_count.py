@@ -286,5 +286,54 @@ class EmptyScanCatalogGuardTests(unittest.TestCase):
             self.assertEqual(result["photo_count"],0)
             self.assertTrue(result["missing_reconciled"])
 
+
+class CatalogMidBatchVolumeRecheckTests(unittest.TestCase):
+    def test_swap_during_metadata_collection_aborts_before_db_write(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "photos"
+            root.mkdir()
+            original = root / "first.jpg"
+            new = root / "foreign.jpg"
+            original.write_bytes(b"existing-photo")
+            new.write_bytes(b"foreign-volume")
+            database = Path(tmp) / "library.sqlite"
+            first = begin_catalog_scan(database, root)
+            catalog_scan_batch(database, first, [original])
+            finish_catalog_scan(database, first)
+            session = begin_catalog_scan(database, root)
+            correct = {"identity_key": session["identity_key"]}
+            wrong = {"identity_key": "replaced-volume"}
+            with patch.object(catalog, "volume_info_for_path",
+                              side_effect=[correct, wrong]):
+                with self.assertRaisesRegex(RuntimeError, "未写入当前批次"):
+                    catalog_scan_batch(database, session, [new])
+            with connect_db(database) as db:
+                contents = db.execute(
+                    "SELECT original_path,state FROM media_catalog").fetchall()
+                scan = db.execute(
+                    "SELECT state FROM scan_session WHERE session_id=?",
+                    (session["session_id"],)).fetchone()
+            self.assertEqual(len(contents), 1)
+            self.assertEqual(contents[0][0], catalog._canonical_path(original))
+            self.assertEqual(contents[0][1], "present")
+            self.assertEqual(scan[0], "interrupted")
+
+    def test_unchanged_volume_allows_normal_commit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "photos"
+            root.mkdir()
+            photo = root / "safe.jpg"
+            photo.write_bytes(b"image")
+            database = Path(tmp) / "library.sqlite"
+            session = begin_catalog_scan(database, root)
+            valid = {"identity_key": session["identity_key"]}
+            with patch.object(catalog, "volume_info_for_path",
+                              side_effect=[valid, valid]):
+                self.assertEqual(
+                    catalog_scan_batch(database, session, [photo]), 1)
+            with connect_db(database) as db:
+                self.assertEqual(db.execute(
+                    "SELECT COUNT(*) FROM media_catalog").fetchone()[0], 1)
+
 if __name__ == "__main__":
     unittest.main()
