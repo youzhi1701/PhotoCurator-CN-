@@ -45,6 +45,7 @@ jobs:
             quality_annotations_input_test.py \
             test_runtime_migration_wal.py \
             test_offline_preview_guard.py \
+            test_device_connection_identity.py \
             test_storage_cleanup_containment.py \
             scene_labels.py \
             test_scene_labels.py \
@@ -942,6 +943,7 @@ jobs:
         run: |
           python -m unittest -v test_background_task_history
           python -m unittest -v test_catalog_unique_count
+          python -m unittest -v test_device_connection_identity
           python -m unittest -v test_missing_delete_safety
           python -m unittest -v test_exact_duplicates
           python -m unittest -v test_quality_annotations quality_annotations_input_test
