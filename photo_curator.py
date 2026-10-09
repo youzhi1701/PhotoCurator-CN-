@@ -2201,6 +2201,47 @@ def _background_move_to_trash(payload):
         raise
 
 
+def _verified_irreversible_source_volume(folder, path):
+    """Obtain a live, stable source-device claim for an irreversible action.
+
+    A reused drive letter, matching photo name and even coincidentally equal
+    inode/stat metadata must not allow a queued permanent delete to act on
+    another USB device. The claim is frozen at human review, checked again at
+    submission and checked on the background worker immediately before unlink.
+    """
+    if not folder or not path:
+        raise RuntimeError("永久删除缺少原始图库身份，必须重新人工复核")
+    raw_root, raw_photo = Path(folder), Path(path)
+    if not raw_root.is_absolute() or not raw_photo.is_absolute():
+        raise RuntimeError("永久删除要求绝对路径及有效图库设备身份")
+    root = raw_root.resolve()
+    photo = raw_photo.resolve()
+    if (photo == root or not photo.is_relative_to(root)
+            or photo.is_relative_to(root / SOFTWARE_TRASH_DIR)
+            or not photo.is_file() or photo.suffix.lower() not in IMG_EXTS):
+        raise RuntimeError("永久删除目标不属于当前原始图库")
+    if not _verified_trash_library_volume(root):
+        raise RuntimeError("原始硬盘已断开或实体身份不匹配，永久删除已拒绝")
+    try:
+        key = str(catalog_volume_info_for_path(root).get('identity_key') or '')
+    except (OSError, ValueError, RuntimeError) as exc:
+        raise RuntimeError("无法校验原始照片所在实体磁盘") from exc
+    if (not key or (os.name == 'nt' and not key.startswith('win-guid:'))):
+        raise RuntimeError("实体设备身份无法可靠确认，永久删除已拒绝")
+    return key
+
+
+def _verify_queued_irreversible_device(payload, photo):
+    """Fail closed for old persistent jobs without a source-device snapshot."""
+    root = str(payload.get('folder') or '')
+    expected = str(payload.get('source_volume_key') or '')
+    if not root or not expected:
+        raise RuntimeError("旧版永久删除任务未绑定原始硬盘，须重新人工复核")
+    actual = _verified_irreversible_source_volume(root, photo)
+    if not hmac.compare_digest(actual, expected):
+        raise RuntimeError("硬盘在人工复核与后台执行之间发生切换，已拒绝永久删除")
+
+
 def _background_permanent_delete(payload):
     path = os.path.realpath(str(payload['path']))
     original = _find_original_for_path(path)
@@ -2214,7 +2255,12 @@ def _background_permanent_delete(payload):
                 "无法确认照片已永久删除：文件不可访问或设备离线，状态已保留"
             )
         _verify_file_action_source(target, payload.get('source_identity'))
+        _verify_queued_irreversible_device(payload, target)
         sidecars = _check_reviewed_sidecars(target, payload.get('sidecar_records'))
+        # Recheck device identity at the last point before destructive work,
+        # including changes while sidecars are enumerated.
+        _verify_queued_irreversible_device(payload, target)
+        _verify_file_action_source(target, payload.get('source_identity'))
         target.unlink()
         for sidecar in sidecars:
             try:
@@ -8989,13 +9035,15 @@ def api_trash_restore_all():
 
 
 def _permanent_review_rows(step, target):
-    """Bind one irreversible action to source, identity, and file fingerprint."""
+    """Bind irreversible consent to a photo AND the physical source volume."""
+    root = state.get('folder')
+    volume_key = _verified_irreversible_source_volume(root, target)
     stat = Path(target).stat()
     return [{
-        'path': 'permanent|{}|{}|{}|{}|{}|{}'.format(
+        'path': 'permanent|{}|{}|{}|{}|{}|{}|{}'.format(
             step, os.path.realpath(str(target)),
             int(stat.st_dev), int(stat.st_ino),
-            int(stat.st_size), int(stat.st_mtime_ns)
+            int(stat.st_size), int(stat.st_mtime_ns), volume_key,
         )
     }]
 
@@ -9015,8 +9063,8 @@ def api_review_permanent():
         return jsonify({'error': '照片路径无效或不属于当前图库'}), 400
     try:
         rows = _permanent_review_rows(step, target)
-    except OSError:
-        return jsonify({'error': '照片已移走或设备离线，请重新复核'}), 409
+    except (OSError, ValueError, RuntimeError) as exc:
+        return jsonify({'error': str(exc) or '照片已移走或设备离线，请重新复核'}), 409
     return jsonify({'review_token': _issue_pending_review_grant(rows),
                     'path': str(target), 'mode': 'permanent'})
 
@@ -9049,8 +9097,8 @@ def api_delete_photo():
     if mode == 'permanent':
         try:
             reviewed = _permanent_review_rows(step, target)
-        except OSError:
-            return jsonify({'error': '照片已移走或设备离线，请重新复核'}), 409
+        except (OSError, ValueError, RuntimeError) as exc:
+            return jsonify({'error': str(exc) or '照片已移走或设备离线，请重新复核'}), 409
         if not _consume_pending_review_grant(data.get('review_token'), reviewed):
             return jsonify({'error': '永久删除必须重新人工确认，复核凭证缺失或失效'}), 409
 
@@ -9085,6 +9133,12 @@ def api_delete_photo():
         task_payload['trash_path'] = str(
             _trash_destination(Path(target), folder).resolve()
         )
+    else:
+        try:
+            task_payload['source_volume_key'] = (
+                _verified_irreversible_source_volume(folder, target))
+        except (OSError, ValueError, RuntimeError) as exc:
+            return jsonify({'error': str(exc) or '实体磁盘身份验证失败'}), 409
     # Enqueue first. A full queue, closed database or disk error must not leave
     # a permanent "pending" marker for a task that was never accepted.
     try:
