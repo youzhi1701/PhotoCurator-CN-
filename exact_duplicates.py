@@ -43,7 +43,7 @@ def _load_cache(cache_path):
         if not path.is_file() or path.stat().st_size > 32 * 1024 * 1024:
             return {}
         doc = json.loads(path.read_text(encoding="utf-8"))
-        if doc.get("version") != CACHE_VERSION:
+        if not isinstance(doc, dict) or doc.get("version") != CACHE_VERSION:
             return {}
         raw = doc.get("entries")
         if not isinstance(raw, dict):
