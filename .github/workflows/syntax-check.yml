@@ -49,6 +49,7 @@ jobs:
             scene_labels.py \
             test_scene_labels.py \
             test_raw_pair_protection.py \
+            test_unavailable_decoder_catalog.py \
             test_rank_topn_selection.py \
             raw_loader.py \
             "基础冒烟测试.py" \
@@ -950,6 +951,7 @@ jobs:
           python -m unittest -v test_storage_cleanup_containment
           python -m unittest -v test_scene_labels
           python -m unittest -v test_raw_pair_protection
+          python -m unittest -v test_unavailable_decoder_catalog
           python -m unittest -v test_rank_topn_selection
           python -m unittest -v test_db_runtime_wal
           python -m unittest -v test_safe_move_integrity
