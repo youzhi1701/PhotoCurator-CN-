@@ -2,13 +2,15 @@
 
 > 此文件记录已经提交并验证的代码工作，以及尚未满足正式发布标准的工作。**不得把候选安装包、自动化测试或 GitHub 合并等同于用户实机验收与正式发布。**
 >
-> 最初历史开发基线为 main `81dbb510deb58f191448ed13d791094f9a1f9d7e`（PR #50）；截至本检查点，[PR #88](https://github.com/youzhi1701/PhotoCurator-CN-/pull/88) 已合并至 main `45ab33f6a5e423610b3a2f604da6c107bf83b6de`，最新源码与 Windows Candidate 为 **v1.7.18**。源码、Windows 冒烟、正式 Windows 原生安装器及真实 v1.5.0→v1.7.18 升级均通过自动化，真实实盘、语义模型评测、正式签名仍未完成。本文件不是实时 API，下轮须核对 GitHub HEAD/CI/构件。
+> 最初历史开发基线为 main `81dbb510deb58f191448ed13d791094f9a1f9d7e`（PR #50）；截至本检查点，[PR #89](https://github.com/youzhi1701/PhotoCurator-CN-/pull/89) 已合并至 main `0276e5ca956bbc9b5b4dd9535442338c11330e52`，最新源码与 Windows Candidate 为 **v1.7.19**。Source、Windows 冒烟、原生安装器构建与 v1.5.0→v1.7.19 升级均通过自动化；真实实盘、语义模型评测、正式签名仍未完成。本文件不是实时 API，下轮须核对 GitHub HEAD/CI/构件。
 
-## 2026-10-09 V2.0 v1.7.19 Candidate：永久删除硬盘绑定（待 CI）
+## 2026-10-09 V2.0 v1.7.19 Candidate：永久删除硬盘绑定（代码和 CI 通过，非 Stable）
 
 - 基于 v1.7.18 已合并安全基线，新增直接永久删除的磁盘身份快照：复核令牌 → 单次提交 → 持久后台任务 → unlink 前双重身份核验。换盘、旧版未绑定硬盘任务、跨图库路径或断盘时，失败封闭，不删除原片。
 - 测试文件 `test_permanent_volume_guard.py` 覆盖 6 类物理身份、人工令牌和旧任务回归，加入 Source 和 Windows Candidate 流水线。
-- 当前为 v1.7.19 代码候选，安装器须等 Actions 实际通过；Stable 仍要求真实 4TB HDD/19k+、RAW/HEIF 机型、拔插/掉电、多机 DPI、语义模型准确性、用户 QA 与 Authenticode 数字签名。
+- [PR #89](https://github.com/youzhi1701/PhotoCurator-CN-/pull/89) 已 squash 合并 main `0276e5ca956bbc9b5b4dd9535442338c11330e52`；[Source/Windows Smoke](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37887762397) **success**，[Windows Candidate](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37887762327) **success**。本次 Windows Native EXE、原生界面响应、旧版 v1.5.0→v1.7.19 实际覆盖升级与无损卸载全部自动化通过。
+- 新候选测试 ZIP `PhotoCurator-v1.7.19-test-installer`，包含 `PhotoCurator-Setup-v1.7.19.exe`；Windows CI 核验 EXE SHA-256 `63d172d7344bad9c45b4d2a8bbde97ab1b1f633e3cb86d63066cf15264ba5015`，构件到期 2026-10-23。
+- Stable 仍要求真实 4TB HDD/19k+、RAW/HEIF 机型、拔插/掉电、多机 DPI、语义模型准确性、用户 QA 与 Authenticode 数字签名。未经这些验收不能称为 v2.0 Stable。
 
 ## 2026-10-09 V2.0 v1.7.18 候选：精确去重与导出数据安全（代码与自动化已通过，非 Stable）
 
