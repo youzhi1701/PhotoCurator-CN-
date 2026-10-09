@@ -5,7 +5,7 @@
 
 | 版本 | 用途 | 下载 |
 | --- | --- | --- |
-| **v1.7.18 Candidate（本轮开发候选）** | 字节精确去重缓存校验；CI 待执行 | [v1.7.18 Candidate 工作流](https://github.com/youzhi1701/PhotoCurator-CN-/actions/workflows/candidate-windows.yml) |
+| **v1.7.18 Candidate（本轮开发候选）** | 精确去重缓存校验 + TOP-N/壁纸导出防覆盖；CI 待执行 | [v1.7.18 Candidate 工作流](https://github.com/youzhi1701/PhotoCurator-CN-/actions/workflows/candidate-windows.yml) |
 | **v1.7.17 Candidate（已通过自动化）** | 外接硬盘回收站身份保护；Source/Windows CI 通过 | [Windows v1.7.17 安装包 ZIP](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37884600438) |
 | **v1.7.16 Candidate（已通过自动化）** | RAW/JPG 歧义保护、安全流式扫描 | [Windows v1.7.16 安装包构件](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37881401130) |
 | **v1.5.0 Stable（上次正式发布）** | 已发布正式版 | [PhotoCurator-Setup-v1.5.0.exe](https://github.com/youzhi1701/PhotoCurator-CN-/releases/download/v1.5.0/PhotoCurator-Setup-v1.5.0.exe) |
@@ -14,7 +14,7 @@ v1.7.18 待构建：`PhotoCurator-v1.7.18-test-installer`，预计 ZIP 内含 `P
 
 上一版 v1.7.17 Windows 已验证的 Candidate 构件：`PhotoCurator-v1.7.17-test-installer`，下载 ZIP 并解压得到 `PhotoCurator-Setup-v1.7.17.exe`；该构件安装器 SHA-256：`56b85abe23f69aca7cf30817458fdfb34e893c0917349be787e57f0f80ca5978`，Actions 构件保留至 2026-10-23。完整流水线： [Windows](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37884600438) 成功；[最新 Source/Windows smoke](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37884600508) 成功。v1.7.16 旧版构件 SHA-256：`38151f706585e4c7b9414ac4c8725efa0b5c2e579c664d60ef66b11aad879a4a`。
 
-v1.7.18 新增：字节精确重复缓存仅用于加速；任何复用缓存形成的重复组，必须重新读取文件并校验 SHA-256 和打开句柄身份；伪造/损坏缓存不能把不同照片误判为“字节精确重复”。拒绝符号链接照片直接参与精确索引，新增安全与缓存性能回归。
+v1.7.18 新增：TOP-N / 手机壁纸导出必须原子预留全新目录，拒绝已有文件夹/符号链接重定向，输出文件采用无覆盖发布，导出前后核对源盘身份和文件指纹；避免旧文件或外部图片被覆写。字节精确重复缓存仅用于加速；任何复用缓存形成的重复组，必须重新读取文件并校验 SHA-256 和打开句柄身份；伪造/损坏缓存不能把不同照片误判为“字节精确重复”。拒绝符号链接照片直接参与精确索引，新增安全与缓存性能回归。
 
 v1.7.17 重点：回收站只在已登记的原始实体硬盘身份与当前挂载身份一致时显示为可操作；拒绝换盘后错误清单导入/改写和待执行文件任务在错误物理磁盘上继续执行。保留旧版离线记录可查看，不把未连接误认为已永久删除。
 
@@ -34,7 +34,7 @@ v1.7.17 重点：回收站只在已登记的原始实体硬盘身份与当前挂
 
 - **只给确实经过实际字节哈希验证的照片标注精确重复**：本地 JSON 摘要缓存即使被篡改也不能伪造“同内容”的结论；候选组全部绑定实时文件身份进行二次哈希。
 - 不发生重复组时，原先缓存路径仍可跳过不必要的大文件读取；缓存加速与原片安全兼顾。
-- 新增缓存篡改、缓存命中、普通图片性能及符号链接安全测试，任何自动分类都不绕过人工复核。
+- 新增缓存篡改、缓存命中、普通图片性能、符号链接与导出目标冲突的安全回归；任何自动分类都不绕过人工复核。
 
 ## v1.7.17 候选升级（已通过 CI；仍待实机 QA）
 
