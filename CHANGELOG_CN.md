@@ -1,4 +1,4 @@
-## v2.0.0 Candidate（2026-10-09，核心大图库浏览与复核整合，待 CI）
+## v2.0.0 Candidate（2026-10-09，核心大图库浏览与复核整合，Windows/Source CI 全通过；待真实设备验收）
 
 - 清晰度、废片、格式、待删除筛选全部改为后端按全库索引过滤和计数：无需先加载前 200 张才能找到第 19,000 张待复核照片。
 - Cull 工作台滚动自动加载，最多保留 600 张照片卡片；相似组最多保留 192 组，前后翻窗与滚动定位有界，不再累积完整照片 DOM。
@@ -7,6 +7,7 @@
 - 不同离线图库快速打开时通过请求序列和当前数据源守卫拒绝迟到响应，避免历史库窗口错乱。
 - 新增 19,000 条合成结果的深分页/组合格式/待删除过滤回归，并扩展浏览器请求竞争守卫；纳入双平台 Windows Candidate 门禁。
 - 旧版照片原片保护、安全回收站、持久索引和覆盖升级机制保持不变；真实实盘、语义模型评估和签名仍需 QA，**仅为 Candidate，不代表 v2.0 Stable**。
+- [PR #90](https://github.com/youzhi1701/PhotoCurator-CN-/pull/90) 已合并 main。Source/Windows smoke [37890904679](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37890904679) 成功；Windows EXE/安装器、v1.5.0→v2.0.0 真实原位升级 [37890904657](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37890904657) 成功。安装器 `PhotoCurator-Setup-v2.0.0.exe` SHA-256 `5102a263d6f811428462818f6b3c2e284a1360fdb3c77bcbf520cda0b672aac5`；实际硬盘、真实样本和用户验收尚未完成。
 
 ## v1.7.19 Candidate（2026-10-09，Windows/Source 自动化已通过，仍待实盘/签名 QA）
 
