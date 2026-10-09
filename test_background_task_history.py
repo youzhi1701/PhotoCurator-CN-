@@ -55,7 +55,7 @@ class BackgroundTaskHistoryTests(unittest.TestCase):
             finally:
                 manager.shutdown(timeout=3)
 
-    def test_missing_handler_requeue_keeps_original_priority(self):
+    def test_missing_handler_parks_without_hot_loop_and_keeps_priority(self):
         from unittest.mock import patch
         import background_tasks
 
@@ -63,6 +63,7 @@ class BackgroundTaskHistoryTests(unittest.TestCase):
             manager = BackgroundTaskManager(Path(tmp) / "priority.sqlite", workers=1, autostart=False)
             original_push = background_tasks.heapq.heappush
             observed = []
+
             def record_push(heap, item):
                 if item[2] == delayed:
                     observed.append(item[0])
@@ -76,11 +77,16 @@ class BackgroundTaskHistoryTests(unittest.TestCase):
                     manager.start()
                     self._wait_for_state(manager, ready, "done")
                     deadline = time.monotonic() + 3
-                    while not observed and time.monotonic() < deadline:
+                    while "not-registered-yet" not in manager._deferred and time.monotonic() < deadline:
                         time.sleep(0.02)
-                self.assertTrue(observed, "Missing handler was never requeued")
-                self.assertEqual(set(observed), {95})
-                self.assertEqual(manager.get(delayed)["state"], "queued")
+                    self.assertIn("not-registered-yet", manager._deferred)
+                    self.assertEqual(manager.get(delayed)["state"], "queued")
+                    time.sleep(0.25)
+                    self.assertEqual(observed, [], "Unregistered work must not spin in heap")
+                    manager.register("not-registered-yet", lambda payload: payload["value"])
+                    self._wait_for_state(manager, delayed, "done")
+                self.assertEqual(observed, [95])
+                self.assertEqual(manager.get(delayed)["result"], 1)
             finally:
                 manager.shutdown(timeout=3)
 
