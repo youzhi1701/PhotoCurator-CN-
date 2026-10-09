@@ -2,7 +2,15 @@
 
 > 此文件记录已经提交并验证的代码工作，以及尚未满足正式发布标准的工作。**不得把候选安装包、自动化测试或 GitHub 合并等同于用户实机验收与正式发布。**
 >
-> 最初历史开发基线为 main `81dbb510deb58f191448ed13d791094f9a1f9d7e`（PR #50）；最新 V2.0 候选源码已合并至 main `6708cb2d709ef982a222a37866d142a050d373d6`（PR #85），版本为 v1.7.15；Source/Windows 自动化均成功，实盘、语义模型评测与正式签名仍未完成。每次恢复时必须重新读取 GitHub main 最新 SHA、未合并 PR、CI 和构件；本文件不是实时 API。
+> 最初历史开发基线为 main `81dbb510deb58f191448ed13d791094f9a1f9d7e`（PR #50）；截至本检查点，V2.0 候选已合并 [PR #87](https://github.com/youzhi1701/PhotoCurator-CN-/pull/87)，合并提交 `c6bd12a9a445ab7a8c445c2fcf244b78189dbe07`，源码版本 v1.7.17。Source 与已发布的 v1.7.17 Windows Candidate 构建通过；真实实盘、语义模型评测、正式签名仍未完成。本文件不是实时 API，下轮先核对 GitHub HEAD/CI/构件。
+
+## 2026-10-09 V2.0 候选 v1.7.16 → v1.7.17（已合并，非 Stable）
+
+- [PR #86](https://github.com/youzhi1701/PhotoCurator-CN-/pull/86) 已合并，v1.7.16：RAW/JPEG 多对一歧义不自动合并、区分 POSIX 大小写、DirEntry 流式源扫描跳过 symlink/junction；[Source](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37881401116) 和 [Windows Candidate](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37881401130) 通过。
+- [PR #87](https://github.com/youzhi1701/PhotoCurator-CN-/pull/87) 已合并，v1.7.17：回收站在线状态、清单导入/写入、后台恢复/销毁/移动根据已登记的原实体设备进行实时身份核验；防止另一 USB 盘重占 F: 等旧盘符后误显示为原盘或误操作照片。保留离线数据与旧非 Catalog 文件夹兼容。
+- 修正 Windows Installer 卸载留存回归测试中的静态误判：Inno Setup 安装目录清理段落的中文注释包含 runtime data 路径，不能误认为实际删除指令；现只审查有效配置行。最新版 [Source/Windows smoke 37884600508](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37884600508) **success**；[v1.7.17 Windows Candidate 37882668181](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37882668181) **success**（最终源码比该构件仅多上述单测修正；业务代码相同）。
+- 可测试 Windows ZIP：`PhotoCurator-v1.7.17-test-installer`，解压 EXE `PhotoCurator-Setup-v1.7.17.exe`，安装器 SHA-256 `e175d94c592207fe05ec348575de3c6e550a85baa6434212506e37bdbb4716d4`，Actions Artifact 截止 2026-10-23。已运行旧版 v1.5.0→新 Candidate 原位覆盖和静默卸载保留数据的测试。
+- **未完成的 V2.0 Stable 发布门禁**：真实 4TB/19,000+ 图测试、外接 HDD/USB 热插拔与断电、跨相机 RAW/HEIF 样本、语义识别质量评估、真实 Win10/11 + 多 DPI 体验、正式 PFX 数字签名与人工 QA 批准。不得把自动化候选宣称为最终稳定正式版。
 
 ## 2026-10-09 V2.0 新增候选 v1.7.15（已通过 CI，尚非 Stable）
 
