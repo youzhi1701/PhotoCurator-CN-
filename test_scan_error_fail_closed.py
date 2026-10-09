@@ -14,10 +14,9 @@ class ScanErrorFailClosedTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "photos"
             root.mkdir()
-            def failing_walk(_root, onerror=None):
-                onerror(PermissionError("unreadable subdirectory"))
-                yield (str(_root), [], [])
-            with patch.object(core.os, "walk", side_effect=failing_walk):
+            def failing_scan(_root):
+                raise PermissionError("unreadable subdirectory")
+            with patch.object(core.os, "scandir", side_effect=failing_scan):
                 with self.assertRaisesRegex(OSError, "cannot journal scan error"):
                     list(core.iter_images(
                         root, recursive=True,
