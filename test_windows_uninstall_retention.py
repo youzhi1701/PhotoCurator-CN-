@@ -15,6 +15,7 @@ class WindowsUninstallRetentionTests(unittest.TestCase):
         self.assertNotRegex(src, r"(?i)\bDelTree\s*\(")
         self.assertIn("CurUninstallStepChanged", src)
         self.assertIn("ClearRecents", src)
+        self.assertIn("if not UninstallSilent then", src)
         self.assertIn("recents.json", src)
         self.assertNotIn("DeleteFile(ExpandConstant('{localappdata}\\PhotoCurator\\data\\config\\library_index.sqlite3'))", src)
         self.assertNotRegex(src, r"(?im)^\s*Type\s*:\s*filesandordirs;\s*Name:\s*\"\{localappdata\}")
