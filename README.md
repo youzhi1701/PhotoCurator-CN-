@@ -5,27 +5,33 @@
 
 | 版本 | 用途 | 下载 |
 | --- | --- | --- |
-| **v1.7.16 Candidate（本次待验收）** | RAW/JPG 候选安全、物理目录安全扫描；Source/Windows CI 待验证 | [v1.7.16 候选构建工作流](https://github.com/youzhi1701/PhotoCurator-CN-/actions/workflows/candidate-windows.yml) |
-| **v1.7.15 Candidate（已通过 CI）** | 上轮候选安装程序 | [Windows v1.7.15 下载页面](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37879822456) |
-| **v1.5.0 Stable（上次正式发布版）** | 已发布的正式安装程序 | [PhotoCurator-Setup-v1.5.0.exe](https://github.com/youzhi1701/PhotoCurator-CN-/releases/download/v1.5.0/PhotoCurator-Setup-v1.5.0.exe) |
+| **v1.7.17 Candidate（本轮开发候选）** | 回收站外接设备身份验证；Source/Windows CI 待运行 | [v1.7.17 Windows Candidate 工作流](https://github.com/youzhi1701/PhotoCurator-CN-/actions/workflows/candidate-windows.yml) |
+| **v1.7.16 Candidate（已通过自动化）** | RAW/JPG 歧义保护、安全流式扫描 | [Windows v1.7.16 安装包构件](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37881401130) |
+| **v1.5.0 Stable（上次正式发布）** | 已发布正式版 | [PhotoCurator-Setup-v1.5.0.exe](https://github.com/youzhi1701/PhotoCurator-CN-/releases/download/v1.5.0/PhotoCurator-Setup-v1.5.0.exe) |
 
-v1.7.16 候选构建计划输出 `PhotoCurator-v1.7.16-test-installer`（包含 `PhotoCurator-Setup-v1.7.16.exe`），构建完成并通过回归后才能更新安装包的 SHA-256。**不是 V2.0 Stable，不建议直接处理唯一原片。**
+v1.7.17 候选计划输出 `PhotoCurator-v1.7.17-test-installer`，包含 `PhotoCurator-Setup-v1.7.17.exe`，SHA-256 须待本轮 Windows 原生构建完成才能确认。v1.7.16 旧版构件 SHA-256：`38151f706585e4c7b9414ac4c8725efa0b5c2e579c664d60ef66b11aad879a4a`。
 
-v1.7.16 本轮重点：同名 RAW/JPG 仅当同一文件夹内恰有一 RAW、一 JPEG 时才折叠；Linux/Unix 文件名大小写保持独立；磁盘流式扫描拒绝符号链接和 Windows Junction 绕出图库，减少无意义元数据查询。任何无法记录的扫描 I/O 错误仍须安全中止。
+v1.7.17 重点：回收站只在已登记的原始实体硬盘身份与当前挂载身份一致时显示为可操作；拒绝换盘后错误清单导入/改写和待执行文件任务在错误物理磁盘上继续执行。保留旧版离线记录可查看，不把未连接误认为已永久删除。
 
-> 正式 V2.0 仍需 4TB 外接 HDD、19,000+ 实拍图库、RAW/HEIF 多机型、真实拔插与断电、Win10/11 高 DPI、多场景质量误判集、代码签名与最终用户 QA。
+> 当前各版本仍不是 V2.0 Stable；真实 4TB HDD、19,000+ 图片、RAW/HEIF 多机型、真实拔插/突然断电、Win10/11 高 DPI、场景语义误判集、代码签名及用户 QA 尚需验收。
 <!-- LATEST_RELEASE_END -->
 
-> 面向大图库的 Windows 照片清理工具。v1.7.16 Candidate 在稳定桌面运行层基础上继续收口持久 Catalog、扫描会话与缺失判定、离线图库与设备识别、文件生命周期、数据库升级保护和 Windows 发布门禁；当前仍处于 Candidate 验证阶段，不等同于已发布 Stable。
+> 面向大图库的 Windows 照片清理工具。v1.7.17 Candidate 在稳定桌面运行层基础上继续收口持久 Catalog、扫描会话与缺失判定、离线图库与设备识别、文件生命周期、数据库升级保护和 Windows 发布门禁；当前仍处于 Candidate 验证阶段，不等同于已发布 Stable。
 
 | 项目 | 信息 |
 | --- | --- |
-| 当前源码版本 | **v1.7.16 Candidate（Source / Windows CI 待验证）** |
+| 当前源码版本 | **v1.7.17 Candidate（Source / Windows CI 待验证）** |
 | 项目类型 | Windows 照片筛选桌面应用 |
 | 上游基线 | Photo Curator v7.0 |
-| 当前状态 | **v1.7.16 Candidate · Source/Windows CI 待验证 · 真实设备及数字签名验收未完成** |
+| 当前状态 | **v1.7.17 Candidate · Source/Windows CI 待验证 · 真实设备及数字签名验收未完成** |
 
-## v1.7.16 候选升级（待 CI 验收）
+## v1.7.17 候选升级（待 CI 验收）
+
+- 对已登记图库，回收站显示、清单读取/写入和文件操作必须核验实际物理磁盘身份；另一个 USB 盘占用旧盘符也不能误识别。
+- 后台队列延迟执行前再次确认硬盘身份，不依赖界面缓存的“已连接”状态。
+- 新增换盘及两设备同盘符的安全回归；继续保留离线回收站历史。
+
+## v1.7.16 候选升级（Source/Windows CI 已验证）
 
 - RAW/JPEG 同名配对仅在明确一对一时折叠；保留 PNG/HEIF、多个同名 RAW、多个 JPEG；POSIX 文件名大小写严格独立。
 - 来源扫描使用 DirEntry 流式枚举并拒绝符号链接、Windows junction，防止索引越界和误读取另一磁盘；I/O 失败无法落库时中止扫描。
@@ -240,15 +246,15 @@ GitHub Actions：
 
 普通 `main` 推送只运行源码/结构门禁，不会反复消耗 Windows 正式安装包构建；Windows Candidate 通过 Pull Request 或手动触发完成真实 EXE、窗口存活和测试安装包验证。正式 Release 仅由显式发布请求或匹配版本标签触发。
 
-发布目标由 `packaging/release_manifest.json` 驱动。当前目标为 **1.7.16 Candidate**；只有全部 Release Gate 通过后，才允许创建正式标签：
+发布目标由 `packaging/release_manifest.json` 驱动。当前目标为 **1.7.17 Candidate**；只有全部 Release Gate 通过后，才允许创建正式标签：
 
- `v1.7.16`
+ `v1.7.17`
 
 发布工作流接受 `v*` 标签，但会在构建开始时强制检查：**Git 标签必须与 manifest 中的版本完全一致**。标签不一致会直接失败，避免误把旧代码发布成新版本或把新代码挂到旧标签。
 
 当前 Candidate 安装包目标名称（自动化构件，尚非 Stable）：
 
- `PhotoCurator-Setup-v1.7.16.exe`
+ `PhotoCurator-Setup-v1.7.17.exe`
 
 当前已经公开可下载的 Stable 安装包仍为 **v1.5.0**。
 
@@ -349,7 +355,7 @@ PhotoCurator-CN-/
 
 许可证保持原项目 **MIT License**。
 
-## v1.7.16 从 Candidate 晋级 Stable 的发布门槛
+## v1.7.17 从 Candidate 晋级 Stable 的发布门槛
 
 正式发布前必须同时满足：
 - Python / 嵌入式 JavaScript / HTML / CSS 自动检查通过
@@ -371,4 +377,4 @@ PhotoCurator-CN-/
 - 覆盖升级不破坏用户数据库、索引、设置、日志、任务状态和用户照片
 - GitHub Release 中真实存在与版本一致、非空且校验通过的 Windows 安装包
 
-在上述门槛没有全部满足前，v1.7.16 只能保持 **Candidate**，不能标记为 Stable。
+在上述门槛没有全部满足前，v1.7.17 只能保持 **Candidate**，不能标记为 Stable。

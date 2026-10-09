@@ -944,11 +944,13 @@ jobs:
           '@ | python -
 
       - name: Unicode path and background lifecycle smoke test
+        shell: bash
         run: |
           python "基础冒烟测试.py"
           python release_gate_test.py
 
       - name: Background task history regression
+        shell: bash
         run: |
           python -m unittest -v test_background_task_history
           python -m unittest -v test_background_process_crash
@@ -975,16 +977,19 @@ jobs:
           python -m unittest -v test_safe_move_integrity
 
       - name: Performance architecture regression gate
+        shell: bash
         run: |
           python performance_gate_test.py
           python test_desktop_instance_guard.py
           python test_frontend_stale_request.py
 
       - name: Real desktop UI interaction smoke test
+        shell: bash
         run: |
           python ui_smoke_test.py
 
       - name: Codespaces forwarding security smoke test
+        shell: bash
         run: |
           python "Codespaces冒烟测试.py"
 

@@ -761,7 +761,7 @@ def _prune_index_db():
 threading.Thread(target=_prune_index_db, daemon=True,
                  name='photocurator-index-prune').start()
 
-APP_VERSION = "1.7.16"
+APP_VERSION = "1.7.17"
 IS_CODESPACES = os.environ.get('CODESPACES', '').strip().lower() == 'true'
 CODESPACE_NAME = os.environ.get('CODESPACE_NAME', '').strip()
 _CODESPACES_DOMAIN_RAW = os.environ.get(
@@ -1602,6 +1602,73 @@ def _move_reviewed_files(paths, kind, root, mode='source', custom_output=''):
 _TRASH_MANIFEST_LOCK = threading.Lock()
 
 
+def _verified_trash_library_volume(root):
+    """Reject a reused drive letter when this library has a saved disk identity.
+
+    A connected directory alone is *not* proof the original HDD is attached.
+    This uses the Catalog's stable source identity, not the last mount path or
+    its mutable connected flag. Legacy, never-indexed folders remain compatible
+    until registered, but an indexed library always fails closed on conflicts.
+    """
+    if not root or not Path(root).is_dir():
+        return False
+    try:
+        current = os.path.realpath(str(root))
+        collate = "NOCASE" if os.name == "nt" else "BINARY"
+        with connect_db(INDEX_DB, timeout=15) as db:
+            exists = {
+                str(row[0]) for row in db.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' "
+                    "AND name IN ('library_root','data_source')"
+                ).fetchall()
+            }
+            if exists != {'library_root', 'data_source'}:
+                return True  # Legacy non-Catalog database.
+            expected = {
+                str(row[0]) for row in db.execute(
+                    f"""SELECT DISTINCT s.identity_key
+                        FROM library_root r
+                        JOIN data_source s ON s.source_id=r.source_id
+                        WHERE r.current_root COLLATE {collate}=?
+                           OR r.original_root COLLATE {collate}=?""",
+                    (current, current),
+                ).fetchall()
+            }
+        if not expected:
+            return True  # A folder not indexed by the Catalog yet.
+        if len(expected) != 1:
+            return False  # Multiple old drives reused the same logical path.
+        identity = next(iter(expected))
+        if os.name == 'nt' and not identity.startswith('win-guid:'):
+            return False  # Volume serial/drive-letter fallback is not trusted.
+        observed = str(catalog_volume_info_for_path(current).get('identity_key') or '')
+        return observed == identity
+    except (OSError, ValueError, sqlite3.Error):
+        logger.debug("cannot validate recycle-bin storage device", exc_info=True)
+        return False
+
+
+def _trash_root_from_path(trash_path):
+    """Find the explicitly named application recycle-bin boundary, if any."""
+    parts = Path(trash_path).parts
+    try:
+        index = parts.index(SOFTWARE_TRASH_DIR)
+        if index <= 0:
+            return None
+        return Path(*parts[:index])
+    except (ValueError, TypeError):
+        return None
+
+
+def _assert_trash_volume_matches(trash_path):
+    root = _trash_root_from_path(trash_path)
+    if root is not None and not _verified_trash_library_volume(root):
+        raise RuntimeError(
+            "软件回收站所在磁盘与已保存的图库身份不符，操作已停止；请连接原设备"
+        )
+
+
+
 def _scoped_software_trash_record(original, trash_path, root):
     """Only trust metadata for photos inside this library's own recycle bin.
 
@@ -1640,7 +1707,7 @@ def _trash_manifest_file(root):
 def _write_trash_manifest(root):
     """Publish an fsync'd, unique temporary manifest; preserve offline entries."""
     target = _trash_manifest_file(root)
-    if target is None:
+    if target is None or not _verified_trash_library_volume(root):
         return
     temp_path = None
     with _TRASH_MANIFEST_LOCK:
@@ -1681,7 +1748,8 @@ def _write_trash_manifest(root):
 
 def _import_trash_manifest(root):
     target = _trash_manifest_file(root)
-    if target is None or target.is_symlink() or target.parent.is_symlink():
+    if (target is None or target.is_symlink() or target.parent.is_symlink()
+            or not _verified_trash_library_volume(root)):
         return
     try:
         if not target.is_file() or target.stat().st_size > 32 * 1024 * 1024:
@@ -1769,6 +1837,8 @@ def _move_to_software_trash(src, root, source_step, planned_trash_path=None, sid
     src = Path(src)
     original = str(src.resolve())
     root = Path(root).resolve()
+    if not _verified_trash_library_volume(root):
+        raise RuntimeError("图库原设备未连接或设备身份不匹配，已拒绝移动原片")
     if (not Path(original).is_relative_to(root)
             or Path(original).is_relative_to(root / SOFTWARE_TRASH_DIR)):
         raise ValueError("待操作的原片不属于当前照片库")
@@ -1813,7 +1883,10 @@ def _trash_rows(root=None):
     Missing files are an offline/unavailable state, NEVER proof of permanent
     deletion. Listing one library must not prune another disconnected library.
     """
-    if root and Path(root).is_dir():
+    # Verify the actual mounted volume *before* importing any manifest from a
+    # reused USB drive letter. Keep historical database records visible offline.
+    source_available = (_verified_trash_library_volume(root) if root else False)
+    if root and source_available:
         _import_trash_manifest(root)
     root_cmp = os.path.normcase(os.path.realpath(str(root))) if root else None
     rows = []
@@ -1833,7 +1906,7 @@ def _trash_rows(root=None):
                         continue
                 except Exception:
                     continue
-            available = Path(trash_path).is_file()
+            available = source_available and Path(trash_path).is_file() if root else Path(trash_path).is_file()
             rows.append({
                 'id': int(tid),
                 'name': Path(trash_path).name,
@@ -1858,6 +1931,7 @@ def _restore_trash_item(trash_id):
         raise FileNotFoundError("回收站记录不存在")
     original, trash_path = map(str, row)
     src = Path(trash_path)
+    _assert_trash_volume_matches(trash_path)
     if not src.is_file():
         raise FileNotFoundError("回收站中的照片已不存在")
     desired = Path(original)
@@ -1880,6 +1954,7 @@ def _purge_trash_item(trash_id, sidecar_records=None):
     if not row:
         raise FileNotFoundError("回收站记录不存在")
     target = Path(str(row[0]))
+    _assert_trash_volume_matches(target)
     # An absent target may mean the external drive is disconnected, not that
     # the photo was successfully deleted. Keep the trash record until a
     # verified deletion; never report a missing file as permanent deletion.
@@ -2068,6 +2143,8 @@ def _background_move_to_trash(payload):
     folder = os.path.realpath(str(payload['folder']))
     source_step = str(payload.get('step') or '')
     planned_trash = str(payload.get('trash_path') or '').strip()
+    if not _verified_trash_library_volume(folder):
+        raise RuntimeError("已保存的照片库设备身份与当前磁盘不符，拒绝执行后台移动")
     target = _safe_image_path(original)
     try:
         if target is not None and Path(target).is_file():
@@ -2176,6 +2253,7 @@ def _background_restore_trash(payload):
         # If a prior attempt already committed the trash-row deletion, the
         # persisted restore path lets this recovered task finish lifecycle sync.
         if original_hint and restore_hint and Path(restore_hint).is_file():
+            _assert_trash_volume_matches(str(payload.get('trash_path') or ''))
             _verify_file_action_source(str(payload.get('trash_path') or ''),
                                        payload.get('source_identity'),
                                        moved_to=restore_hint)
@@ -2193,6 +2271,7 @@ def _background_restore_trash(payload):
         raise FileNotFoundError("回收站记录不存在")
 
     original, trash_path, source_step = str(row[0]), str(row[1]), str(row[2] or '')
+    _assert_trash_volume_matches(trash_path)
     planned_restore = restore_hint or str(_unique_destination(Path(original)).resolve())
     try:
         trash_file = Path(trash_path)
@@ -2241,6 +2320,7 @@ def _background_purge_trash(payload):
     if not row:
         return {'ok': True, 'already_done': True}
     original, trash_path, source_step = map(str, row)
+    _assert_trash_volume_matches(trash_path)
     try:
         _verify_file_action_source(trash_path, payload.get('source_identity'))
         _purge_trash_item(trash_id, sidecar_records=payload.get('sidecar_records'))
