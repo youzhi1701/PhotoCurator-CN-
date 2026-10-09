@@ -1179,7 +1179,7 @@ def _is_output_dir_name(name):
     }:
         return True
     if low == 'phonebg' or re.fullmatch(
-        r'phonebg_\\d{8}_\\d{6}(?:_\\d+)?', low
+        r'phonebg_\d{8}_\d{6}(?:_\d+)?', low
     ):
         return True
     if low.startswith('top_'):
@@ -1188,7 +1188,7 @@ def _is_output_dir_name(name):
             return False
         count = int(stem)
         return 1 <= count <= 500 and (not sep or bool(re.fullmatch(
-            r'\\d{8}_\\d{6}(?:_\\d+)?', suffix
+            r'\d{8}_\d{6}(?:_\d+)?', suffix
         )))
     return False
 
