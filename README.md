@@ -273,9 +273,7 @@ PhotoCurator-CN-/
 ├─ exact_duplicates.py     # 按字节 SHA-256 精确去重
 ├─ background_tasks.py     # 持久化后台任务调度器
 ├─ photo_dedup_batch.py    # 相似特征 / 分组
-├─ photo_ranking_engine.py # 评分扩展能力
 ├─ photo_ranking_v3.py
-├─ photo_file_organizer.py
 ├─ raw_loader.py
 ├─ packaging/
 ├─ vendor/

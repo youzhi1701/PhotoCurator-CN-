@@ -37,8 +37,6 @@ jobs:
             photo_dedup_batch.py \
             exact_duplicates.py \
             test_exact_duplicates.py \
-            photo_file_organizer.py \
-            photo_ranking_engine.py \
             photo_ranking_v3.py \
             quality_annotations.py \
             test_quality_annotations.py \
@@ -848,7 +846,7 @@ jobs:
 
       - name: Compile Python sources
         run: |
-          python -m py_compile db_runtime.py desktop_app.py runtime_paths.py catalog.py photo_curator.py background_tasks.py photo_dedup_batch.py exact_duplicates.py test_exact_duplicates.py photo_file_organizer.py photo_ranking_engine.py photo_ranking_v3.py raw_loader.py test_export_containment.py test_permanent_volume_guard.py test_cull_paged_review.py "基础冒烟测试.py" "Codespaces冒烟测试.py" windows_smoke_test.py ui_smoke_test.py
+          python -m py_compile db_runtime.py desktop_app.py runtime_paths.py catalog.py photo_curator.py background_tasks.py photo_dedup_batch.py exact_duplicates.py test_exact_duplicates.py photo_ranking_v3.py raw_loader.py test_export_containment.py test_permanent_volume_guard.py test_cull_paged_review.py "基础冒烟测试.py" "Codespaces冒烟测试.py" windows_smoke_test.py ui_smoke_test.py
 
       - name: Runtime data path and migration smoke test
         shell: powershell

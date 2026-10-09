@@ -13,8 +13,8 @@ ROOT = Path(__file__).resolve().parents[1]
 PRODUCTION = (
     "photo_curator.py", "desktop_app.py", "catalog.py", "db_runtime.py",
     "background_tasks.py", "runtime_paths.py", "raw_loader.py",
-    "exact_duplicates.py", "photo_dedup_batch.py", "photo_file_organizer.py",
-    "photo_ranking_engine.py", "photo_ranking_v3.py",
+    "exact_duplicates.py", "photo_dedup_batch.py",
+    "photo_ranking_v3.py",
     "quality_annotations.py", "scene_labels.py",
 )
 LAUNCHERS = {

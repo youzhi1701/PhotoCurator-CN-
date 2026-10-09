@@ -8,7 +8,7 @@ if not exist "desktop_app.py" goto incomplete
 if not exist "photo_curator.py" goto incomplete
 if not exist ".venv\Scripts\python.exe" goto no_env
 
-".venv\Scripts\python.exe" -m py_compile desktop_app.py photo_curator.py photo_dedup_batch.py photo_file_organizer.py photo_ranking_engine.py photo_ranking_v3.py raw_loader.py release_gate_test.py windows_smoke_test.py
+".venv\Scripts\python.exe" -m py_compile desktop_app.py photo_curator.py photo_dedup_batch.py photo_ranking_v3.py raw_loader.py release_gate_test.py windows_smoke_test.py
 if errorlevel 1 goto fail
 ".venv\Scripts\python.exe" -c "import flask,cv2,numpy,PIL,webview; import raw_loader; print('Runtime OK')"
 if errorlevel 1 goto fail
