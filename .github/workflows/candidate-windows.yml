@@ -17,7 +17,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request'
     runs-on: windows-latest
     env:
-      CANDIDATE_VERSION: "1.7.11"
+      CANDIDATE_VERSION: "1.7.12"
       PYTHONUTF8: "1"
       PYTHONIOENCODING: "utf-8"
 
@@ -289,12 +289,12 @@ jobs:
           Set-Content -Path "$exe.sha256" -Value $sha -Encoding ascii
           Write-Host "Verified candidate file integrity hash: $hash"
 
-      - name: Upload v1.7.11 test installer
+      - name: Upload v1.7.12 test installer
         uses: actions/upload-artifact@v7
         with:
-          name: PhotoCurator-v1.7.11-test-installer
+          name: PhotoCurator-v1.7.12-test-installer
           path: |
-            release/PhotoCurator-Setup-v1.7.11.exe
-            release/PhotoCurator-Setup-v1.7.11.exe.sha256
+            release/PhotoCurator-Setup-v1.7.12.exe
+            release/PhotoCurator-Setup-v1.7.12.exe.sha256
           if-no-files-found: error
           retention-days: 14
