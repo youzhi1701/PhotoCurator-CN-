@@ -108,6 +108,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "py_compile failed" }
           python -c "import runpy; runpy.run_path('\u57fa\u7840\u5192\u70df\u6d4b\u8bd5.py', run_name='__main__')"
           if ($LASTEXITCODE -ne 0) { throw "base smoke test failed" }
+          python -m unittest -v test_runtime_migration_wal quality_annotations_input_test
           python -m unittest -v test_exact_duplicates
           if ($LASTEXITCODE -ne 0) { throw "exact duplicate regression failed" }
           python -m unittest -v test_rank_topn_selection
