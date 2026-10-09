@@ -46,6 +46,7 @@ jobs:
             test_runtime_migration_wal.py \
             test_offline_preview_guard.py \
             test_unavailable_decoder_catalog.py \
+            test_generated_album_filters.py \
             test_catalog_path_indexes.py \
             test_windows_uninstall_retention.py \
             test_scan_error_fail_closed.py \
@@ -960,6 +961,7 @@ jobs:
           python -m unittest -v test_scene_labels
           python -m unittest -v test_raw_pair_protection
           python -m unittest -v test_unavailable_decoder_catalog
+          python -m unittest -v test_generated_album_filters
           python -m unittest -v test_rank_topn_selection
           python -m unittest -v test_db_runtime_wal
           python -m unittest -v test_safe_move_integrity
