@@ -5,11 +5,11 @@
 
 | 版本 | 用途 | 下载 |
 | --- | --- | --- |
-| **v1.7.17 Candidate（本轮开发候选）** | 回收站外接设备身份验证；Source/Windows CI 待运行 | [v1.7.17 Windows Candidate 工作流](https://github.com/youzhi1701/PhotoCurator-CN-/actions/workflows/candidate-windows.yml) |
+| **v1.7.17 Candidate（本轮开发候选）** | 外接硬盘回收站身份保护；Source/Windows CI 通过 | [Windows v1.7.17 安装包 ZIP](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37882668181) |
 | **v1.7.16 Candidate（已通过自动化）** | RAW/JPG 歧义保护、安全流式扫描 | [Windows v1.7.16 安装包构件](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37881401130) |
 | **v1.5.0 Stable（上次正式发布）** | 已发布正式版 | [PhotoCurator-Setup-v1.5.0.exe](https://github.com/youzhi1701/PhotoCurator-CN-/releases/download/v1.5.0/PhotoCurator-Setup-v1.5.0.exe) |
 
-v1.7.17 候选计划输出 `PhotoCurator-v1.7.17-test-installer`，包含 `PhotoCurator-Setup-v1.7.17.exe`，SHA-256 须待本轮 Windows 原生构建完成才能确认。v1.7.16 旧版构件 SHA-256：`38151f706585e4c7b9414ac4c8725efa0b5c2e579c664d60ef66b11aad879a4a`。
+v1.7.17 Windows 已验证的 Candidate 构件：`PhotoCurator-v1.7.17-test-installer`，下载 ZIP 并解压得到 `PhotoCurator-Setup-v1.7.17.exe`；该构件安装器 SHA-256：`e175d94c592207fe05ec348575de3c6e550a85baa6434212506e37bdbb4716d4`，Actions 构件保留至 2026-10-23。完整流水线： [Windows](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37882668181) 成功；[最新 Source/Windows smoke](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37884600508) 成功。v1.7.16 旧版构件 SHA-256：`38151f706585e4c7b9414ac4c8725efa0b5c2e579c664d60ef66b11aad879a4a`。
 
 v1.7.17 重点：回收站只在已登记的原始实体硬盘身份与当前挂载身份一致时显示为可操作；拒绝换盘后错误清单导入/改写和待执行文件任务在错误物理磁盘上继续执行。保留旧版离线记录可查看，不把未连接误认为已永久删除。
 
@@ -20,12 +20,12 @@ v1.7.17 重点：回收站只在已登记的原始实体硬盘身份与当前挂
 
 | 项目 | 信息 |
 | --- | --- |
-| 当前源码版本 | **v1.7.17 Candidate（Source / Windows CI 待验证）** |
+| 当前源码版本 | **v1.7.17 Candidate（Source / Windows CI 已验证）** |
 | 项目类型 | Windows 照片筛选桌面应用 |
 | 上游基线 | Photo Curator v7.0 |
-| 当前状态 | **v1.7.17 Candidate · Source/Windows CI 待验证 · 真实设备及数字签名验收未完成** |
+| 当前状态 | **v1.7.17 Candidate · Source/Windows CI 已通过 · 真实设备及数字签名验收未完成** |
 
-## v1.7.17 候选升级（待 CI 验收）
+## v1.7.17 候选升级（已通过 CI；仍待实机 QA）
 
 - 对已登记图库，回收站显示、清单读取/写入和文件操作必须核验实际物理磁盘身份；另一个 USB 盘占用旧盘符也不能误识别。
 - 后台队列延迟执行前再次确认硬盘身份，不依赖界面缓存的“已连接”状态。
