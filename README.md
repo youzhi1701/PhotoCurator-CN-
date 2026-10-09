@@ -5,11 +5,14 @@
 
 | 版本 | 用途 | 下载 |
 | --- | --- | --- |
+| **v2.0.0 Candidate（整合测试候选，尚待 CI）** | 核心图库全库筛选、无限滚动有界显示、设备历史切换防陈旧覆盖 | [Windows Candidate 工作流](https://github.com/youzhi1701/PhotoCurator-CN-/actions/workflows/candidate-windows.yml) |
 | **v1.7.19 Candidate（已通过自动化）** | 永久删除人工复核/后台队列绑定实体磁盘，防止 USB 旧盘符误删 | [v1.7.19 Windows 安装包 ZIP](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37887762327) |
 | **v1.7.18 Candidate（自动化已验证）** | 精确去重缓存校验 + TOP-N/壁纸导出防覆盖；Source/Windows CI 通过 | [Windows v1.7.18 安装包 ZIP](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37886666032) |
 | **v1.7.17 Candidate（已通过自动化）** | 外接硬盘回收站身份保护；Source/Windows CI 通过 | [Windows v1.7.17 安装包 ZIP](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37884600438) |
 | **v1.7.16 Candidate（已通过自动化）** | RAW/JPG 歧义保护、安全流式扫描 | [Windows v1.7.16 安装包构件](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37881401130) |
 | **v1.5.0 Stable（上次正式发布）** | 已发布正式版 | [PhotoCurator-Setup-v1.5.0.exe](https://github.com/youzhi1701/PhotoCurator-CN-/releases/download/v1.5.0/PhotoCurator-Setup-v1.5.0.exe) |
+
+本轮 V2.0.0 Candidate 聚焦长期未解决的实际使用体验：待删除/清晰/格式筛选改为服务端全图库计算，不再仅筛首屏 200 张；Cull 卡片窗口有界 600 张、相似组窗口最多 192 组，滚动加载并支持上一批；待删除总数按全库真实数据展示；稀有 RAW/HEIF 格式可预先选择；离线图库快速切换时旧请求不得覆盖新图库。待本轮 CI 成功后发布 Windows 安装器。真实设备验收与签名仍在 `RELEASE_ACCEPTANCE.md` 门禁内。
 
 v1.7.19 Windows Candidate 已实际构建并通过自动化：在 [成功工作流](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37887762327) 底部下载 `PhotoCurator-v1.7.19-test-installer` ZIP，解压 `PhotoCurator-Setup-v1.7.19.exe`。EXE SHA-256：`63d172d7344bad9c45b4d2a8bbde97ab1b1f633e3cb86d63066cf15264ba5015`；Artifact 有效期至 2026-10-23。[Source + Windows smoke](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37887762397) 成功；已验证打包后的实际 Windows 窗口响应、v1.5.0→v1.7.19 原位升级和静默卸载原片/配置保留。上一版 v1.7.18 已构建并自动验证：在 [Windows Candidate 成功工作流](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37886666032) 页面底部下载 `PhotoCurator-v1.7.18-test-installer` ZIP，解压可得 `PhotoCurator-Setup-v1.7.18.exe` 和 SHA-256 文件。EXE SHA-256：`0224c9d6d3024f944660642c1042971d5bd2629caafc055a790d1bdd3fb6137a`，构件保留至 2026-10-23。 [源码/Windows smoke](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37886666065) 成功，旧版 v1.5.0 原位升级、卸载留存及原生窗口响应性均成功。
 
