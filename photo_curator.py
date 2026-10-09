@@ -5087,7 +5087,7 @@ let lastRankSig='', lastCullSig='', lastDedupSig='', lastStep=null, weightTimer=
 // Keep boot-critical state together here so setupFilterBar() cannot touch
 // a later lexical declaration and abort the rest of the interaction bindings.
 let cullChunkToken=0, cullVisibleTotal=0, cullNextOffset=0, cullWindowStart=0;
-let cullPageBusy=false, cullGlobalStats=null;
+let cullPageBusy=false, cullGlobalStats=null, cullAvailableFormats=[];
 const CULL_WINDOW_CAP=600, CULL_FETCH_SIZE=200;
 let dedupChunkToken=0, dedupNextOffset=0, dedupWindowStart=0, dedupPageBusy=false;
 const DEDUP_WINDOW_CAP=192;
@@ -5728,8 +5728,9 @@ function setupFilterBar(){
     }
     const opts=[['all','全部'],['sharp','清晰'],['soft','轻微软 ★'],['blurry','模糊'],['pending','待删除']];
     // Per-format chips (NEF, CR2, ARW, ...) built from what's actually loaded.
-    const rawFmts=[...new Set(photos.filter(p=>p.raw).map(p=>p.fmt||'RAW'))].sort();
-    const hasHeic=photos.some(p=>p.heic);
+    const globalFormats=cullAvailableFormats.length?cullAvailableFormats:photos;
+    const rawFmts=[...new Set(globalFormats.filter(p=>p.raw).map(p=>p.fmt||'RAW'))].sort();
+    const hasHeic=globalFormats.some(p=>p.heic);
     const types=[['all','全部格式'],['raw','仅 RAW'],['standard','普通图片'],
       ...(hasHeic?[['heic','仅 HEIC']]:[]),
       ...(rawFmts.length>1?rawFmts.map(f=>['ext:'+f.toLowerCase(),'仅 '+f]):[])];
@@ -5802,7 +5803,7 @@ function sameFolder(a,b){return normalizedFolder(a)===normalizedFolder(b);}
 function resetWorkspaceForFolder(){
   cullChunkToken++;dedupRequestSerial++;
   cullLiveStore.clear();dedupLiveStore.clear();
-  cullWindowStart=0;cullNextOffset=0;cullVisibleTotal=0;cullGlobalStats=null;cullPageBusy=false;
+  cullWindowStart=0;cullNextOffset=0;cullVisibleTotal=0;cullGlobalStats=null;cullPageBusy=false;cullAvailableFormats=[];
   dedupWindowStart=0;dedupNextOffset=0;dedupVisibleTotal=0;dedupPageBusy=false;
   coreSnapshots={cull:null,dedup:null};cullReady=false;
   photos=[];lbList=[];folderStatus={};
@@ -6495,7 +6496,7 @@ async function startStep(step,config=null){
   runningStep=step;
   if(step==='cull'){
     cullReady=false;cullLiveStore.clear();cullWindowStart=0;cullNextOffset=0;
-    cullGlobalStats=null;cullVisibleTotal=0;cullChunkToken++;
+    cullGlobalStats=null;cullVisibleTotal=0;cullAvailableFormats=[];cullChunkToken++;
   }
   if(step==='dedup'){
     dedupLiveStore.clear();dedupWindowStart=0;dedupNextOffset=0;
@@ -6758,6 +6759,7 @@ async function loadCullPage(reset=false,prepend=false){
     }
     cullVisibleTotal=Number(d.total||0);
     if(d.stats)cullGlobalStats=d.stats;
+    if(Array.isArray(d.formats))cullAvailableFormats=d.formats;
     photos=Array.from(cullLiveStore.values());
     lastCullSig='';renderCullStep(photos);
     setupFilterBar();updateCullLoadMore();
@@ -8769,10 +8771,19 @@ def api_cull_results_chunk():
     ]
     rows = filtered[offset:offset + limit]
     selected, markable = _blurry_move_counts()
+    # Global format choices stay stable across windows and filtered subsets,
+    # so rare RAW and HEIF extensions are selectable before they scroll in.
+    formats = sorted({
+        (str(p.get('fmt') or 'JPG').upper(), bool(p.get('raw')), bool(p.get('heic')))
+        for p in all_photos
+        if str(p.get('lifecycle') or 'normal') not in _CULL_NON_REVIEWABLE_STATES
+    })
     return jsonify({
         'photos': rows, 'offset': offset, 'next_offset': offset + len(rows),
         'total': len(filtered), 'all_total': len(all_photos),
         'done': offset + len(rows) >= len(filtered),
+        'formats': [{'fmt': fmt, 'raw': raw, 'heic': heic}
+                    for fmt, raw, heic in formats],
         'stats': {'move_selected': selected, 'markable': markable},
     })
 
