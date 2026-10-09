@@ -1,15 +1,20 @@
 # PhotoCurator 中文桌面版
 
 <!-- LATEST_RELEASE_START -->
-## ⬇️ 当前可下载 Windows 安装包
+## Windows 下载（10 / 11 · x64）
 
-**当前已发布版：v1.5.0**
+| 版本 | 用途 | 下载 |
+| --- | --- | --- |
+| **v1.7.12 Candidate（最新测试版）** | 测试最新功能与安全修复，**尚未经用户实盘验收，非正式版** | [下载 Windows 测试安装包（GitHub Actions）](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37869003552) |
+| **v1.5.0 Stable（最后已正式发布版）** | 需要已发布安装器的用户 | [下载 PhotoCurator-Setup-v1.5.0.exe](https://github.com/youzhi1701/PhotoCurator-CN-/releases/download/v1.5.0/PhotoCurator-Setup-v1.5.0.exe) |
 
-[**点击下载 PhotoCurator-Setup-v1.5.0.exe**](https://github.com/youzhi1701/PhotoCurator-CN-/releases/download/v1.5.0/PhotoCurator-Setup-v1.5.0.exe)
+**测试版下载步骤：** 打开上述 Actions 页面，在 **Artifacts** 中选择 `PhotoCurator-v1.7.12-test-installer`，下载 ZIP，解压后运行 `PhotoCurator-Setup-v1.7.12.exe`。压缩包同时包含 `.exe.sha256`，用于校验文件完整性。
 
-> Windows 10 / 11 x64 · 正式安装版 EXE  
-> 当前源码为 **v1.7.12 Candidate**；只有 Windows Candidate、数据完整性、安装/升级与发布验证全部通过，并且新的 EXE 真正发布后，这里的正式下载链接才会切到 v1.7.12。
-> **最新试用版：v1.7.12 Candidate（非正式版）**。可前往 [Windows CI 测试安装包](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37867935635) 的 Artifacts 下载 **PhotoCurator-v1.7.12-test-installer**（包含 EXE 和 SHA-256；有效期 14 天）。第一次正式使用前请先用副本/测试数据验证，真实硬盘验收尚未完成。
+**Windows 安装包 SHA-256：** `6710c8a00df0b3e81b69ce8162a1562ba402576fcd1e1c11ae91f25506fbb8eb`
+
+此构件由 [Source syntax check](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37869003613) 与 [Build Windows Candidate](https://github.com/youzhi1701/PhotoCurator-CN-/actions/runs/37869003552) 双流程验证成功，且已通过 Windows CI 的 v1.5.0 → v1.7.12 安装升级数据保留测试。GitHub Actions 测试构件通常有有效期，本次至 **2026-10-23**；过期后以构建页面或后续候选版为准。
+
+> **重要：** 候选版尚未完成真实 4TB 外接硬盘、19,000+ 张真实图库、各品牌 RAW/HEIF 样本、突然断电、完整高 DPI 交互和代码签名验收。正式投入珍贵照片前，请先备份原片并使用测试文件夹。文件分析与自动建议绝不替代人工删除确认；候选包不能标记为 V2.0 Stable。
 <!-- LATEST_RELEASE_END -->
 
 > 面向大图库的 Windows 照片清理工具。v1.7.12 Candidate 在稳定桌面运行层基础上继续收口持久 Catalog、扫描会话与缺失判定、离线图库与设备识别、文件生命周期、数据库升级保护和 Windows 发布门禁；当前仍处于 Candidate 验证阶段，不等同于已发布 Stable。
@@ -19,7 +24,17 @@
 | 当前源码版本 | **v1.7.12 Candidate** |
 | 项目类型 | Windows 照片筛选桌面应用 |
 | 上游基线 | Photo Curator v7.0 |
-| 当前状态 | **v1.7.12 发布候选版 / Windows Candidate 与 Release Gate 验证中** |
+| 当前状态 | **v1.7.12 候选版 · 自动化验证通过 · 真实设备验收尚未完成** |
+
+## v1.7.12 本轮关键完善
+
+- **拔盘 / 换盘数据保护**：持久图库不仅在扫描开始、每批写入、扫描结束时验证设备身份，也防止离线缩略图后台误把同盘符的另一台存储设备识别为旧图库。缓存生成前核实稳定卷身份、照片真实路径与大小 / 修改时间，解码后再次确认原文件身份。
+- **精确去重 + 人工复核**：SHA-256 字节级精确重复优先，保留视觉相似 / 连拍识别；批量删除操作绑定一次性复核令牌与真实文件身份，AI/传统评分建议不直接删除原片。
+- **RAW/HEIF 与辅助文件**：保留 RAW+JPEG 同拍保护与 XMP/AAE 辅件身份核验；功能支持与真实机型全部兼容是两回事，未验证的格式不虚称完整覆盖。
+- **Windows 升级与性能**：候选构建执行真实旧版 v1.5.0 覆盖安装回归，校验配置、离线预览与原始照片哈希；19,000 项合成排序回归通过，但真实 4TB 机械硬盘数据集仍须实测。
+- **发布防错**：正式 Stable 发布需要明确版本 QA 批准和 Authenticode 签名/验签；缺任一条件即不自动发布。
+
+详细进度与待验证项目请查看 [PROJECT_PROGRESS.md](PROJECT_PROGRESS.md) 和 [RELEASE_ACCEPTANCE.md](RELEASE_ACCEPTANCE.md)。
 
 ## 产品定位
 
@@ -269,6 +284,10 @@ PhotoCurator-CN-/
 ├─ desktop_app.py          # Windows 桌面壳、托盘、窗口生命周期
 ├─ runtime_paths.py        # 用户级运行数据目录与旧版迁移
 ├─ photo_curator.py        # Flask API、核心状态、UI 与工作流
+├─ catalog.py              # 设备身份、持久图库索引与离线历史
+├─ quality_annotations.py  # 可解释技术质量建议
+├─ scene_labels.py         # 轻量本地人像线索识别
+├─ exact_duplicates.py     # 按字节 SHA-256 精确去重
 ├─ background_tasks.py     # 持久化后台任务调度器
 ├─ photo_dedup_batch.py    # 相似特征 / 分组
 ├─ photo_ranking_engine.py # 评分扩展能力
@@ -301,7 +320,7 @@ PhotoCurator-CN-/
 
 许可证保持原项目 **MIT License**。
 
-## v1.7.12 Stable 发布门槛
+## v1.7.12 从 Candidate 晋级 Stable 的发布门槛
 
 正式发布前必须同时满足：
 - Python / 嵌入式 JavaScript / HTML / CSS 自动检查通过
