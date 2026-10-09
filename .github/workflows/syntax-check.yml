@@ -43,6 +43,7 @@ jobs:
             quality_annotations.py \
             test_quality_annotations.py \
             quality_annotations_input_test.py \
+            test_runtime_migration_wal.py \
             test_offline_preview_guard.py \
             scene_labels.py \
             test_scene_labels.py \
@@ -942,7 +943,8 @@ jobs:
           python -m unittest -v test_catalog_unique_count
           python -m unittest -v test_missing_delete_safety
           python -m unittest -v test_exact_duplicates
-          python -m unittest -v test_quality_annotations
+          python -m unittest -v test_quality_annotations quality_annotations_input_test
+          python -m unittest -v test_runtime_migration_wal
           python -m unittest -v test_offline_preview_guard
           python -m unittest -v test_scene_labels
           python -m unittest -v test_raw_pair_protection
